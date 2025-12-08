@@ -148,7 +148,7 @@ flutter run
 - [ ] Provide REST and WebSocket sync strategies via add-on packages.
 - [ ] Background sync helpers for Android/iOS via add-on packages.
 - [X] End-to-end sample app with authentication.
-- [ ] Comprehensive docs and testing utilities.
+- [X] Comprehensive docs and testing utilities (models now use `LocalFirstModel` mixin; full test coverage added).
 
 ## Contributing
 
