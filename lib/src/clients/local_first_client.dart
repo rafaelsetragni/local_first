@@ -9,7 +9,7 @@ part of '../../local_first.dart';
 /// - Providing access to the local database delegate
 class LocalFirstClient {
   late final List<LocalFirstRepository> _repositories;
-  final LocalFirstStorage _localDataSource;
+  final LocalFirstStorage _localStorage;
 
   final List<DataSyncStrategy> syncStrategies;
   final Completer _onInitialize = Completer();
@@ -17,13 +17,13 @@ class LocalFirstClient {
   Future get awaitInitialization => _onInitialize.future;
 
   /// Gets the local database delegate used for storage.
-  LocalFirstStorage get localDataSource => _localDataSource;
+  LocalFirstStorage get localStorage => _localStorage;
 
   /// Creates an instance of LocalFirstClient.
   ///
   /// Parameters:
   /// - [nodes]: List of [LocalFirstRepository] instances to be managed
-  /// - [localDataSource]: The local database delegate for storage operations
+  /// - [localStorage]: The local database delegate for storage operations
   ///
   /// Throws [ArgumentError] if there are duplicate node names.
   LocalFirstClient({
@@ -34,11 +34,7 @@ class LocalFirstClient {
          syncStrategies.isNotEmpty,
          'You need to provide at least one sync strategy.',
        ),
-       _localDataSource = localStorage {
-    for (final strategy in syncStrategies) {
-      strategy.attach(this);
-    }
-
+       _localStorage = localStorage {
     final names = repositories.map((n) => n.name).toSet();
     if (names.length != repositories.length) {
       throw ArgumentError('Duplicate node names');
@@ -66,7 +62,7 @@ class LocalFirstClient {
   /// This must be called before using any LocalFirstClient functionality.
   /// It initializes the local database and all registered repositories.
   Future<void> initialize() async {
-    await _localDataSource.initialize();
+    await _localStorage.initialize();
 
     for (var repository in _repositories) {
       await repository.initialize();
@@ -79,7 +75,7 @@ class LocalFirstClient {
   /// This will delete all stored data and reset all repositories.
   /// Use with caution as this operation cannot be undone.
   Future<void> clearAllData() async {
-    await _localDataSource.clearAllData();
+    await _localStorage.clearAllData();
 
     for (var repository in _repositories) {
       repository.reset();
@@ -91,7 +87,7 @@ class LocalFirstClient {
   ///
   /// Call this when you're done using the LocalFirstClient instance.
   Future<void> dispose() async {
-    await _localDataSource.close();
+    await _localStorage.close();
   }
 
   Future<void> _pullRemoteChanges(Map<String, dynamic> map) async {
@@ -120,11 +116,11 @@ class LocalFirstClient {
   }
 
   Future<String?> getMeta(String key) async {
-    return await localDataSource.getMeta(key);
+    return await localStorage.getMeta(key);
   }
 
   Future<void> setKeyValue(String key, String value) async {
-    await localDataSource.setMeta(key, value);
+    await localStorage.setMeta(key, value);
   }
 
   Future<LocalFirstResponse> _buildOfflineResponse(
@@ -168,12 +164,9 @@ class LocalFirstClient {
         for (var id in deleteIds) {
           final object = await repository._getById(id);
           if (object != null) {
-            objects.add(
-              object.copyWith(
-                status: SyncStatus.ok,
-                operation: SyncOperation.delete,
-              ),
-            );
+            object.syncStatus = SyncStatus.ok;
+            object.syncOperation = SyncOperation.delete;
+            objects.add(object);
           }
         }
       }

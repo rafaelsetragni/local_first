@@ -24,84 +24,31 @@ enum SyncOperation {
   delete,
 }
 
-/// Type alias for a list of [LocalFirstModel]s.
-typedef LocalFirstModels<T extends Object> = List<LocalFirstModel<T>>;
+/// Type alias for a list of models with sync metadata.
+typedef LocalFirstModels<T extends LocalFirstModel> = List<T>;
 
-/// Wraps an item with its synchronization metadata.
+/// Mixin that adds synchronization metadata to your models.
 ///
-/// This class combines your data model with sync information like status,
-/// operation type, and whether it needs synchronization.
-///
-/// All queries return [LocalFirstModel]s so you can inspect the sync state
-/// of each item individually.
-class LocalFirstModel<T extends Object> {
-  /// The actual data item.
-  final T item;
+/// Apply this mixin to your domain classes so repositories can manage
+/// sync state without wrapping your objects.
+mixin LocalFirstModel {
+  SyncStatus syncStatus = SyncStatus.ok;
+  SyncOperation syncOperation = SyncOperation.insert;
+  DateTime? syncCreatedAt;
+  String repositoryName = '';
 
-  /// The current synchronization status.
-  final SyncStatus status;
-
-  /// The type of operation (insert, update, delete).
-  final SyncOperation operation;
-
-  final LocalFirstRepository<T> _repository;
+  /// Override to serialize your domain fields (metadata is added separately).
+  Map<String, dynamic> toJson();
 
   /// Returns true if this object has pending changes that need sync.
-  bool get needSync => status != SyncStatus.ok;
+  bool get needSync => syncStatus != SyncStatus.ok;
 
   /// Returns true if this object is marked as deleted.
-  bool get isDeleted => operation == SyncOperation.delete;
-
-  String get repositoryName => _repository.name;
-
-  LocalFirstModel({
-    required this.item,
-    required this.status,
-    required this.operation,
-    required LocalFirstRepository<T> repository,
-  }) : assert(T != Object, 'Type ot T must be specified'),
-       _repository = repository;
-
-  /// Converts the object and its metadata to JSON format.
-  Map<String, dynamic> toJson() {
-    return {
-      ..._repository.toJson(item),
-      '_sync_status': status.index,
-      '_sync_operation': operation.index,
-      '_sync_created_at': DateTime.now().millisecondsSinceEpoch,
-    };
-  }
-
-  /// Creates a copy of this object with optional field updates.
-  LocalFirstModel<T> copyWith({
-    T? item,
-    SyncStatus? status,
-    SyncOperation? operation,
-  }) {
-    return LocalFirstModel<T>(
-      item: item ?? this.item,
-      status: status ?? this.status,
-      operation: operation ?? this.operation,
-      repository: _repository,
-    );
-  }
-
-  LocalFirstModel<T> fromJson(
-    Map<String, dynamic> json, {
-    SyncStatus syncStatus = SyncStatus.ok,
-    SyncOperation operation = SyncOperation.insert,
-  }) {
-    return LocalFirstModel<T>(
-      item: _repository.fromJson(json),
-      status: syncStatus,
-      operation: operation,
-      repository: _repository,
-    );
-  }
+  bool get isDeleted => syncOperation == SyncOperation.delete;
 }
 
-/// Extension methods for lists of [LocalFirstModel]s.
-extension LocalFirstModelsX<T extends Object> on List<LocalFirstModel<T>> {
+/// Extension methods for lists of models with sync metadata.
+extension LocalFirstModelsX<T extends LocalFirstModel> on List<T> {
   /// Converts a list of objects to the sync JSON format.
   ///
   /// Groups objects by operation type (insert, update, delete) as expected
@@ -112,9 +59,9 @@ extension LocalFirstModelsX<T extends Object> on List<LocalFirstModel<T>> {
     final deletes = <String>[];
 
     for (var obj in this) {
-      final itemJson = obj._repository.toJson(obj.item);
+      final itemJson = obj.toJson();
 
-      switch (obj.operation) {
+      switch (obj.syncOperation) {
         case SyncOperation.insert:
           inserts.add(itemJson);
           break;
@@ -122,7 +69,7 @@ extension LocalFirstModelsX<T extends Object> on List<LocalFirstModel<T>> {
           updates.add(itemJson);
           break;
         case SyncOperation.delete:
-          deletes.add(obj._repository.getId(obj.item));
+          deletes.add(itemJson['id']?.toString() ?? '');
           break;
       }
     }
