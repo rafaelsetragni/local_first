@@ -214,14 +214,16 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
   }
 
   T _prepareForUpdate(T model) {
+    final wasPendingInsert =
+        model.needSync && model.syncOperation == SyncOperation.insert;
+    final existingCreatedAt = model.syncCreatedAt;
+
     model._setSyncStatus(SyncStatus.pending);
-    model._setSyncOperation(
-      model.syncOperation == SyncOperation.insert
-          ? SyncOperation.insert
-          : SyncOperation.update,
-    );
+    final operation =
+        wasPendingInsert ? SyncOperation.insert : SyncOperation.update;
+    model._setSyncOperation(operation);
     model._setRepositoryName(name);
-    model._setSyncCreatedAt(model.syncCreatedAt ?? DateTime.now().toUtc());
+    model._setSyncCreatedAt(existingCreatedAt ?? DateTime.now().toUtc());
     return model;
   }
 
