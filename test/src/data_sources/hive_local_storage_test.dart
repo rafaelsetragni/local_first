@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_first/local_first.dart';
+import 'package:mocktail/mocktail.dart';
+import 'package:hive/hive.dart';
 
 void main() {
   group('HiveLocalFirstStorage', () {
@@ -176,7 +178,9 @@ void main() {
     late HiveLocalFirstStorage throwingStorage;
 
     setUp(() async {
-      tempDir = await Directory.systemTemp.createTemp('hive_local_first_test_throw');
+      tempDir = await Directory.systemTemp.createTemp(
+        'hive_local_first_test_throw',
+      );
       throwingStorage = HiveLocalFirstStorage(
         customPath: tempDir.path,
         namespace: 'ns_throw',
@@ -217,16 +221,19 @@ void main() {
     });
 
     test('setMeta throws when not initialized', () async {
-      expect(
-        () => uninitialized.setMeta('k', 'v'),
-        throwsA(isA<StateError>()),
-      );
+      expect(() => uninitialized.setMeta('k', 'v'), throwsA(isA<StateError>()));
     });
 
     test('getAll/getById/delete throw when not initialized', () async {
       expect(() => uninitialized.getAll('users'), throwsA(isA<StateError>()));
-      expect(() => uninitialized.getById('users', '1'), throwsA(isA<StateError>()));
-      expect(() => uninitialized.delete('users', '1'), throwsA(isA<StateError>()));
+      expect(
+        () => uninitialized.getById('users', '1'),
+        throwsA(isA<StateError>()),
+      );
+      expect(
+        () => uninitialized.delete('users', '1'),
+        throwsA(isA<StateError>()),
+      );
     });
 
     test('clearAllData/getMeta/query throw when not initialized', () async {
@@ -238,7 +245,7 @@ void main() {
         fromJson: _TestModel.fromJson,
         repository: _DummyRepo(),
       );
-      expect(() => uninitialized.query(q), throwsA(isA<StateError>()));
+      await expectLater(uninitialized.query(q), throwsA(isA<StateError>()));
     });
   });
 
@@ -253,20 +260,62 @@ void main() {
       await storage.initialize();
       await storage.setMeta('k', 'v');
 
-      final hasMetaBox = Directory(dir.path)
-          .listSync()
-          .any((f) => f.path.contains('offline_metadata'));
+      final hasMetaBox = Directory(
+        dir.path,
+      ).listSync().any((f) => f.path.contains('offline_metadata'));
       expect(hasMetaBox, isTrue);
 
       await storage.close();
       await dir.delete(recursive: true);
     });
 
-    test('initializes with default path when customPath is null', () async {
-      final storage = HiveLocalFirstStorage(namespace: 'ns_default_path');
+    test('clearAllData continues if deleteBoxFromDisk fails', () async {
+      final fakeHive = _MockHive();
+      final mockMeta = _MockBox<dynamic>();
+      final mockBox = _MockBox<Map>();
+
+      when(() => fakeHive.init(any())).thenReturn(null);
+      when(
+        () => fakeHive.openBox<dynamic>(
+          any(),
+          encryptionCipher: any(named: 'encryptionCipher'),
+          keyComparator: any(named: 'keyComparator'),
+          crashRecovery: any(named: 'crashRecovery'),
+        ),
+      ).thenAnswer((_) async => mockMeta);
+      when(
+        () => fakeHive.openBox<Map>(
+          any(),
+          encryptionCipher: any(named: 'encryptionCipher'),
+          keyComparator: any(named: 'keyComparator'),
+          crashRecovery: any(named: 'crashRecovery'),
+        ),
+      ).thenAnswer((_) async => mockBox);
+      when(() => mockMeta.close()).thenAnswer((_) async {});
+      when(() => mockMeta.clear()).thenAnswer((_) async => 0);
+      when(() => mockMeta.values).thenReturn(const []);
+      when(() => mockBox.clear()).thenAnswer((_) async => 0);
+      when(() => mockBox.close()).thenAnswer((_) async {});
+      when(() => mockBox.put(any(), any())).thenAnswer((_) async {});
+      when(() => mockBox.values).thenReturn(const <Map<dynamic, dynamic>>[]);
+      when(
+        () => fakeHive.deleteBoxFromDisk(any(), path: any(named: 'path')),
+      ).thenThrow(Exception('delete failed'));
+
+      final storage = HiveLocalFirstStorage(
+        customPath: Directory.systemTemp.path,
+        namespace: 'ns_fail_delete',
+        hive: fakeHive,
+      );
       await storage.initialize();
-      await storage.setMeta('k', 'v'); // should not throw
-      await storage.close();
+      await storage.insert('users', {'id': '1'}, 'id');
+
+      // Should not throw even if deleteBoxFromDisk fails.
+      await storage.clearAllData();
+
+      verify(
+        () => fakeHive.deleteBoxFromDisk(any(), path: any(named: 'path')),
+      ).called(greaterThan(0));
     });
   });
 }
@@ -294,3 +343,7 @@ class _DummyRepo extends LocalFirstRepository<_TestModel> {
         onConflict: (l, r) => l,
       );
 }
+
+class _MockHive extends Mock implements HiveInterface {}
+
+class _MockBox<E> extends Mock implements Box<E> {}

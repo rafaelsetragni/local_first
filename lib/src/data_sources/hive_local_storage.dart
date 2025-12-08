@@ -227,7 +227,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
     // Deleta metadata box do disco
     try {
-      await Hive.deleteBoxFromDisk(_metadataBoxName, path: customPath);
+      await _hive.deleteBoxFromDisk(_metadataBoxName, path: customPath);
     } catch (e) {
       // Ignora erros se box não existir
     }
