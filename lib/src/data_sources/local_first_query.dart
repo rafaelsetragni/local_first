@@ -158,12 +158,14 @@ class LocalFirstQuery<T extends LocalFirstModel> {
               ? SyncOperation.values[json['_sync_operation'] as int]
               : SyncOperation.insert;
 
-          item.syncStatus = syncStatus;
-          item.syncOperation = syncOperation;
+          item._setSyncStatus(syncStatus);
+          item._setSyncOperation(syncOperation);
           final createdAt = json['_sync_created_at'] as int?;
-          item.syncCreatedAt =
-              createdAt != null ? DateTime.fromMillisecondsSinceEpoch(createdAt) : null;
-          item.repositoryName = repositoryName;
+          item._setSyncCreatedAt(
+              createdAt != null
+                  ? DateTime.fromMillisecondsSinceEpoch(createdAt, isUtc: true)
+                  : null);
+          item._setRepositoryName(repositoryName);
           return item;
         })
         .where((obj) => !obj.isDeleted)

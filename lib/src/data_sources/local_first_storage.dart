@@ -57,14 +57,6 @@ abstract class LocalFirstStorage {
   /// Deletes all items from a table/collection.
   Future<void> deleteAll(String tableName);
 
-  /// Gets the last sync timestamp for a repository.
-  ///
-  /// Returns null if never synced.
-  Future<DateTime?> getLastSyncAt(String repositoryName);
-
-  /// Sets the last sync timestamp for a repository.
-  Future<void> setLastSyncAt(String repositoryName, DateTime time);
-
   /// Stores arbitrary metadata as string by key.
   Future<void> setMeta(String key, String value);
 
