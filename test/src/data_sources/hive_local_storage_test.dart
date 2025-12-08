@@ -91,6 +91,7 @@ void main() {
       await storage.insert('users', {'id': '1', 'age': 20}, 'id');
       await storage.insert('users', {'id': '2', 'age': 30}, 'id');
       await storage.insert('users', {'id': '3', 'age': 40}, 'id');
+      await storage.insert('users', {'id': '4', 'age': null}, 'id');
 
       final q = LocalFirstQuery<_TestModel>(
         repositoryName: 'users',
@@ -108,6 +109,12 @@ void main() {
 
       expect(results.length, 1);
       expect(results.first.id, '3');
+
+      // Null entries are skipped inside Hive query mapping.
+      final all = await storage.getAll('users');
+      expect(all.length, 4);
+      final mapped = await q.where('age', isGreaterThan: 0).getAll();
+      expect(mapped.length, 3); // ids 1,2,3 (skipping null age)
     });
 
     test('watchQuery emits initial results', () async {
@@ -213,6 +220,53 @@ void main() {
     });
   });
 
+  group('HiveLocalFirstStorage emitCurrent errors', () {
+    test('watchQuery emits error when query throws', () async {
+      final fakeHive = _MockHive();
+      final mockMeta = _MockBox<dynamic>();
+      final mockBox = _MockBox<Map>();
+
+      when(() => fakeHive.init(any())).thenReturn(null);
+      when(() => fakeHive.openBox<dynamic>(
+            any(),
+            encryptionCipher: any(named: 'encryptionCipher'),
+            keyComparator: any(named: 'keyComparator'),
+            crashRecovery: any(named: 'crashRecovery'),
+          )).thenAnswer((_) async => mockMeta);
+      when(() => fakeHive.openBox<Map>(
+            any(),
+            encryptionCipher: any(named: 'encryptionCipher'),
+            keyComparator: any(named: 'keyComparator'),
+            crashRecovery: any(named: 'crashRecovery'),
+          )).thenAnswer((_) async => mockBox);
+      when(() => mockMeta.close()).thenAnswer((_) async {});
+      when(() => mockMeta.clear()).thenAnswer((_) async => 0);
+      when(() => mockMeta.values).thenReturn(const []);
+      when(() => mockBox.watch()).thenAnswer((_) => const Stream.empty());
+      when(() => mockBox.clear()).thenAnswer((_) async => 0);
+      when(() => mockBox.close()).thenAnswer((_) async {});
+      when(() => mockBox.put(any(), any())).thenAnswer((_) async {});
+      when(() => mockBox.values).thenReturn(const <Map<dynamic, dynamic>>[]);
+
+      final storage = _ThrowingQueryHiveStorage(
+        customPath: Directory.systemTemp.path,
+        namespace: 'ns_emit_error',
+        hive: fakeHive,
+        initFlutter: () async {},
+      );
+      await storage.initialize();
+
+      final q = LocalFirstQuery<_TestModel>(
+        repositoryName: 'users',
+        delegate: storage,
+        fromJson: _TestModel.fromJson,
+        repository: _DummyRepo(),
+      );
+
+      await expectLater(storage.watchQuery(q), emitsError(isA<Exception>()));
+    });
+  });
+
   group('HiveLocalFirstStorage guard clauses', () {
     late HiveLocalFirstStorage uninitialized;
 
@@ -275,22 +329,18 @@ void main() {
       final mockBox = _MockBox<Map>();
 
       when(() => fakeHive.init(any())).thenReturn(null);
-      when(
-        () => fakeHive.openBox<dynamic>(
-          any(),
-          encryptionCipher: any(named: 'encryptionCipher'),
-          keyComparator: any(named: 'keyComparator'),
-          crashRecovery: any(named: 'crashRecovery'),
-        ),
-      ).thenAnswer((_) async => mockMeta);
-      when(
-        () => fakeHive.openBox<Map>(
-          any(),
-          encryptionCipher: any(named: 'encryptionCipher'),
-          keyComparator: any(named: 'keyComparator'),
-          crashRecovery: any(named: 'crashRecovery'),
-        ),
-      ).thenAnswer((_) async => mockBox);
+      when(() => fakeHive.openBox<dynamic>(
+            any(),
+            encryptionCipher: any(named: 'encryptionCipher'),
+            keyComparator: any(named: 'keyComparator'),
+            crashRecovery: any(named: 'crashRecovery'),
+          )).thenAnswer((_) async => mockMeta);
+      when(() => fakeHive.openBox<Map>(
+            any(),
+            encryptionCipher: any(named: 'encryptionCipher'),
+            keyComparator: any(named: 'keyComparator'),
+            crashRecovery: any(named: 'crashRecovery'),
+          )).thenAnswer((_) async => mockBox);
       when(() => mockMeta.close()).thenAnswer((_) async {});
       when(() => mockMeta.clear()).thenAnswer((_) async => 0);
       when(() => mockMeta.values).thenReturn(const []);
@@ -316,6 +366,84 @@ void main() {
       verify(
         () => fakeHive.deleteBoxFromDisk(any(), path: any(named: 'path')),
       ).called(greaterThan(0));
+    });
+
+    test('initialize uses initFlutter when customPath is null', () async {
+      final fakeHive = _MockHive();
+      final mockMeta = _MockBox<dynamic>();
+      var initFlutterCalled = false;
+
+      when(
+        () => fakeHive.openBox<dynamic>(
+          any(),
+          encryptionCipher: any(named: 'encryptionCipher'),
+          keyComparator: any(named: 'keyComparator'),
+          crashRecovery: any(named: 'crashRecovery'),
+        ),
+      ).thenAnswer((_) async => mockMeta);
+      when(() => mockMeta.close()).thenAnswer((_) async {});
+      when(() => mockMeta.clear()).thenAnswer((_) async => 0);
+      when(() => mockMeta.values).thenReturn(const []);
+
+      final storage = HiveLocalFirstStorage(
+        namespace: 'ns_default',
+        hive: fakeHive,
+        initFlutter: () async {
+          initFlutterCalled = true;
+        },
+      );
+
+      await storage.initialize();
+      expect(initFlutterCalled, isTrue);
+      verifyNever(() => fakeHive.init(any()));
+    });
+
+    test('query skips null raw items', () async {
+      final fakeHive = _MockHive();
+      final mockMeta = _MockBox<dynamic>();
+      final mockBox = _MockBox<Map>();
+
+      when(() => fakeHive.init(any())).thenReturn(null);
+      when(
+        () => fakeHive.openBox<dynamic>(
+          any(),
+          encryptionCipher: any(named: 'encryptionCipher'),
+          keyComparator: any(named: 'keyComparator'),
+          crashRecovery: any(named: 'crashRecovery'),
+        ),
+      ).thenAnswer((_) async => mockMeta);
+      when(
+        () => fakeHive.openBox<Map>(
+          any(),
+          encryptionCipher: any(named: 'encryptionCipher'),
+          keyComparator: any(named: 'keyComparator'),
+          crashRecovery: any(named: 'crashRecovery'),
+        ),
+      ).thenAnswer((_) async => mockBox);
+      when(() => mockMeta.close()).thenAnswer((_) async {});
+      when(() => mockMeta.clear()).thenAnswer((_) async => 0);
+      when(() => mockMeta.values).thenReturn(const []);
+      when(() => mockBox.keys).thenReturn([1, 2]);
+      when(() => mockBox.get(1)).thenReturn(null);
+      when(() => mockBox.get(2)).thenReturn({'id': '2', 'age': 10});
+
+      final storage = HiveLocalFirstStorage(
+        customPath: Directory.systemTemp.path,
+        namespace: 'ns_skip_null',
+        hive: fakeHive,
+      );
+      await storage.initialize();
+
+      final q = LocalFirstQuery<_TestModel>(
+        repositoryName: 'users',
+        delegate: storage,
+        fromJson: _TestModel.fromJson,
+        repository: _DummyRepo(),
+      );
+
+      final results = await storage.query(q);
+      expect(results.length, 1);
+      expect(results.first['id'], '2');
     });
   });
 }
@@ -347,3 +475,17 @@ class _DummyRepo extends LocalFirstRepository<_TestModel> {
 class _MockHive extends Mock implements HiveInterface {}
 
 class _MockBox<E> extends Mock implements Box<E> {}
+
+class _ThrowingQueryHiveStorage extends HiveLocalFirstStorage {
+  _ThrowingQueryHiveStorage({
+    super.customPath,
+    super.namespace,
+    super.hive,
+    super.initFlutter,
+  });
+
+  @override
+  Future<List<Map<String, dynamic>>> query(LocalFirstQuery query) {
+    throw Exception('query failed');
+  }
+}
