@@ -153,9 +153,9 @@ class _MyHomePageState extends State<MyHomePage> {
   void initState() {
     super.initState();
     final service = RepositoryService();
-    _usersStream = service.watchUsers().asBroadcastStream();
-    _counterStream = service.watchCounter().asBroadcastStream();
-    _recentLogsStream = service.watchRecentLogs(limit: 5).asBroadcastStream();
+    _usersStream = service.watchUsers();
+    _counterStream = service.watchCounter();
+    _recentLogsStream = service.watchRecentLogs(limit: 5);
   }
 
   Future<void> _onAvatarTap(BuildContext context, String currentAvatar) async {
