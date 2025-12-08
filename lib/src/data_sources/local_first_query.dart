@@ -147,7 +147,9 @@ class LocalFirstQuery<T extends LocalFirstModel> {
     return results
         .map((json) {
           final itemJson = Map<String, dynamic>.from(json);
-          final item = _fromJson(itemJson..removeWhere((key, _) => key.startsWith('_sync_')));
+          final item = _fromJson(
+            itemJson..removeWhere((key, _) => key.startsWith('_sync_')),
+          );
 
           // Extract sync metadata stored alongside the model
           final syncStatus = json['_sync_status'] != null
@@ -162,9 +164,10 @@ class LocalFirstQuery<T extends LocalFirstModel> {
           item._setSyncOperation(syncOperation);
           final createdAt = json['_sync_created_at'] as int?;
           item._setSyncCreatedAt(
-              createdAt != null
-                  ? DateTime.fromMillisecondsSinceEpoch(createdAt, isUtc: true)
-                  : null);
+            createdAt != null
+                ? DateTime.fromMillisecondsSinceEpoch(createdAt, isUtc: true)
+                : null,
+          );
           item._setRepositoryName(repositoryName);
           return item;
         })

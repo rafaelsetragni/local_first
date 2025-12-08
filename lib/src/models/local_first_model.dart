@@ -56,7 +56,8 @@ mixin LocalFirstModel {
 
   void _setSyncOperation(SyncOperation operation) => _syncOperation = operation;
 
-  void _setSyncCreatedAt(DateTime? createdAt) => _syncCreatedAt = createdAt?.toUtc();
+  void _setSyncCreatedAt(DateTime? createdAt) =>
+      _syncCreatedAt = createdAt?.toUtc();
 
   void _setRepositoryName(String name) => _repositoryName = name;
 
