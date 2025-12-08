@@ -1,16 +1,28 @@
-# local_first
+# Local First
 
-Local-first data layer for Flutter apps that keeps your data available offline and synchronizes when the network returns. The goal is to provide a lightweight, pluggable engine that works with common local stores (Hive, SQLite, etc.) and can sync to any backend through custom adapters.
+[![Flutter](https://img.shields.io/badge/Flutter-%2302569B.svg?style=for-the-badge&logo=Flutter&logoColor=white)](#)
+[![Discord](https://img.shields.io/discord/888523488376279050.svg?style=for-the-badge&colorA=7289da&label=Chat%20on%20Discord)](https://discord.awesome-notifications.carda.me)
 
-> Status: early preview. The package is in active development and the public API may change before the first stable release. Use the examples below as guidance for the intended design.
+[![Open Source Love](https://badges.frapsoft.com/os/v1/open-source.svg?v=103)](#)
+[![pub package](https://img.shields.io/pub/v/local_first.svg)](https://pub.dev/packages/local_first)
+![Full tests workflow](https://github.com/rafaelsetragni/local_first/actions/workflows/dart.yml/badge.svg?branch=main)
+[![codecov](https://codecov.io/github/rafaelsetragni/local_first/graph/badge.svg?token=7BRG8JcWTQ)](https://codecov.io/github/rafaelsetragni/local_first)
+
+<br>
+
+Local-first data layer for Flutter apps that keeps your data available offline and synchronizes when the network returns. The goal is to provide a lightweight, pluggable engine that works with common local stores (Hive, SQLite, etc.) and can sync to any backend through custom strategies.
+
+> Status: early preview. The package is in active development (final stages) and the public API may change before the first stable release. Use the examples below as guidance for the intended design.
+
+![Demo](https://live-update-demo.rafaelsetra.workers.dev/)
 
 ## Why local_first?
 
 - Fast, responsive apps that read/write locally first and sync in the background.
 - Works without a network connection; queues changes and resolves conflicts when back online.
-- Pluggable storage: start with Hive, SQLite, or your preferred database.
-- Backend-agnostic sync adapters so you can integrate with REST, gRPC, WebSockets, or custom APIs.
-- Minimal boilerplate: declare your model, register adapters, and start syncing.
+- Storage-agnostic: start with our Hive, SQLite, or your preferred custom database implementation.
+- Backend-agnostic: create your sync strategies, so you can integrate with your existent REST, gRPC, WebSockets, etc.
+- Minimal boilerplate: declare the storage, register your models with repositories, and start syncing.
 
 ## Features
 
@@ -27,7 +39,7 @@ Add the dependency to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  local_first: ^0.0.1
+  local_first: ^0.2.0
 ```
 
 Then install it with:
@@ -43,73 +55,100 @@ The API is evolving, but the intended flow looks like this:
 ```dart
 import 'package:local_first/local_first.dart';
 
-// 1) Describe your model.
-class Todo {
-  Todo({required this.id, required this.title, this.completed = false});
+// 1) Describe your model and add LocalFirstModel to get sync metadata.
+class Todo with LocalFirstModel {
+  Todo({
+    required this.id,
+    required this.title,
+    this.completed = false,
+  }) : updatedAt = DateTime.now();
 
   final String id;
   final String title;
   final bool completed;
+  final DateTime updatedAt;
 
+  @override
   Map<String, dynamic> toJson() => {
         'id': id,
         'title': title,
         'completed': completed,
+        'updated_at': updatedAt.toIso8601String(),
       };
 
-  static Todo fromJson(Map<String, dynamic> json) => Todo(
+  factory Todo.fromJson(Map<String, dynamic> json) => Todo(
         id: json['id'] as String,
         title: json['title'] as String,
         completed: json['completed'] as bool? ?? false,
+        updatedAt: DateTime.parse(json['updated_at']),
       );
+
+  // Last write wins.
+  static Todo resolveConflict(Todo local, Todo remote) =>
+      local.updatedAt.isAfter(remote.updatedAt) ? local : remote;
 }
 
+// 2) Create a repository for the model.
+final todoRepository = LocalFirstRepository<Todo>.create(
+  name: 'todo',
+  getId: (todo) => todo.id,
+  toJson: (todo) => todo.toJson(),
+  fromJson: Todo.fromJson,
+  onConflict: Todo.resolveConflict,
+);
+
 Future<void> main() async {
-  // 2) Wire up local + remote adapters (implementation details coming soon).
+  // 3) Wire up local storage plus your sync strategy.
   final client = LocalFirstClient(
-    local: HiveStore(boxName: 'todos'), // or SQLiteStore/your own store
-    remote: RestSyncAdapter(
-      baseUrl: 'https://api.example.com',
-      endpoint: '/todos',
-    ),
-    serializer: JsonSerializer<Todo>(
-      fromJson: Todo.fromJson,
-      toJson: (todo) => todo.toJson(),
-    ),
+    repositories: [todoRepository],
+    localStorage: HiveLocalFirstStorage(), // swap for your storage adapter
+    syncStrategies: [
+      // Provide your own strategy that implements DataSyncStrategy.
+      MyRestSyncStrategy(),
+    ],
   );
 
-  await client.init();
+  await client.initialize();
 
-  // 3) Use the repository as if you were online the whole time.
-  final repo = client.repository<Todo>();
+  // 4) Use the repository as if you were online the whole time.
+  await todoRepository.upsert(Todo(id: '1', title: 'Buy milk'));
 
-  await repo.save(Todo(id: '1', title: 'Buy milk'));
-  final todos = await repo.getAll(); // served instantly from local cache
+  // served instantly from local cache
+  final todoStream = todoRepository.query().orderBy('title').watch();
 
-  // 4) Trigger sync when it makes sense (app start, pull-to-refresh, background).
-  await client.sync();
+  // 5) Let your strategy push/pull, or trigger manually when it makes sense.
+  // await client.sync();
 }
 ```
 
-> The classes above illustrate the design goals; exact names and signatures may shift as the package matures.
-
 ## Example app
 
-A starter Flutter app lives in `example/` and will showcase the offline-first flow as features land:
+A starter Flutter app lives in `example/` and showcases the local-first flow to increment or decrement a global shared counter (per-user namespaces, repositories, and a Mongo sync mock).
 
 ```bash
+# Clone and fetch deps
+git clone https://github.com/rafaelsetragni/local_first.git
+cd local_first
+flutter pub get
+
+# Run the sample
 cd example
+flutter pub get
 flutter run
+
+# (Optional) Start the Mongo mock used by the sync strategy.
+# docker run -d --name mongo_local -p 27017:27017 \\
+#   -e MONGO_INITDB_ROOT_USERNAME=admin \\
+#   -e MONGO_INITDB_ROOT_PASSWORD=admin mongo:7
 ```
 
 ## Roadmap
 
-- [ ] Implement Hive and SQLite storage adapters.
-- [ ] Provide REST and WebSocket sync adapters.
-- [ ] Add conflict resolution policies and hooks.
-- [ ] Background sync helpers for Android/iOS.
-- [ ] End-to-end sample app with authentication.
-- [ ] Comprehensive docs and testing utilities.
+- [ ] Implement Hive and SQLite storage adapters via add-on packages.
+- [ ] Provide REST and WebSocket sync strategies via add-on packages.
+- [ ] Background sync helpers for Android/iOS via add-on packages.
+- [X] End-to-end sample app with authentication.
+- [X] Comprehensive docs and testing utilities (models now use `LocalFirstModel` mixin; full test coverage added).
 
 ## Contributing
 
