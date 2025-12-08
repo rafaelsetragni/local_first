@@ -140,7 +140,7 @@ class LocalFirstQuery<T extends LocalFirstModel> {
   ///   .listen((items) => print('Active items: ${items.length}'));
   /// ```
   Stream<List<T>> watch() {
-    return _delegate.watchQuery(this).map(_mapResults);
+    return _delegate.watchQuery(this).map(_mapResults).asBroadcastStream();
   }
 
   List<T> _mapResults(List<Map<String, dynamic>> results) {
