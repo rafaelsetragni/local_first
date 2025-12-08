@@ -820,6 +820,7 @@ class CounterLogModel with LocalFirstModel {
     );
   }
 
+  @override
   JsonMap<dynamic> toJson() {
     return {
       'id': id,
