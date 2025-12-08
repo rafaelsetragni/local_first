@@ -35,9 +35,6 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
 
   late List<DataSyncStrategy> _syncStrategies;
 
-  @visibleForTesting
-  void injectDB(LocalFirstClient client) => _client = client;
-
   /// Creates a new LocalFirstRepository.
   ///
   /// Parameters:
@@ -219,8 +216,9 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
     final existingCreatedAt = model.syncCreatedAt;
 
     model._setSyncStatus(SyncStatus.pending);
-    final operation =
-        wasPendingInsert ? SyncOperation.insert : SyncOperation.update;
+    final operation = wasPendingInsert
+        ? SyncOperation.insert
+        : SyncOperation.update;
     model._setSyncOperation(operation);
     model._setRepositoryName(name);
     model._setSyncCreatedAt(existingCreatedAt ?? DateTime.now().toUtc());

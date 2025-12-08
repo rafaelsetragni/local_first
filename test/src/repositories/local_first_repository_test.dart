@@ -33,8 +33,9 @@ class _InMemoryStorage implements LocalFirstStorage {
   }
 
   Future<void> _emit(String tableName) async {
-    if (_controllers[tableName]?.isClosed ?? true) return;
-    _controller(tableName).add(await getAll(tableName));
+    final controller = _controller(tableName);
+    if (controller.isClosed) return;
+    controller.add(await getAll(tableName));
   }
 
   @override
@@ -242,28 +243,31 @@ void main() {
       expect(stored, isNull);
     });
 
-    test('_updateObjectStatus persists last sync status from failing strategy', () async {
-      final failingStorage = _InMemoryStorage();
-      final failingRepo = LocalFirstRepository<_TestModel>.create(
-        name: 'tests',
-        getId: (m) => m.id,
-        toJson: (m) => m.toJson(),
-        fromJson: _TestModel.fromJson,
-        onConflict: (l, r) => l,
-      );
-      final failingClient = LocalFirstClient(
-        repositories: [failingRepo],
-        localStorage: failingStorage,
-        syncStrategies: [_FailingStrategy()],
-      );
-      await failingClient.initialize();
+    test(
+      '_updateObjectStatus persists last sync status from failing strategy',
+      () async {
+        final failingStorage = _InMemoryStorage();
+        final failingRepo = LocalFirstRepository<_TestModel>.create(
+          name: 'tests',
+          getId: (m) => m.id,
+          toJson: (m) => m.toJson(),
+          fromJson: _TestModel.fromJson,
+          onConflict: (l, r) => l,
+        );
+        final failingClient = LocalFirstClient(
+          repositories: [failingRepo],
+          localStorage: failingStorage,
+          syncStrategies: [_FailingStrategy()],
+        );
+        await failingClient.initialize();
 
-      await failingRepo.upsert(_TestModel('fail', value: 'x'));
+        await failingRepo.upsert(_TestModel('fail', value: 'x'));
 
-      final stored = await failingStorage.getById('tests', 'fail');
-      expect(stored?['_sync_status'], SyncStatus.failed.index);
-      expect(stored?['_sync_operation'], SyncOperation.insert.index);
-    });
+        final stored = await failingStorage.getById('tests', 'fail');
+        expect(stored?['_sync_status'], SyncStatus.failed.index);
+        expect(stored?['_sync_operation'], SyncOperation.insert.index);
+      },
+    );
 
     test('_pushLocalObject failure does not affect subsequent items', () async {
       final conditionalStorage = _InMemoryStorage();
@@ -661,22 +665,21 @@ void main() {
     );
 
     test('query().watch streams updates', () async {
-      // final stream = repo.query().watch();
-      // final events = <List<_TestModel>>[];
-      // final sub = stream.take(2).listen(events.add);
+      final eventsFuture = repo.query().watch().take(2).toList()
+          .timeout(const Duration(seconds: 5));
 
-      // await storage.insert('tests', {
-      //   'id': 'w1',
-      //   'value': 'watch',
-      //   '_sync_status': SyncStatus.ok.index,
-      //   '_sync_operation': SyncOperation.insert.index,
-      //   '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
-      // }, 'id');
+      await storage.insert('tests', {
+        'id': 'w1',
+        'value': 'watch',
+        '_sync_status': SyncStatus.ok.index,
+        '_sync_operation': SyncOperation.insert.index,
+        '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
+      }, 'id');
 
-      // await Future.delayed(Duration.zero);
-      // await sub.asFuture<void>();
-      // expect(events.length, 2);
-      // expect(events[1].any((m) => m.id == 'w1'), isTrue);
+      await Future<void>.delayed(Duration.zero);
+      final events = await eventsFuture;
+      expect(events.length, 2);
+      expect(events[1].any((m) => m.id == 'w1'), isTrue);
     });
   });
 }
