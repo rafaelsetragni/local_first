@@ -32,10 +32,15 @@ typedef LocalFirstModels<T extends LocalFirstModel> = List<T>;
 /// Apply this mixin to your domain classes so repositories can manage
 /// sync state without wrapping your objects.
 mixin LocalFirstModel {
-  SyncStatus syncStatus = SyncStatus.ok;
-  SyncOperation syncOperation = SyncOperation.insert;
-  DateTime? syncCreatedAt;
-  String repositoryName = '';
+  SyncStatus _syncStatus = SyncStatus.ok;
+  SyncOperation _syncOperation = SyncOperation.insert;
+  DateTime? _syncCreatedAt;
+  String _repositoryName = '';
+
+  SyncStatus get syncStatus => _syncStatus;
+  SyncOperation get syncOperation => _syncOperation;
+  DateTime? get syncCreatedAt => _syncCreatedAt;
+  String get repositoryName => _repositoryName;
 
   /// Override to serialize your domain fields (metadata is added separately).
   Map<String, dynamic> toJson();
@@ -45,6 +50,30 @@ mixin LocalFirstModel {
 
   /// Returns true if this object is marked as deleted.
   bool get isDeleted => syncOperation == SyncOperation.delete;
+
+  // Internal setters used by the package.
+  void _setSyncStatus(SyncStatus status) => _syncStatus = status;
+
+  void _setSyncOperation(SyncOperation operation) => _syncOperation = operation;
+
+  void _setSyncCreatedAt(DateTime? createdAt) => _syncCreatedAt = createdAt?.toUtc();
+
+  void _setRepositoryName(String name) => _repositoryName = name;
+
+  /// Test-only hooks to modify sync metadata without exposing public setters.
+  @visibleForTesting
+  void debugSetSyncStatus(SyncStatus status) => _setSyncStatus(status);
+
+  @visibleForTesting
+  void debugSetSyncOperation(SyncOperation operation) =>
+      _setSyncOperation(operation);
+
+  @visibleForTesting
+  void debugSetSyncCreatedAt(DateTime? createdAt) =>
+      _setSyncCreatedAt(createdAt);
+
+  @visibleForTesting
+  void debugSetRepositoryName(String name) => _setRepositoryName(name);
 }
 
 /// Extension methods for lists of models with sync metadata.
