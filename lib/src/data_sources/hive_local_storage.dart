@@ -26,13 +26,24 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
   String get namespace => _namespace;
 
+  final HiveInterface _hive;
+  final Future<void> Function() _initFlutter;
+
   /// Creates a new HiveLocalFirstStorage.
   ///
   /// Parameters:
   /// - [customPath]: Optional custom path for Hive storage (useful for tests)
   /// - [namespace]: Optional namespace to database
-  HiveLocalFirstStorage({this.customPath, String? namespace})
-    : _namespace = namespace ?? 'default';
+  /// - [hive]: Optional Hive interface (useful for tests/mocking)
+  /// - [initFlutter]: Optional initializer for Hive Flutter (useful for tests)
+  HiveLocalFirstStorage({
+    this.customPath,
+    String? namespace,
+    HiveInterface? hive,
+    Future<void> Function()? initFlutter,
+  }) : _namespace = namespace ?? 'default',
+       _hive = hive ?? Hive,
+       _initFlutter = initFlutter ?? Hive.initFlutter;
 
   @override
   Future<void> initialize() async {
@@ -40,13 +51,13 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
     // Initialize Hive
     if (customPath != null) {
-      Hive.init(customPath);
+      _hive.init(customPath);
     } else {
-      await Hive.initFlutter();
+      await _initFlutter();
     }
 
     // Open metadata box
-    _metadataBox = await Hive.openBox<dynamic>(_metadataBoxName);
+    _metadataBox = await _hive.openBox<dynamic>(_metadataBoxName);
 
     _initialized = true;
   }
@@ -71,7 +82,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     await _closeAllBoxes();
     _boxes.clear();
     await _metadataBox.close();
-    _metadataBox = await Hive.openBox<dynamic>(_metadataBoxName);
+    _metadataBox = await _hive.openBox<dynamic>(_metadataBoxName);
   }
 
   Future<void> _closeAllBoxes() async {
@@ -98,7 +109,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     }
 
     // Open box and store in cache
-    final box = await Hive.openBox<Map>(_boxName(tableName));
+    final box = await _hive.openBox<Map>(_boxName(tableName));
     _boxes[tableName] = box;
     return box;
   }
@@ -155,32 +166,6 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<DateTime?> getLastSyncAt(String repositoryName) async {
-    if (!_initialized) {
-      throw StateError(
-        'HiveLocalFirstStorage not initialized. Call initialize() first.',
-      );
-    }
-
-    final key = '${repositoryName}_lastSyncAt';
-    final ms = _metadataBox.get(key);
-
-    return ms != null ? DateTime.fromMillisecondsSinceEpoch(ms) : null;
-  }
-
-  @override
-  Future<void> setLastSyncAt(String repositoryName, DateTime time) async {
-    if (!_initialized) {
-      throw StateError(
-        'HiveLocalFirstStorage not initialized. Call initialize() first.',
-      );
-    }
-
-    final key = '${repositoryName}_lastSyncAt';
-    await _metadataBox.put(key, time.millisecondsSinceEpoch);
-  }
-
-  @override
   Future<void> setMeta(String key, String value) async {
     if (!_initialized) {
       throw StateError(
@@ -234,7 +219,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     // Deleta cada box do disco individualmente (se houver)
     for (var boxName in boxesToDelete) {
       try {
-        await Hive.deleteBoxFromDisk(boxName, path: customPath);
+        await _hive.deleteBoxFromDisk(boxName, path: customPath);
       } catch (e) {
         // Ignora erros se box não existir
       }
@@ -242,7 +227,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
     // Deleta metadata box do disco
     try {
-      await Hive.deleteBoxFromDisk(_metadataBoxName, path: customPath);
+      await _hive.deleteBoxFromDisk(_metadataBoxName, path: customPath);
     } catch (e) {
       // Ignora erros se box não existir
     }
@@ -326,21 +311,35 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Stream<List<Map<String, dynamic>>> watchQuery(LocalFirstQuery query) async* {
+  Stream<List<Map<String, dynamic>>> watchQuery(LocalFirstQuery query) {
     if (!_initialized) {
       throw StateError(
         'HiveLocalFirstStorage not initialized. Call initialize() first.',
       );
     }
 
-    final box = await _getBox(query.repositoryName);
+    final controller = StreamController<List<Map<String, dynamic>>>.broadcast();
+    StreamSubscription? sub;
 
-    // Emite resultado inicial
-    yield await this.query(query);
-
-    // Escuta mudanças no box e reexecuta a query
-    await for (final _ in box.watch()) {
-      yield await this.query(query);
+    Future<void> emitCurrent() async {
+      try {
+        final results = await this.query(query);
+        controller.add(results);
+      } catch (e, st) {
+        controller.addError(e, st);
+      }
     }
+
+    controller.onListen = () async {
+      await emitCurrent();
+      final box = await _getBox(query.repositoryName);
+      sub = box.watch().listen((_) => emitCurrent());
+    };
+
+    controller.onCancel = () async {
+      await sub?.cancel();
+    };
+
+    return controller.stream;
   }
 }

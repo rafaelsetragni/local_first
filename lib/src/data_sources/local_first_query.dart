@@ -140,14 +140,16 @@ class LocalFirstQuery<T extends LocalFirstModel> {
   ///   .listen((items) => print('Active items: ${items.length}'));
   /// ```
   Stream<List<T>> watch() {
-    return _delegate.watchQuery(this).map(_mapResults);
+    return _delegate.watchQuery(this).map(_mapResults).asBroadcastStream();
   }
 
   List<T> _mapResults(List<Map<String, dynamic>> results) {
     return results
         .map((json) {
           final itemJson = Map<String, dynamic>.from(json);
-          final item = _fromJson(itemJson..removeWhere((key, _) => key.startsWith('_sync_')));
+          final item = _fromJson(
+            itemJson..removeWhere((key, _) => key.startsWith('_sync_')),
+          );
 
           // Extract sync metadata stored alongside the model
           final syncStatus = json['_sync_status'] != null
@@ -158,12 +160,15 @@ class LocalFirstQuery<T extends LocalFirstModel> {
               ? SyncOperation.values[json['_sync_operation'] as int]
               : SyncOperation.insert;
 
-          item.syncStatus = syncStatus;
-          item.syncOperation = syncOperation;
+          item._setSyncStatus(syncStatus);
+          item._setSyncOperation(syncOperation);
           final createdAt = json['_sync_created_at'] as int?;
-          item.syncCreatedAt =
-              createdAt != null ? DateTime.fromMillisecondsSinceEpoch(createdAt) : null;
-          item.repositoryName = repositoryName;
+          item._setSyncCreatedAt(
+            createdAt != null
+                ? DateTime.fromMillisecondsSinceEpoch(createdAt, isUtc: true)
+                : null,
+          );
+          item._setRepositoryName(repositoryName);
           return item;
         })
         .where((obj) => !obj.isDeleted)

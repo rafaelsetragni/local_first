@@ -164,8 +164,8 @@ class LocalFirstClient {
         for (var id in deleteIds) {
           final object = await repository._getById(id);
           if (object != null) {
-            object.syncStatus = SyncStatus.ok;
-            object.syncOperation = SyncOperation.delete;
+            object._setSyncStatus(SyncStatus.ok);
+            object._setSyncOperation(SyncOperation.delete);
             objects.add(object);
           }
         }

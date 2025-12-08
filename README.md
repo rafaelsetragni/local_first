@@ -12,7 +12,7 @@
 
 Local-first data layer for Flutter apps that keeps your data available offline and synchronizes when the network returns. The goal is to provide a lightweight, pluggable engine that works with common local stores (Hive, SQLite, etc.) and can sync to any backend through custom strategies.
 
-> Status: early preview. The package is in active development and the public API may change before the first stable release. Use the examples below as guidance for the intended design.
+> Status: early preview. The package is in active development (final stages) and the public API may change before the first stable release. Use the examples below as guidance for the intended design.
 
 ![Demo](https://live-update-demo.rafaelsetra.workers.dev/)
 
@@ -148,7 +148,7 @@ flutter run
 - [ ] Provide REST and WebSocket sync strategies via add-on packages.
 - [ ] Background sync helpers for Android/iOS via add-on packages.
 - [X] End-to-end sample app with authentication.
-- [ ] Comprehensive docs and testing utilities.
+- [X] Comprehensive docs and testing utilities (models now use `LocalFirstModel` mixin; full test coverage added).
 
 ## Contributing
 

@@ -26,11 +26,7 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
   final String Function(T item) _getId;
   final Map<String, dynamic> Function(T item) _toJson;
   final T Function(Map<String, dynamic> json) _fromJson;
-  final T Function(
-    T local,
-    T remote,
-  )
-  _resolveConflict;
+  final T Function(T local, T remote) _resolveConflict;
 
   /// Field name used as identifier in persisted maps.
   final String idFieldName;
@@ -38,9 +34,6 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
   late LocalFirstClient _client;
 
   late List<DataSyncStrategy> _syncStrategies;
-
-  @visibleForTesting
-  void injectDB(LocalFirstClient client) => _client = client;
 
   /// Creates a new LocalFirstRepository.
   ///
@@ -56,11 +49,7 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
     required String Function(T item) getId,
     required Map<String, dynamic> Function(T item) toJson,
     required T Function(Map<String, dynamic>) fromJson,
-    required T Function(
-      T local,
-      T remote,
-    )
-    onConflict,
+    required T Function(T local, T remote) onConflict,
     this.idFieldName = 'id',
   }) : _getId = getId,
        _toJson = toJson,
@@ -86,11 +75,7 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
     required String Function(T item) getId,
     required Map<String, dynamic> Function(T item) toJson,
     required T Function(Map<String, dynamic>) fromJson,
-    required T Function(
-      T local,
-      T remote,
-    )
-    onConflict,
+    required T Function(T local, T remote) onConflict,
     String idFieldName,
   }) = _LocalFirstRepository;
 
@@ -120,10 +105,10 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
     for (var strategy in _syncStrategies) {
       try {
         final syncResult = await strategy.onPushToRemote(object);
-        object.syncStatus = syncResult;
+        object._setSyncStatus(syncResult);
         if (syncResult == SyncStatus.ok) return;
       } catch (e) {
-        object.syncStatus = SyncStatus.failed;
+        object._setSyncStatus(SyncStatus.failed);
       }
     }
     await _updateObjectStatus(object);
@@ -159,11 +144,12 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
   }
 
   Future<void> _update(T object) async {
-    final operation = object.needSync && object.syncOperation == SyncOperation.insert
+    final operation =
+        object.needSync && object.syncOperation == SyncOperation.insert
         ? SyncOperation.insert
         : SyncOperation.update;
-    object.syncStatus = SyncStatus.pending;
-    object.syncOperation = operation;
+    object._setSyncStatus(SyncStatus.pending);
+    object._setSyncOperation(operation);
 
     await _client.localStorage.update(
       name,
@@ -195,8 +181,8 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
       return;
     }
 
-    object.syncStatus = SyncStatus.pending;
-    object.syncOperation = SyncOperation.delete;
+    object._setSyncStatus(SyncStatus.pending);
+    object._setSyncOperation(SyncOperation.delete);
 
     await _client.localStorage.update(
       name,
@@ -211,25 +197,31 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
       '_sync_status': model.syncStatus.index,
       '_sync_operation': model.syncOperation.index,
       '_sync_created_at':
-          model.syncCreatedAt?.millisecondsSinceEpoch ?? DateTime.now().millisecondsSinceEpoch,
+          model.syncCreatedAt?.millisecondsSinceEpoch ??
+          DateTime.now().toUtc().millisecondsSinceEpoch,
     };
   }
 
   T _prepareForInsert(T model) {
-    model.syncStatus = SyncStatus.pending;
-    model.syncOperation = SyncOperation.insert;
-    model.syncCreatedAt = DateTime.now();
-    model.repositoryName = name;
+    model._setSyncStatus(SyncStatus.pending);
+    model._setSyncOperation(SyncOperation.insert);
+    model._setSyncCreatedAt(DateTime.now().toUtc());
+    model._setRepositoryName(name);
     return model;
   }
 
   T _prepareForUpdate(T model) {
-    model.syncStatus = SyncStatus.pending;
-    model.syncOperation = model.syncOperation == SyncOperation.insert
+    final wasPendingInsert =
+        model.needSync && model.syncOperation == SyncOperation.insert;
+    final existingCreatedAt = model.syncCreatedAt;
+
+    model._setSyncStatus(SyncStatus.pending);
+    final operation = wasPendingInsert
         ? SyncOperation.insert
         : SyncOperation.update;
-    model.repositoryName = name;
-    model.syncCreatedAt ??= DateTime.now();
+    model._setSyncOperation(operation);
+    model._setRepositoryName(name);
+    model._setSyncCreatedAt(existingCreatedAt ?? DateTime.now().toUtc());
     return model;
   }
 
@@ -256,9 +248,7 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
   Future<void> _mergeRemoteItems(List<dynamic> remoteObjects) async {
     final typedRemote = remoteObjects.cast<T>();
     final LocalFirstModels<T> allLocal = await _getAll(includeDeleted: true);
-    final Map<String, T> localMap = {
-      for (var obj in allLocal) getId(obj): obj,
-    };
+    final Map<String, T> localMap = {for (var obj in allLocal) getId(obj): obj};
 
     for (final T remoteObj in typedRemote) {
       final remoteId = getId(remoteObj);
@@ -281,8 +271,8 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
       }
 
       final resolved = resolveConflict(localObj, remoteObj);
-      resolved.syncStatus = SyncStatus.ok;
-      resolved.syncOperation = SyncOperation.update;
+      resolved._setSyncStatus(SyncStatus.ok);
+      resolved._setSyncOperation(SyncOperation.update);
       await _client.localStorage.update(
         name,
         remoteId,
@@ -296,9 +286,7 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
     return allObjects.where((obj) => obj.needSync).toList();
   }
 
-  Future<List<T>> _getAll({
-    bool includeDeleted = false,
-  }) async {
+  Future<List<T>> _getAll({bool includeDeleted = false}) async {
     final maps = await _client.localStorage.getAll(name);
     return maps //
         .map(_modelFromJson)
@@ -307,11 +295,7 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
   }
 
   Future<void> _updateObjectStatus(T obj) async {
-    await _client.localStorage.update(
-      name,
-      getId(obj),
-      _toStorageJson(obj),
-    );
+    await _client.localStorage.update(name, getId(obj), _toStorageJson(obj));
   }
 
   T _modelFromJson(Map<String, dynamic> json) {
@@ -321,24 +305,28 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
     final createdAtMs = itemJson.remove('_sync_created_at') as int?;
 
     final model = fromJson(itemJson);
-    model.syncStatus =
-        statusIndex != null ? SyncStatus.values[statusIndex] : SyncStatus.ok;
-    model.syncOperation = opIndex != null
-        ? SyncOperation.values[opIndex]
-        : SyncOperation.insert;
-    model.syncCreatedAt =
-        createdAtMs != null ? DateTime.fromMillisecondsSinceEpoch(createdAtMs) : null;
-    model.repositoryName = name;
+    model._setSyncStatus(
+      statusIndex != null ? SyncStatus.values[statusIndex] : SyncStatus.ok,
+    );
+    model._setSyncOperation(
+      opIndex != null ? SyncOperation.values[opIndex] : SyncOperation.insert,
+    );
+    model._setSyncCreatedAt(
+      createdAtMs != null
+          ? DateTime.fromMillisecondsSinceEpoch(createdAtMs, isUtc: true)
+          : null,
+    );
+    model._setRepositoryName(name);
     return model;
   }
 
   T _copyModel(T target, T source) {
     // Shallow copy via JSON round-trip using existing serializers.
     final merged = _fromJson({..._toJson(target), ..._toJson(source)});
-    merged.syncStatus = target.syncStatus;
-    merged.syncOperation = target.syncOperation;
-    merged.syncCreatedAt = target.syncCreatedAt;
-    merged.repositoryName = target.repositoryName;
+    merged._setSyncStatus(target.syncStatus);
+    merged._setSyncOperation(target.syncOperation);
+    merged._setSyncCreatedAt(target.syncCreatedAt);
+    merged._setRepositoryName(target.repositoryName);
     return merged;
   }
 
@@ -347,10 +335,10 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
     required SyncOperation operation,
   }) {
     final model = _fromJson(json);
-    model.syncStatus = SyncStatus.ok;
-    model.syncOperation = operation;
-    model.repositoryName = name;
-    model.syncCreatedAt ??= DateTime.now();
+    model._setSyncStatus(SyncStatus.ok);
+    model._setSyncOperation(operation);
+    model._setRepositoryName(name);
+    model._setSyncCreatedAt(model.syncCreatedAt ?? DateTime.now().toUtc());
     return model;
   }
 
