@@ -146,8 +146,8 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   late final Stream<int> _counterStream;
-  late final Stream<List<LocalFirstModel<UserModel>>> _usersStream;
-  late final Stream<List<LocalFirstModel<CounterLogModel>>> _recentLogsStream;
+  late final Stream<List<UserModel>> _usersStream;
+  late final Stream<List<CounterLogModel>> _recentLogsStream;
 
   @override
   void initState() {
@@ -252,16 +252,12 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
-  StreamBuilder<List<LocalFirstModel<UserModel>>> _buildAvatarAndGlobalCounter(
-    UserModel user,
-  ) {
+  StreamBuilder<List<UserModel>> _buildAvatarAndGlobalCounter(UserModel user) {
     return StreamBuilder(
       stream: _usersStream,
       builder: (context, snapshot) {
         final users = snapshot.data ?? const [];
-        final avatarMap = {
-          for (final u in users) u.item.username: u.item.avatarUrl,
-        };
+        final avatarMap = {for (final u in users) u.username: u.avatarUrl};
         final currentUserAvatar =
             avatarMap[user.username] ?? user.avatarUrl ?? '';
 
@@ -336,7 +332,7 @@ class _MyHomePageState extends State<MyHomePage> {
           builder: (context, usersSnapshot) {
             final avatarMap = {
               for (final u in usersSnapshot.data ?? const [])
-                u.item.username: u.item.avatarUrl,
+                u.username: u.avatarUrl,
             };
             return Container(
               color: ColorScheme.of(context).surfaceContainerLow,
@@ -353,7 +349,7 @@ class _MyHomePageState extends State<MyHomePage> {
                     itemCount: recentLogs.length,
                     itemBuilder: (context, index) {
                       final log = recentLogs[index];
-                      final avatar = avatarMap[log.item.username] ?? '';
+                      final avatar = avatarMap[log.username] ?? '';
                       return CounterLogTile(log: log, avatarUrl: avatar);
                     },
                   );
@@ -390,7 +386,7 @@ class _MyHomePageState extends State<MyHomePage> {
                           separatorBuilder: (_, _) => const SizedBox(width: 12),
                           itemBuilder: (context, index) {
                             final item = users[index];
-                            final avatar = item.item.avatarUrl ?? '';
+                            final avatar = item.avatarUrl ?? '';
                             return Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
@@ -400,7 +396,7 @@ class _MyHomePageState extends State<MyHomePage> {
                                   showEditIndicator: false,
                                 ),
                                 const SizedBox(height: 6),
-                                Text(item.item.username),
+                                Text(item.username),
                               ],
                             );
                           },
@@ -416,7 +412,7 @@ class _MyHomePageState extends State<MyHomePage> {
 }
 
 class CounterLogTile extends StatelessWidget {
-  final LocalFirstModel<CounterLogModel> log;
+  final CounterLogModel log;
   final String avatarUrl;
   const CounterLogTile({super.key, required this.log, required this.avatarUrl});
 
@@ -435,11 +431,11 @@ class CounterLogTile extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  log.item.toString(),
+                  log.toString(),
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
                 Text(
-                  log.item.toFormattedDate(),
+                  log.toFormattedDate(),
                   style: Theme.of(
                     context,
                   ).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
@@ -572,7 +568,7 @@ class RepositoryService {
         .where('username', isEqualTo: username)
         .getAll();
     final preservedAvatar = existing.isNotEmpty
-        ? existing.first.item.avatarUrl
+        ? existing.first.avatarUrl
         : null;
     final user = authenticatedUser = UserModel(
       username: username,
@@ -611,7 +607,7 @@ class RepositoryService {
         .where('username', isEqualTo: username)
         .getAll();
     if (results.isEmpty) return null;
-    authenticatedUser = results.first.item;
+    authenticatedUser = results.first;
     syncStrategy.start();
     return authenticatedUser;
   }
@@ -625,30 +621,26 @@ class RepositoryService {
   Future<void> _persistLastUsername(String username) =>
       localFirst?.setKeyValue(_lastUsernameKey, username) ?? Future.value();
 
-  Future<List<LocalFirstModel<UserModel>>> getUsers() =>
-      userRepository.query().getAll();
+  Future<List<UserModel>> getUsers() => userRepository.query().getAll();
 
-  Future<List<LocalFirstModel<CounterLogModel>>> getLogs() =>
-      counterLogRepository
-          .query()
-          .orderBy('created_at', descending: true)
-          .getAll();
+  Future<List<CounterLogModel>> getLogs() => counterLogRepository
+      .query()
+      .orderBy('created_at', descending: true)
+      .getAll();
 
-  Stream<List<LocalFirstModel<CounterLogModel>>> watchLogs() =>
-      counterLogRepository
-          .query()
-          .orderBy('created_at', descending: true)
-          .watch();
+  Stream<List<CounterLogModel>> watchLogs() => counterLogRepository
+      .query()
+      .orderBy('created_at', descending: true)
+      .watch();
 
   Stream<int> watchCounter() => watchLogs().map(
-    (logs) => logs.fold<int>(0, (sum, log) => sum + log.item.increment),
+    (logs) => logs.fold<int>(0, (sum, log) => sum + log.increment),
   );
 
-  Stream<List<LocalFirstModel<CounterLogModel>>> watchRecentLogs({
-    int limit = 5,
-  }) => watchLogs().map((logs) => logs.take(limit).toList());
+  Stream<List<CounterLogModel>> watchRecentLogs({int limit = 5}) =>
+      watchLogs().map((logs) => logs.take(limit).toList());
 
-  Stream<List<LocalFirstModel<UserModel>>> watchUsers() =>
+  Stream<List<UserModel>> watchUsers() =>
       userRepository.query().orderBy('username').watch();
 
   Future<JsonMap<String?>> getAvatarsForUsers(Set<String> usernames) async {
@@ -659,7 +651,7 @@ class RepositoryService {
         .getAll();
 
     final map = <String, String?>{
-      for (final user in results) user.item.username: user.item.avatarUrl,
+      for (final user in results) user.username: user.avatarUrl,
     };
 
     for (final username in usernames) {
@@ -706,9 +698,9 @@ class RepositoryService {
     if (_currentNamespace == namespace) return;
     _currentNamespace = namespace;
 
-    final dataSource = db.localDataSource;
-    if (dataSource is HiveLocalFirstStorage) {
-      await dataSource.useNamespace(namespace);
+    final storage = db.localStorage;
+    if (storage is HiveLocalFirstStorage) {
+      await storage.useNamespace(namespace);
     }
   }
 
@@ -723,7 +715,7 @@ class RepositoryService {
 }
 
 /// Domain model for a user with avatar metadata.
-class UserModel {
+class UserModel with LocalFirstModel {
   final String id;
   final String username;
   final String? avatarUrl;
@@ -755,6 +747,8 @@ class UserModel {
     );
   }
 
+  @override
+  @override
   JsonMap<dynamic> toJson() {
     return {
       'id': id,
@@ -776,31 +770,25 @@ class UserModel {
     );
   }
 
-  static LocalFirstModel<UserModel> resolveConflict(
-    LocalFirstModel<UserModel> local,
-    LocalFirstModel<UserModel> remote,
-  ) {
+  static UserModel resolveConflict(UserModel local, UserModel remote) {
     // Last write wins, but avatar value is preserved
-    if (local.item.updatedAt == remote.item.updatedAt) return remote;
-    final preferred = local.item.updatedAt.isAfter(remote.item.updatedAt)
+    if (local.updatedAt == remote.updatedAt) return remote;
+    final preferred = local.updatedAt.isAfter(remote.updatedAt)
         ? local
         : remote;
     final fallback = identical(preferred, local) ? remote : local;
-    final avatar = preferred.item.avatarUrl ?? fallback.item.avatarUrl;
-    return preferred.copyWith(
-      item: UserModel(
-        id: preferred.item.id,
-        username: preferred.item.username,
-        avatarUrl: avatar,
-        createdAt: preferred.item.createdAt,
-        updatedAt: preferred.item.updatedAt,
-      ),
+    final avatar = preferred.avatarUrl ?? fallback.avatarUrl;
+    return UserModel(
+      id: preferred.id,
+      username: preferred.username,
+      avatarUrl: avatar,
+      createdAt: preferred.createdAt,
+      updatedAt: preferred.updatedAt,
     );
   }
 }
 
-/// Domain model for counter increment/decrement events.
-class CounterLogModel {
+class CounterLogModel with LocalFirstModel {
   final String id;
   final String username;
   final int increment;
@@ -852,13 +840,10 @@ class CounterLogModel {
     );
   }
 
-  static LocalFirstModel<CounterLogModel> resolveConflict(
-    LocalFirstModel<CounterLogModel> local,
-    LocalFirstModel<CounterLogModel> remote,
-  ) {
-    // Last write wins
-    return local.item.updatedAt.isAfter(remote.item.updatedAt) ? local : remote;
-  }
+  static CounterLogModel resolveConflict(
+    CounterLogModel local,
+    CounterLogModel remote,
+  ) => local.updatedAt.isAfter(remote.updatedAt) ? local : remote;
 
   @override
   String toString() {
@@ -978,9 +963,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     await mongoApi.push(_buildUploadPayload(changes));
   }
 
-  JsonMap<dynamic> _buildUploadPayload(
-    JsonMap<List<LocalFirstModel<Object>>> changes,
-  ) {
+  JsonMap<dynamic> _buildUploadPayload(JsonMap<List<LocalFirstModel>> changes) {
     return {
       'lastSyncedAt': DateTime.now().toIso8601String(),
       'changes': {

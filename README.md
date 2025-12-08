@@ -55,11 +55,11 @@ The API is evolving, but the intended flow looks like this:
 ```dart
 import 'package:local_first/local_first.dart';
 
-// 1) Describe your model.
-class Todo with LocalFirstRepository<Todo> {
+// 1) Describe your model and add LocalFirstModel to get sync metadata.
+class Todo with LocalFirstModel {
   Todo({
-    required this.id, 
-    required this.title, 
+    required this.id,
+    required this.title,
     this.completed = false,
   }) : updatedAt = DateTime.now();
 
@@ -76,66 +76,50 @@ class Todo with LocalFirstRepository<Todo> {
         'updated_at': updatedAt.toIso8601String(),
       };
 
-  @override
-  static Todo fromJson(Map<String, dynamic> json) => Todo(
+  factory Todo.fromJson(Map<String, dynamic> json) => Todo(
         id: json['id'] as String,
         title: json['title'] as String,
         completed: json['completed'] as bool? ?? false,
         updatedAt: DateTime.parse(json['updated_at']),
       );
 
-  // Last write wins
-  @override
-  static Todo resolveConflict(
-    Todo local,
-    Todo remote,
-  ) => local.updatedAt.isAfter(remote.updatedAt)
-      ? local
-      : remote;
+  // Last write wins.
+  static Todo resolveConflict(Todo local, Todo remote) =>
+      local.updatedAt.isAfter(remote.updatedAt) ? local : remote;
 }
 
+// 2) Create a repository for the model.
+final todoRepository = LocalFirstRepository<Todo>.create(
+  name: 'todo',
+  getId: (todo) => todo.id,
+  toJson: (todo) => todo.toJson(),
+  fromJson: Todo.fromJson,
+  onConflict: Todo.resolveConflict,
+);
+
 Future<void> main() async {
-  // 2) Wire up local + remote data sources (implementation details coming soon).
+  // 3) Wire up local storage plus your sync strategy.
   final client = LocalFirstClient(
-    repositories: [
-      LocalFirstRepository.create(
-        name: 'todo',
-        getId: (todo) => todo.id,
-        toJson: (todo) => todo.toJson(),
-        fromJson: (json) => Todo.fromJson(json),
-        onConflict: Todo.resolveConflict, 
-      ),
-    ],
-    localStorage: HiveLocalFirstStorage(), // or SQLiteStorage/your own storage
-    syncStrageties: [
-      // Add your own custom sync strategies
-      WebSocketSyncStrategy(
-        baseUrl: 'wss://api.example.com',
-        endpoint: '/sync',
-      ),
-      PushNotificationSyncStrategy(),
-      WorkManagerSyncStrategy(
-        minPeriod: Duration(minutes: 30),
-      )
+    repositories: [todoRepository],
+    localStorage: HiveLocalFirstStorage(), // swap for your storage adapter
+    syncStrategies: [
+      // Provide your own strategy that implements DataSyncStrategy.
+      MyRestSyncStrategy(),
     ],
   );
 
   await client.initialize();
 
-  // 3) Use the repository as if you were online the whole time.
-  final repo = client.repository<Todo>();
-
-  await repo.upsert(Todo(id: '1', title: 'Buy milk'));
+  // 4) Use the repository as if you were online the whole time.
+  await todoRepository.upsert(Todo(id: '1', title: 'Buy milk'));
 
   // served instantly from local cache
-  final todoStream = await repo.query().orderBy('title').watch();
+  final todoStream = todoRepository.query().orderBy('title').watch();
 
-  // 4) Trigger manually when it makes sense (app start, pull-to-refresh, background).
-  await client.sync();
+  // 5) Let your strategy push/pull, or trigger manually when it makes sense.
+  // await client.sync();
 }
 ```
-
-> The classes above illustrate the design goals; exact names and signatures may shift as the package matures.
 
 ## Example app
 
@@ -151,6 +135,11 @@ flutter pub get
 cd example
 flutter pub get
 flutter run
+
+# (Optional) Start the Mongo mock used by the sync strategy.
+# docker run -d --name mongo_local -p 27017:27017 \\
+#   -e MONGO_INITDB_ROOT_USERNAME=admin \\
+#   -e MONGO_INITDB_ROOT_PASSWORD=admin mongo:7
 ```
 
 ## Roadmap

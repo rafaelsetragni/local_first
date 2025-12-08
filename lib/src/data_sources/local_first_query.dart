@@ -4,7 +4,7 @@ part of '../../local_first.dart';
 ///
 /// Provides a fluent API for building complex queries with filtering,
 /// ordering, and pagination capabilities.
-class LocalFirstQuery<T extends Object> {
+class LocalFirstQuery<T extends LocalFirstModel> {
   final String repositoryName;
   final List<QueryFilter> filters;
   final List<QuerySort> sorts;
@@ -122,9 +122,8 @@ class LocalFirstQuery<T extends Object> {
 
   /// Executes the query and returns all matching results.
   ///
-  /// Returns a list of [LocalFirstModel]s containing both the item
-  /// and its sync metadata.
-  Future<List<LocalFirstModel<T>>> getAll() async {
+  /// Returns a list of models with sync metadata.
+  Future<List<T>> getAll() async {
     final results = await _delegate.query(this);
     return _mapResults(results);
   }
@@ -140,16 +139,17 @@ class LocalFirstQuery<T extends Object> {
   ///   .watch()
   ///   .listen((items) => print('Active items: ${items.length}'));
   /// ```
-  Stream<List<LocalFirstModel<T>>> watch() {
+  Stream<List<T>> watch() {
     return _delegate.watchQuery(this).map(_mapResults);
   }
 
-  List<LocalFirstModel<T>> _mapResults(List<Map<String, dynamic>> results) {
+  List<T> _mapResults(List<Map<String, dynamic>> results) {
     return results
         .map((json) {
-          final item = _fromJson(json);
+          final itemJson = Map<String, dynamic>.from(json);
+          final item = _fromJson(itemJson..removeWhere((key, _) => key.startsWith('_sync_')));
 
-          // Extrai metadata de sincronização
+          // Extract sync metadata stored alongside the model
           final syncStatus = json['_sync_status'] != null
               ? SyncStatus.values[json['_sync_status'] as int]
               : SyncStatus.ok;
@@ -158,12 +158,13 @@ class LocalFirstQuery<T extends Object> {
               ? SyncOperation.values[json['_sync_operation'] as int]
               : SyncOperation.insert;
 
-          return LocalFirstModel<T>(
-            item: item,
-            status: syncStatus,
-            operation: syncOperation,
-            repository: _repository,
-          );
+          item.syncStatus = syncStatus;
+          item.syncOperation = syncOperation;
+          final createdAt = json['_sync_created_at'] as int?;
+          item.syncCreatedAt =
+              createdAt != null ? DateTime.fromMillisecondsSinceEpoch(createdAt) : null;
+          item.repositoryName = repositoryName;
+          return item;
         })
         .where((obj) => !obj.isDeleted)
         .toList();
