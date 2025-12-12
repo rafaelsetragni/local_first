@@ -341,7 +341,17 @@ void main() {
       });
 
       when(mockDb.execute(any)).thenAnswer((_) async {});
-      when(mockDb.execute(any, anyNamed('arguments'))).thenAnswer((_) async {});
+
+      // Stubs for `query` are needed for `ensureSchema` to work with a mock DB.
+      when(
+        mockDb.query(
+          any,
+          where: anyNamed('where'),
+          whereArgs: anyNamed('whereArgs'),
+        ),
+      ).thenAnswer((_) async => []);
+      when(mockDb.query(any)).thenAnswer((_) async => []);
+
       when(
         mockDb.insert(
           any,
