@@ -63,6 +63,15 @@ abstract class LocalFirstStorage {
   /// Reads arbitrary metadata stored by key.
   Future<String?> getMeta(String key);
 
+  /// Ensures the storage backend has an up-to-date schema for a repository.
+  ///
+  /// Backends that do not use schemas can ignore this call.
+  Future<void> ensureSchema(
+    String tableName,
+    Map<String, LocalFieldType> schema, {
+    required String idFieldName,
+  }) async {}
+
   /// Executes a query and returns results.
   ///
   /// Delegates that support native queries (like Isar, Drift) can

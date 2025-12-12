@@ -26,6 +26,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   bool _initialized = false;
 
   final Map<String, Set<_SqliteQueryObserver>> _observers = {};
+  final Map<String, Map<String, LocalFieldType>> _schemas = {};
 
   static final RegExp _validName = RegExp(r'^[a-zA-Z0-9_]+$');
 
@@ -100,10 +101,20 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
+  Future<void> ensureSchema(
+    String tableName,
+    Map<String, LocalFieldType> schema, {
+    required String idFieldName,
+  }) async {
+    _schemas[tableName] = Map.unmodifiable(schema);
+    await _ensureTable(tableName);
+  }
+
+  @override
   Future<List<Map<String, dynamic>>> getAll(String tableName) async {
     final db = await _database;
+    await _ensureTable(tableName);
     final resolvedTable = _tableName(tableName);
-    await _ensureTable(resolvedTable);
 
     final rows = await db.query(resolvedTable);
     return rows
@@ -116,8 +127,8 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   @override
   Future<Map<String, dynamic>?> getById(String tableName, String id) async {
     final db = await _database;
+    await _ensureTable(tableName);
     final resolvedTable = _tableName(tableName);
-    await _ensureTable(resolvedTable);
 
     final rows = await db.query(
       resolvedTable,
@@ -140,18 +151,22 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     String idField,
   ) async {
     final db = await _database;
+    await _ensureTable(tableName);
     final resolvedTable = _tableName(tableName);
-    await _ensureTable(resolvedTable);
 
     final id = item[idField];
     if (id is! String) {
       throw ArgumentError('Item is missing string id field "$idField".');
     }
 
-    await db.insert(resolvedTable, {
-      'id': id,
-      'data': jsonEncode(item),
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    final schema = _schemaFor(tableName);
+    final row = _encodeRowForStorage(schema, item, id);
+
+    await db.insert(
+      resolvedTable,
+      row,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
 
     await _notifyWatchers(tableName);
   }
@@ -163,13 +178,17 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     Map<String, dynamic> item,
   ) async {
     final db = await _database;
+    await _ensureTable(tableName);
     final resolvedTable = _tableName(tableName);
-    await _ensureTable(resolvedTable);
 
-    await db.insert(resolvedTable, {
-      'id': id,
-      'data': jsonEncode(item),
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    final schema = _schemaFor(tableName);
+    final row = _encodeRowForStorage(schema, item, id);
+
+    await db.insert(
+      resolvedTable,
+      row,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
 
     await _notifyWatchers(tableName);
   }
@@ -178,7 +197,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   Future<void> delete(String repositoryName, String id) async {
     final db = await _database;
     final resolvedTable = _tableName(repositoryName);
-    await _ensureTable(resolvedTable);
+    await _ensureTable(repositoryName);
 
     await db.delete(resolvedTable, where: 'id = ?', whereArgs: [id]);
     await _notifyWatchers(repositoryName);
@@ -187,8 +206,8 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   @override
   Future<void> deleteAll(String tableName) async {
     final db = await _database;
+    await _ensureTable(tableName);
     final resolvedTable = _tableName(tableName);
-    await _ensureTable(resolvedTable);
 
     await db.delete(resolvedTable);
     await _notifyWatchers(tableName);
@@ -272,11 +291,48 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     );
   }
 
-  Future<void> _ensureTable(String resolvedTableName) async {
+  Map<String, LocalFieldType> _schemaFor(String repositoryName) {
+    return _schemas[repositoryName] ?? const {};
+  }
+
+  Future<void> _ensureTable(String repositoryName) async {
     final db = await _database;
-    await db.execute(
-      'CREATE TABLE IF NOT EXISTS $resolvedTableName (id TEXT PRIMARY KEY, data TEXT NOT NULL)',
+    final resolvedTableName = _tableName(repositoryName);
+    final schema = _schemaFor(repositoryName);
+    const reservedColumns = {
+      'id',
+      'data',
+      '_sync_status',
+      '_sync_operation',
+      '_sync_created_at',
+    };
+
+    final columnDefinitions = StringBuffer(
+      'id TEXT PRIMARY KEY, '
+      'data TEXT NOT NULL, '
+      '_sync_status INTEGER, '
+      '_sync_operation INTEGER, '
+      '_sync_created_at INTEGER',
     );
+
+    for (final entry in schema.entries) {
+      if (reservedColumns.contains(entry.key)) {
+        throw ArgumentError('Field name "${entry.key}" is reserved.');
+      }
+      _validateIdentifier(entry.key, 'field');
+      columnDefinitions.write(', "${entry.key}" ${_sqlTypeFor(entry.value)}');
+    }
+
+    await db.execute(
+      'CREATE TABLE IF NOT EXISTS $resolvedTableName (${columnDefinitions.toString()})',
+    );
+
+    for (final entry in schema.entries) {
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS ${resolvedTableName}__${entry.key} '
+        'ON $resolvedTableName("${entry.key}")',
+      );
+    }
   }
 
   String _tableName(String name) {
@@ -291,6 +347,72 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
         'are supported.',
       );
     }
+  }
+
+  String _sqlTypeFor(LocalFieldType type) {
+    switch (type) {
+      case LocalFieldType.text:
+        return 'TEXT';
+      case LocalFieldType.integer:
+        return 'INTEGER';
+      case LocalFieldType.real:
+        return 'REAL';
+      case LocalFieldType.boolean:
+        return 'INTEGER';
+      case LocalFieldType.datetime:
+        return 'INTEGER';
+      case LocalFieldType.blob:
+        return 'BLOB';
+    }
+  }
+
+  Object? _encodeValue(LocalFieldType? type, dynamic value) {
+    if (value == null) return null;
+    switch (type) {
+      case LocalFieldType.boolean:
+        if (value is bool) return value ? 1 : 0;
+        if (value is num) return value;
+        return value == true ? 1 : 0;
+      case LocalFieldType.datetime:
+        if (value is DateTime) {
+          return value.toUtc().millisecondsSinceEpoch;
+        }
+        if (value is String) {
+          final parsed = DateTime.tryParse(value);
+          return parsed?.toUtc().millisecondsSinceEpoch;
+        }
+        return value;
+      case LocalFieldType.integer:
+        return value is bool ? (value ? 1 : 0) : value;
+      case LocalFieldType.real:
+        return value;
+      case LocalFieldType.text:
+        return value;
+      case LocalFieldType.blob:
+        return value;
+      case null:
+        return value is bool ? (value ? 1 : 0) : value;
+    }
+  }
+
+  Map<String, Object?> _encodeRowForStorage(
+    Map<String, LocalFieldType> schema,
+    Map<String, dynamic> item,
+    String id,
+  ) {
+    final row = <String, Object?>{
+      'id': id,
+      'data': jsonEncode(item),
+      '_sync_status': item['_sync_status'],
+      '_sync_operation': item['_sync_operation'],
+      '_sync_created_at': item['_sync_created_at'],
+    };
+
+    for (final entry in schema.entries) {
+      row[entry.key] = _encodeValue(entry.value, item[entry.key]);
+    }
+
+    return row;
   }
 
   Future<void> _notifyWatchers(String repositoryName) async {
@@ -316,76 +438,68 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     LocalFirstQuery<LocalFirstModel> query,
   ) async {
     final db = await _database;
+    await _ensureTable(query.repositoryName);
     final resolvedTable = _tableName(query.repositoryName);
-    await _ensureTable(resolvedTable);
+    final schema = _schemaFor(query.repositoryName);
 
-    // Fast path: whereIn with empty list can never match
     for (final filter in query.filters) {
       if (filter.whereIn != null && filter.whereIn!.isEmpty) {
         return const [];
       }
     }
 
-    Object? normalizeValue(dynamic value) {
-      if (value is bool) return value ? 1 : 0;
-      return value;
-    }
-
     final whereClauses = <String>[];
     final orderClauses = <String>[];
     final args = <Object?>[];
 
+    String columnExpr(String field) {
+      if (schema.containsKey(field)) {
+        return '"$field"';
+      }
+      args.add('\$.$field');
+      return 'json_extract(data, ?)';
+    }
+
+    Object? encode(String field, dynamic value) {
+      return _encodeValue(schema[field], value);
+    }
+
     for (final filter in query.filters) {
-      final path = '\$.${filter.field}';
+      final column = columnExpr(filter.field);
 
       if (filter.isNull != null) {
-        whereClauses.add(
-          'json_extract(data, ?) IS ${filter.isNull! ? '' : 'NOT '}NULL',
-        );
-        args.add(path);
+        whereClauses.add('$column IS ${filter.isNull! ? '' : 'NOT '}NULL');
         continue;
       }
 
       if (filter.isEqualTo != null) {
-        whereClauses.add('json_extract(data, ?) = ?');
-        args
-          ..add(path)
-          ..add(normalizeValue(filter.isEqualTo));
+        whereClauses.add('$column = ?');
+        args.add(encode(filter.field, filter.isEqualTo));
       }
 
       if (filter.isNotEqualTo != null) {
-        whereClauses.add('json_extract(data, ?) != ?');
-        args
-          ..add(path)
-          ..add(normalizeValue(filter.isNotEqualTo));
+        whereClauses.add('$column != ?');
+        args.add(encode(filter.field, filter.isNotEqualTo));
       }
 
       if (filter.isLessThan != null) {
-        whereClauses.add('json_extract(data, ?) < ?');
-        args
-          ..add(path)
-          ..add(normalizeValue(filter.isLessThan));
+        whereClauses.add('$column < ?');
+        args.add(encode(filter.field, filter.isLessThan));
       }
 
       if (filter.isLessThanOrEqualTo != null) {
-        whereClauses.add('json_extract(data, ?) <= ?');
-        args
-          ..add(path)
-          ..add(normalizeValue(filter.isLessThanOrEqualTo));
+        whereClauses.add('$column <= ?');
+        args.add(encode(filter.field, filter.isLessThanOrEqualTo));
       }
 
       if (filter.isGreaterThan != null) {
-        whereClauses.add('json_extract(data, ?) > ?');
-        args
-          ..add(path)
-          ..add(normalizeValue(filter.isGreaterThan));
+        whereClauses.add('$column > ?');
+        args.add(encode(filter.field, filter.isGreaterThan));
       }
 
       if (filter.isGreaterThanOrEqualTo != null) {
-        whereClauses.add('json_extract(data, ?) >= ?');
-        args
-          ..add(path)
-          ..add(normalizeValue(filter.isGreaterThanOrEqualTo));
+        whereClauses.add('$column >= ?');
+        args.add(encode(filter.field, filter.isGreaterThanOrEqualTo));
       }
 
       if (filter.whereIn != null) {
@@ -393,9 +507,10 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
           filter.whereIn!.length,
           '?',
         ).join(', ');
-        whereClauses.add('json_extract(data, ?) IN ($placeholders)');
-        args.add(path);
-        args.addAll(filter.whereIn!.map<Object?>(normalizeValue));
+        whereClauses.add('$column IN ($placeholders)');
+        args.addAll(
+          filter.whereIn!.map<Object?>((value) => encode(filter.field, value)),
+        );
       }
 
       if (filter.whereNotIn != null && filter.whereNotIn!.isNotEmpty) {
@@ -403,17 +518,18 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
           filter.whereNotIn!.length,
           '?',
         ).join(', ');
-        whereClauses.add('json_extract(data, ?) NOT IN ($placeholders)');
-        args.add(path);
-        args.addAll(filter.whereNotIn!.map<Object?>(normalizeValue));
+        whereClauses.add('$column NOT IN ($placeholders)');
+        args.addAll(
+          filter.whereNotIn!.map<Object?>(
+            (value) => encode(filter.field, value),
+          ),
+        );
       }
     }
 
     for (final sort in query.sorts) {
-      orderClauses.add(
-        'json_extract(data, ?) ${sort.descending ? 'DESC' : 'ASC'}',
-      );
-      args.add('\$.${sort.field}');
+      final column = columnExpr(sort.field);
+      orderClauses.add('$column ${sort.descending ? 'DESC' : 'ASC'}');
     }
 
     final sql = StringBuffer('SELECT data FROM $resolvedTable');
