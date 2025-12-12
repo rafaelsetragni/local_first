@@ -67,8 +67,8 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   Future<void> close() async {
     if (!_initialized) return;
 
-    for (final observers in _observers.values) {
-      for (final observer in observers) {
+    for (final observers in List.of(_observers.values)) {
+      for (final observer in List.of(observers)) {
         await observer.controller.close();
       }
     }
@@ -370,7 +370,6 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     if (value == null) return null;
     switch (type) {
       case LocalFieldType.boolean:
-        if (value is bool) return value ? 1 : 0;
         if (value is num) return value;
         return value == true ? 1 : 0;
       case LocalFieldType.datetime:
@@ -428,7 +427,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       return value.map(_normalizeJsonValue).toList();
     }
     if (value is Map) {
-      return (value as Map).map(
+      return value.map(
         (key, val) => MapEntry(key as Object, _normalizeJsonValue(val)),
       );
     }
