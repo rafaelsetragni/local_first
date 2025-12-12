@@ -104,6 +104,27 @@ void main() {
       await lazyStorage.close();
     });
 
+    test('ensureSchema is a no-op (Hive is schemaless)', () async {
+      await storage.ensureSchema(
+        'users',
+        const {'anyField': LocalFieldType.text},
+        idFieldName: 'id',
+      );
+
+      // Still able to insert and read without schema enforcement.
+      await storage.insert('users', {'id': 'schema-less', 'name': 'Hive'}, 'id');
+      final fetched = await storage.getById('users', 'schema-less');
+      expect(fetched?['name'], 'Hive');
+      // Unknown field is preserved in stored data.
+      await storage.update('users', 'schema-less', {
+        'id': 'schema-less',
+        'name': 'Hive',
+        'extra': 123,
+      });
+      final updated = await storage.getById('users', 'schema-less');
+      expect(updated?['extra'], 123);
+    });
+
     test('query handles lazy boxes with filters', () async {
       final lazyStorage = HiveLocalFirstStorage(
         customPath: tempDir.path,
