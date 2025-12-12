@@ -29,3 +29,4 @@ dev_dependencies:
   mocktail: ^1.0.3
   hive: ^2.2.3
   build_runner: ^2.10.4
+  sqflite_common_ffi: ^2.3.5
