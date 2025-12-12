@@ -1,3 +1,5 @@
+// ignore_for_file: override_on_non_overriding_member
+
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -120,6 +122,13 @@ class _InMemoryStorage implements LocalFirstStorage {
 
   @override
   Future<String?> getMeta(String key) async => meta[key];
+
+  @override
+  Future<void> ensureSchema(
+    String tableName,
+    Map<String, LocalFieldType> schema, {
+    required String idFieldName,
+  }) async {}
 
   @override
   Future<List<Map<String, dynamic>>> query(LocalFirstQuery query) async {
@@ -665,7 +674,11 @@ void main() {
     );
 
     test('query().watch streams updates', () async {
-      final eventsFuture = repo.query().watch().take(2).toList()
+      final eventsFuture = repo
+          .query()
+          .watch()
+          .take(2)
+          .toList()
           .timeout(const Duration(seconds: 5));
 
       await storage.insert('tests', {

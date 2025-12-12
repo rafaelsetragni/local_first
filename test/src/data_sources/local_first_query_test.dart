@@ -95,6 +95,13 @@ class _FakeStorage extends LocalFirstStorage {
 
   @override
   Future<String?> getMeta(String key) async => _meta[key];
+
+  @override
+  Future<void> ensureSchema(
+    String tableName,
+    Map<String, LocalFieldType> schema, {
+    required String idFieldName,
+  }) async {}
 }
 
 void main() {

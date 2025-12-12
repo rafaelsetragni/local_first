@@ -160,6 +160,15 @@ class _InMemoryStorage implements LocalFirstStorage {
     controller.addStream(Stream.value([]));
     return controller.stream;
   }
+
+  @override
+  Future<void> ensureSchema(
+    String tableName,
+    Map<String, LocalFieldType> schema, {
+    required String idFieldName,
+  }) async {
+    return;
+  }
 }
 
 void main() {
