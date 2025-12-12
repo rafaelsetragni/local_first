@@ -211,6 +211,16 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
+  Future<void> ensureSchema(
+    String tableName,
+    Map<String, LocalFieldType> schema, {
+    required String idFieldName,
+  }) async {
+    // Hive stores Map payloads; no schema enforcement required.
+    return;
+  }
+
+  @override
   Future<void> clearAllData() async {
     if (!_initialized) {
       throw StateError(
