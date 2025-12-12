@@ -389,6 +389,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       case LocalFieldType.text:
         return value;
       case LocalFieldType.blob:
+        if (value is List<int>) return Uint8List.fromList(value);
         return value;
       case null:
         return value is bool ? (value ? 1 : 0) : value;
@@ -402,7 +403,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   ) {
     final row = <String, Object?>{
       'id': id,
-      'data': jsonEncode(item),
+      'data': jsonEncode(_normalizeJsonMap(item)),
       '_sync_status': item['_sync_status'],
       '_sync_operation': item['_sync_operation'],
       '_sync_created_at': item['_sync_created_at'],
@@ -413,6 +414,25 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     }
 
     return row;
+  }
+
+  Map<String, dynamic> _normalizeJsonMap(Map<String, dynamic> map) {
+    return map.map((key, value) => MapEntry(key, _normalizeJsonValue(value)));
+  }
+
+  dynamic _normalizeJsonValue(dynamic value) {
+    if (value is DateTime) {
+      return value.toIso8601String();
+    }
+    if (value is List) {
+      return value.map(_normalizeJsonValue).toList();
+    }
+    if (value is Map) {
+      return (value as Map).map(
+        (key, val) => MapEntry(key as Object, _normalizeJsonValue(val)),
+      );
+    }
+    return value;
   }
 
   Future<void> _notifyWatchers(String repositoryName) async {
