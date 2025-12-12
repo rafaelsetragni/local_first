@@ -868,6 +868,12 @@ LocalFirstRepository<UserModel> _buildUserRepository() {
     toJson: (user) => user.toJson(),
     fromJson: (json) => UserModel.fromJson(json),
     onConflict: UserModel.resolveConflict,
+    schema: const {
+      'username': LocalFieldType.text,
+      'avatar_url': LocalFieldType.text,
+      'created_at': LocalFieldType.datetime,
+      'updated_at': LocalFieldType.datetime,
+    },
   );
 }
 
@@ -878,6 +884,12 @@ LocalFirstRepository<CounterLogModel> _buildCounterLogRepository() {
     toJson: (log) => log.toJson(),
     fromJson: (json) => CounterLogModel.fromJson(json),
     onConflict: CounterLogModel.resolveConflict,
+    schema: const {
+      'username': LocalFieldType.text,
+      'increment': LocalFieldType.integer,
+      'created_at': LocalFieldType.datetime,
+      'updated_at': LocalFieldType.datetime,
+    },
   );
 }
 
