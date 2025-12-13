@@ -90,7 +90,10 @@ void main() {
       await lazyStorage.initialize();
 
       await lazyStorage.insert('lazy_users', {'id': '1', 'name': 'Lazy'}, 'id');
-      await lazyStorage.insert('eager_users', {'id': '2', 'name': 'Eager'}, 'id');
+      await lazyStorage.insert('eager_users', {
+        'id': '2',
+        'name': 'Eager',
+      }, 'id');
 
       final lazyAll = await lazyStorage.getAll('lazy_users');
       final eagerAll = await lazyStorage.getAll('eager_users');
@@ -105,14 +108,15 @@ void main() {
     });
 
     test('ensureSchema is a no-op (Hive is schemaless)', () async {
-      await storage.ensureSchema(
-        'users',
-        const {'anyField': LocalFieldType.text},
-        idFieldName: 'id',
-      );
+      await storage.ensureSchema('users', const {
+        'anyField': LocalFieldType.text,
+      }, idFieldName: 'id');
 
       // Still able to insert and read without schema enforcement.
-      await storage.insert('users', {'id': 'schema-less', 'name': 'Hive'}, 'id');
+      await storage.insert('users', {
+        'id': 'schema-less',
+        'name': 'Hive',
+      }, 'id');
       final fetched = await storage.getById('users', 'schema-less');
       expect(fetched?['name'], 'Hive');
       // Unknown field is preserved in stored data.
@@ -304,18 +308,22 @@ void main() {
       final mockBox = _MockBox<Map>();
 
       when(() => fakeHive.init(any())).thenReturn(null);
-      when(() => fakeHive.openBox<dynamic>(
-            any(),
-            encryptionCipher: any(named: 'encryptionCipher'),
-            keyComparator: any(named: 'keyComparator'),
-            crashRecovery: any(named: 'crashRecovery'),
-          )).thenAnswer((_) async => mockMeta);
-      when(() => fakeHive.openBox<Map>(
-            any(),
-            encryptionCipher: any(named: 'encryptionCipher'),
-            keyComparator: any(named: 'keyComparator'),
-            crashRecovery: any(named: 'crashRecovery'),
-          )).thenAnswer((_) async => mockBox);
+      when(
+        () => fakeHive.openBox<dynamic>(
+          any(),
+          encryptionCipher: any(named: 'encryptionCipher'),
+          keyComparator: any(named: 'keyComparator'),
+          crashRecovery: any(named: 'crashRecovery'),
+        ),
+      ).thenAnswer((_) async => mockMeta);
+      when(
+        () => fakeHive.openBox<Map>(
+          any(),
+          encryptionCipher: any(named: 'encryptionCipher'),
+          keyComparator: any(named: 'keyComparator'),
+          crashRecovery: any(named: 'crashRecovery'),
+        ),
+      ).thenAnswer((_) async => mockBox);
       when(() => mockMeta.close()).thenAnswer((_) async {});
       when(() => mockMeta.clear()).thenAnswer((_) async => 0);
       when(() => mockMeta.values).thenReturn(const []);
@@ -406,18 +414,22 @@ void main() {
       final mockBox = _MockBox<Map>();
 
       when(() => fakeHive.init(any())).thenReturn(null);
-      when(() => fakeHive.openBox<dynamic>(
-            any(),
-            encryptionCipher: any(named: 'encryptionCipher'),
-            keyComparator: any(named: 'keyComparator'),
-            crashRecovery: any(named: 'crashRecovery'),
-          )).thenAnswer((_) async => mockMeta);
-      when(() => fakeHive.openBox<Map>(
-            any(),
-            encryptionCipher: any(named: 'encryptionCipher'),
-            keyComparator: any(named: 'keyComparator'),
-            crashRecovery: any(named: 'crashRecovery'),
-          )).thenAnswer((_) async => mockBox);
+      when(
+        () => fakeHive.openBox<dynamic>(
+          any(),
+          encryptionCipher: any(named: 'encryptionCipher'),
+          keyComparator: any(named: 'keyComparator'),
+          crashRecovery: any(named: 'crashRecovery'),
+        ),
+      ).thenAnswer((_) async => mockMeta);
+      when(
+        () => fakeHive.openBox<Map>(
+          any(),
+          encryptionCipher: any(named: 'encryptionCipher'),
+          keyComparator: any(named: 'keyComparator'),
+          crashRecovery: any(named: 'crashRecovery'),
+        ),
+      ).thenAnswer((_) async => mockBox);
       when(() => mockMeta.close()).thenAnswer((_) async {});
       when(() => mockMeta.clear()).thenAnswer((_) async => 0);
       when(() => mockMeta.values).thenReturn(const []);

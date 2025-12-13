@@ -12,13 +12,13 @@ class _DummyModel with LocalFirstModel {
 
 class _DummyRepo extends LocalFirstRepository<_DummyModel> {
   _DummyRepo()
-      : super(
-          name: 'dummy',
-          getId: (m) => m.id,
-          toJson: (m) => m.toJson(),
-          fromJson: (json) => _DummyModel(json['id'] as String),
-          onConflict: (l, r) => l,
-        );
+    : super(
+        name: 'dummy',
+        getId: (m) => m.id,
+        toJson: (m) => m.toJson(),
+        fromJson: (json) => _DummyModel(json['id'] as String),
+        onConflict: (l, r) => l,
+      );
 }
 
 void main() {
@@ -28,7 +28,9 @@ void main() {
       final model = _DummyModel('1');
 
       final response = LocalFirstResponse(
-        changes: {repo: [model]},
+        changes: {
+          repo: [model],
+        },
         timestamp: DateTime.utc(2024, 1, 1),
       );
 

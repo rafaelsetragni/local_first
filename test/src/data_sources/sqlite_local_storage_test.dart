@@ -546,19 +546,18 @@ void main() {
 
     test('ensureSchema throws for invalid field identifier', () async {
       expect(
-        () => storage.ensureSchema('users', {'a-b': LocalFieldType.text},
-            idFieldName: 'id'),
+        () => storage.ensureSchema('users', {
+          'a-b': LocalFieldType.text,
+        }, idFieldName: 'id'),
         throwsA(isA<ArgumentError>()),
       );
     });
 
     test('ensureSchema throws for reserved field names', () async {
       expect(
-        () => storage.ensureSchema(
-          'users',
-          {'id': LocalFieldType.text},
-          idFieldName: 'id',
-        ),
+        () => storage.ensureSchema('users', {
+          'id': LocalFieldType.text,
+        }, idFieldName: 'id'),
         throwsA(isA<ArgumentError>()),
       );
     });
@@ -662,9 +661,14 @@ void main() {
     });
 
     test('initialize uses injected databaseFactory with options', () async {
-      final captured = verify(
-        mockDbFactory.openDatabase('path', options: captureAnyNamed('options')),
-      ).captured.single as OpenDatabaseOptions;
+      final captured =
+          verify(
+                mockDbFactory.openDatabase(
+                  'path',
+                  options: captureAnyNamed('options'),
+                ),
+              ).captured.single
+              as OpenDatabaseOptions;
 
       expect(captured.version, 1);
       expect(captured.onCreate, isNotNull);
