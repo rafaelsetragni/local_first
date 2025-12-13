@@ -8,12 +8,13 @@ environment:
   sdk: ^3.10.0
   flutter: ">=1.17.0"
 
+resolution: workspace
+
 topics:
   - local-first
   - repository
   - sync
   - offline-first
-
 
 dependencies:
   flutter:

@@ -1,7 +1,37 @@
 name: local_first_workspace
+publish_to: none
 
 environment:
-  sdk: '>=3.0.0 <4.0.0'
+  sdk: ^3.9.0
+
+workspace:
+  - local_first
+  - local_first_hive_storage
+  - local_first_sqlite_storage
+  - local_first/example
+
 dev_dependencies:
   flutter_lints: ^6.0.0
-  melos: ^6.1.0
+  melos: ^7.3.0
+
+melos:
+  command:
+    bootstrap:
+      usePubspecOverrides: true
+
+  scripts:
+    analyze:
+      description: Run analyzer on all packages.
+      run: melos exec -c 1 -- "dart analyze . --fatal-infos"
+    format:
+      description: Format all Dart code.
+      run: dart format -o write .
+    format-ci:
+      description: Check formatting (no writes).
+      run: dart format --output=none --set-exit-if-changed .
+    test:
+      description: Run tests for packages that have a test directory.
+      run: melos exec -c 1 -- "flutter test"
+      packageFilters:
+        dirExists:
+          - test

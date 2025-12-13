@@ -28,7 +28,7 @@ This links local packages and installs dependencies across the monorepo (core, a
 
 ## Branch strategy
 
-- `main`: release-only; tracks published, stable versions. Do not open PRs against `main`.
+- `main`: ***release-only***; tracks published, stable versions. Do not open PRs against `main`.
 - `development`: active work and integration branch. All feature/fix PRs must target `development`. PRs aimed at `main` will be rejected.
 
 ## Tests

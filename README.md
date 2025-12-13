@@ -8,8 +8,8 @@ Packages:
 - `local_first_sqlite_storage`: SQLite adapter (structured tables with indexes).
 
 Examples:
-- `example/lib/main.dart`: Hive-based sample.
-- `example/lib/main_relational.dart`: SQLite-based sample.
+- `local_first/example/lib/main.dart`: Hive-based sample.
+- `local_first/example/lib/main_relational.dart`: SQLite-based sample.
 
 ## Usage
 
