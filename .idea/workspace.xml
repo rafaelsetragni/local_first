@@ -5,13 +5,12 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="1e946081-deab-4913-8f61-3125fd951ca6" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/.flutter-plugins-dependencies" beforeDir="false" afterPath="$PROJECT_DIR$/.flutter-plugins-dependencies" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/caches/deviceStreaming.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/caches/deviceStreaming.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/libraries/Dart_Packages.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/libraries/Dart_Packages.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/libraries/Flutter_Plugins.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/libraries/Flutter_Plugins.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/example/lib/main.dart" beforeDir="false" afterPath="$PROJECT_DIR$/example/lib/main.dart" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/lib/src/clients/local_first_client.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/src/clients/local_first_client.dart" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/lib/src/data_sources/local_first_query.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/src/data_sources/local_first_query.dart" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/lib/src/models/local_first_model.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/src/models/local_first_model.dart" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/lib/src/repositories/local_first_repository.dart" beforeDir="false" afterPath="$PROJECT_DIR$/lib/src/repositories/local_first_repository.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/coverage/lcov.info" beforeDir="false" afterPath="$PROJECT_DIR$/coverage/lcov.info" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -41,6 +40,9 @@
   </component>
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
+    "Flutter Test.insert encodes numeric boolean for boolean field.executor": "Debug",
+    "Flutter Test.tests in test.executor": "Coverage",
+    "Flutter Test.watchQuery emits error when query throws.executor": "Run",
     "Flutter.example.executor": "Debug",
     "ModuleVcsDetector.initialDetectionPerformed": "true",
     "RunOnceActivity.ShowReadmeOnStart": "true",
@@ -51,18 +53,61 @@
     "cf.first.check.clang-format": "false",
     "cidr.known.project.marker": "true",
     "dart.analysis.tool.window.visible": "false",
-    "git-widget-placeholder": "feature/initial-architecture",
+    "git-widget-placeholder": "release/0.4.0",
     "io.flutter.project.isFirstOpen": "true",
     "io.flutter.reload.alreadyRun": "true",
     "kotlin-language-version-configured": "true",
+    "last_opened_file_path": "/Users/rafaelsetragni/Repositories/Plugins/local_first",
+    "settings.editor.selected.configurable": "com.android.studio.ml.bot.mainConfigurable",
     "show.migrate.to.gradle.popup": "false"
   }
 }]]></component>
-  <component name="RunManager">
-    <configuration name="example" type="FlutterRunConfigurationType" factoryName="Flutter">
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$" />
+    </key>
+  </component>
+  <component name="RunManager" selected="Flutter.example (sqlite)">
+    <configuration name="example (hive)" type="FlutterRunConfigurationType" factoryName="Flutter">
       <option name="filePath" value="$PROJECT_DIR$/example/lib/main.dart" />
       <method v="2" />
     </configuration>
+    <configuration name="example (sqlite)" type="FlutterRunConfigurationType" factoryName="Flutter">
+      <option name="filePath" value="$PROJECT_DIR$/example/lib/main_relational.dart" />
+      <method v="2" />
+    </configuration>
+    <configuration name="insert encodes numeric boolean for boolean field" type="FlutterTestConfigType" factoryName="Flutter Test" temporary="true" nameIsGenerated="true">
+      <option name="testName" value="insert encodes numeric boolean for boolean field" />
+      <option name="testFile" value="$PROJECT_DIR$/test/src/data_sources/sqlite_local_storage_test.dart" />
+      <option name="useRegexp" value="false" />
+      <method v="2" />
+    </configuration>
+    <configuration name="tests in test" type="FlutterTestConfigType" factoryName="Flutter Test" temporary="true" nameIsGenerated="true">
+      <option name="testDir" value="$PROJECT_DIR$/test" />
+      <option name="useRegexp" value="false" />
+      <option name="additionalArgs" value="" />
+      <method v="2" />
+    </configuration>
+    <configuration name="watchQuery emits error when query throws" type="FlutterTestConfigType" factoryName="Flutter Test" temporary="true" nameIsGenerated="true">
+      <option name="testName" value="watchQuery emits error when query throws" />
+      <option name="testFile" value="$PROJECT_DIR$/test/src/data_sources/sqlite_local_storage_test.dart" />
+      <option name="useRegexp" value="false" />
+      <method v="2" />
+    </configuration>
+    <list>
+      <item itemvalue="Flutter.example (hive)" />
+      <item itemvalue="Flutter.example (sqlite)" />
+      <item itemvalue="Flutter Test.insert encodes numeric boolean for boolean field" />
+      <item itemvalue="Flutter Test.tests in test" />
+      <item itemvalue="Flutter Test.watchQuery emits error when query throws" />
+    </list>
+    <recent_temporary>
+      <list>
+        <item itemvalue="Flutter Test.tests in test" />
+        <item itemvalue="Flutter Test.insert encodes numeric boolean for boolean field" />
+        <item itemvalue="Flutter Test.watchQuery emits error when query throws" />
+      </list>
+    </recent_temporary>
   </component>
   <component name="SwiftWorkspaceSettings">
     <option name="detectedToolchain" value="true" />
@@ -77,5 +122,16 @@
       <updated>1764830937286</updated>
     </task>
     <servers />
+  </component>
+  <component name="XDebuggerManager">
+    <breakpoint-manager>
+      <default-breakpoints>
+        <breakpoint type="dart-exception" />
+      </default-breakpoints>
+    </breakpoint-manager>
+  </component>
+  <component name="com.intellij.coverage.CoverageDataManagerImpl">
+    <SUITE FILE_PATH="../../../../Repositories/Plugins/local_first/coverage/lcov.info" NAME="tests in test Coverage Results" MODIFIED="1765233362303" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="FlutterCoverageRunner" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" />
+    <SUITE FILE_PATH="../../../../Repositories/Plugins/local_first/coverage/lcov.info" NAME="tests in test Coverage Results" MODIFIED="1765537624272" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="FlutterCoverageRunner" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" />
   </component>
 </project>

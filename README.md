@@ -39,7 +39,7 @@ Add the dependency to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  local_first: ^0.2.0
+  local_first: ^0.4.0
 ```
 
 Then install it with:
@@ -119,6 +119,31 @@ Future<void> main() async {
   // 5) Let your strategy push/pull, or trigger manually when it makes sense.
   // await client.sync();
 }
+```
+
+### Choose your storage backend
+
+- **Hive**: schema-less, fast key/value boxes. Use `HiveLocalFirstStorage()` (default in examples).
+- **SQLite**: structured tables with indexes for query filters/sorts. Use `SqliteLocalFirstStorage()`, and provide a schema when creating repositories:
+
+```dart
+final todoRepository = LocalFirstRepository<Todo>.create(
+  name: 'todo',
+  getId: (todo) => todo.id,
+  toJson: (todo) => todo.toJson(),
+  fromJson: Todo.fromJson,
+  onConflict: Todo.resolveConflict,
+  schema: const {
+    'title': LocalFieldType.text,
+    'completed': LocalFieldType.boolean,
+    'updated_at': LocalFieldType.datetime,
+  },
+);
+final client = LocalFirstClient(
+  repositories: [todoRepository],
+  localStorage: SqliteLocalFirstStorage(),
+  syncStrategies: [MyRestSyncStrategy()],
+);
 ```
 
 ## Example app

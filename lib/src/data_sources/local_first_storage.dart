@@ -63,16 +63,25 @@ abstract class LocalFirstStorage {
   /// Reads arbitrary metadata stored by key.
   Future<String?> getMeta(String key);
 
+  /// Ensures the storage backend has an up-to-date schema for a repository.
+  ///
+  /// Backends that do not use schemas can ignore this call.
+  Future<void> ensureSchema(
+    String tableName,
+    Map<String, LocalFieldType> schema, {
+    required String idFieldName,
+  }) async {}
+
   /// Executes a query and returns results.
   ///
   /// Delegates that support native queries (like Isar, Drift) can
   /// override this for optimization. Simple delegates (like Hive) use
   /// the default implementation which filters efficiently in-memory.
   Future<List<Map<String, dynamic>>> query(LocalFirstQuery query) async {
-    // Implementação padrão: busca tudo e filtra de forma otimizada
+    // Default implementation: fetch all and filter efficiently in memory
     var items = await getAll(query.repositoryName);
 
-    // Aplica filtros
+    // Apply filters
     if (query.filters.isNotEmpty) {
       items = items.where((item) {
         for (var filter in query.filters) {
@@ -84,7 +93,7 @@ abstract class LocalFirstStorage {
       }).toList();
     }
 
-    // Aplica ordenação
+    // Apply sorting
     if (query.sorts.isNotEmpty) {
       items.sort((a, b) {
         for (var sort in query.sorts) {
@@ -104,12 +113,12 @@ abstract class LocalFirstStorage {
       });
     }
 
-    // Aplica offset
+    // Apply offset
     if (query.offset != null && query.offset! > 0) {
       items = items.skip(query.offset!).toList();
     }
 
-    // Aplica limit
+    // Apply limit
     if (query.limit != null) {
       items = items.take(query.limit!).toList();
     }

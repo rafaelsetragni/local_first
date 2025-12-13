@@ -1,3 +1,5 @@
+// ignore_for_file: override_on_non_overriding_member
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_first/local_first.dart';
 import 'package:mocktail/mocktail.dart';
@@ -24,19 +26,6 @@ class _TestStrategy extends DataSyncStrategy {
   @override
   Future<SyncStatus> onPushToRemote(LocalFirstModel localData) async {
     return SyncStatus.ok;
-  }
-}
-
-class _RecordingClient extends Fake implements LocalFirstClient {
-  bool calledPull = false;
-
-  @override
-  dynamic noSuchMethod(Invocation invocation) {
-    if (invocation.memberName == #_pullRemoteChanges) {
-      calledPull = true;
-      return Future.value();
-    }
-    return super.noSuchMethod(invocation);
   }
 }
 
@@ -82,7 +71,11 @@ class _FakeStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<void> update(String tableName, String id, Map<String, dynamic> item) async {
+  Future<void> update(
+    String tableName,
+    String id,
+    Map<String, dynamic> item,
+  ) async {
     _tables.putIfAbsent(tableName, () => {});
     _tables[tableName]![id] = item;
   }
@@ -113,7 +106,9 @@ class _FakeStorage implements LocalFirstStorage {
 
   @override
   Future<List<Map<String, dynamic>>> query(LocalFirstQuery query) async {
-    return _tables[query.repositoryName]?.values.map((e) => Map.of(e)).toList() ??
+    return _tables[query.repositoryName]?.values
+            .map((e) => Map.of(e))
+            .toList() ??
         [];
   }
 
@@ -121,6 +116,13 @@ class _FakeStorage implements LocalFirstStorage {
   Stream<List<Map<String, dynamic>>> watchQuery(LocalFirstQuery query) async* {
     yield await this.query(query);
   }
+
+  @override
+  Future<void> ensureSchema(
+    String tableName,
+    Map<String, LocalFieldType> schema, {
+    required String idFieldName,
+  }) async {}
 }
 
 void main() {
@@ -152,7 +154,9 @@ void main() {
       final client = _MockClient();
       final pending = [_DummyModel('1')];
 
-      when(() => client.getAllPendingObjects()).thenAnswer((_) async => pending);
+      when(
+        () => client.getAllPendingObjects(),
+      ).thenAnswer((_) async => pending);
       strategy.attach(client);
 
       final result = await strategy.getPendingObjects();

@@ -1,5 +1,8 @@
 part of '../../local_first.dart';
 
+/// Supported primitive field types for schema-aware storage backends.
+enum LocalFieldType { text, integer, real, boolean, datetime, blob }
+
 /// Represents a data collection (similar to a table).
 ///
 /// Each repository manages a specific type of object and handles CRUD operations
@@ -31,6 +34,9 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
   /// Field name used as identifier in persisted maps.
   final String idFieldName;
 
+  /// Schema definition for native storage backends (e.g. SQLite).
+  final Map<String, LocalFieldType> schema;
+
   late LocalFirstClient _client;
 
   late List<DataSyncStrategy> _syncStrategies;
@@ -44,6 +50,7 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
   /// - [fromJson]: Deserializes the model from Map
   /// - [onConflict]: Resolves conflicts between local/remote models
   /// - [idFieldName]: Key used to persist the model id (default: `id`)
+  /// - [schema]: Optional schema used by SQL backends for column creation
   LocalFirstRepository({
     required this.name,
     required String Function(T item) getId,
@@ -51,10 +58,12 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
     required T Function(Map<String, dynamic>) fromJson,
     required T Function(T local, T remote) onConflict,
     this.idFieldName = 'id',
+    Map<String, LocalFieldType> schema = const {},
   }) : _getId = getId,
        _toJson = toJson,
        _fromJson = fromJson,
-       _resolveConflict = onConflict;
+       _resolveConflict = onConflict,
+       schema = Map.unmodifiable(schema);
 
   /// Creates a configured instance of LocalFirstRepository.
   ///
@@ -77,6 +86,7 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
     required T Function(Map<String, dynamic>) fromJson,
     required T Function(T local, T remote) onConflict,
     String idFieldName,
+    Map<String, LocalFieldType> schema,
   }) = _LocalFirstRepository;
 
   String getId(T item) => _getId(item);
@@ -91,6 +101,11 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
   /// This is called automatically by [LocalFirstClient.initialize].
   Future<void> initialize() async {
     if (_isInitialized) return;
+    await _client.localStorage.ensureSchema(
+      name,
+      schema,
+      idFieldName: idFieldName,
+    );
     _isInitialized = true;
   }
 
@@ -359,6 +374,7 @@ final class _LocalFirstRepository<T extends LocalFirstModel>
     required super.toJson,
     required super.fromJson,
     required super.onConflict,
-    super.idFieldName,
+    super.idFieldName = 'id',
+    super.schema = const {},
   });
 }
