@@ -1,4 +1,11 @@
 include: package:flutter_lints/flutter.yaml
 
-# Additional information about this file can be found at
-# https://dart.dev/guides/language/analysis-options
+analyzer:
+  exclude:
+    # Ignore generated files
+    - '**/*.mocks.dart'
+
+linter:
+  rules:
+    - prefer_final_in_for_each
+    - prefer_final_locals

@@ -1,0 +1,29 @@
+name: local_first
+repository: https://github.com/rafaelsetragni/local_first
+
+packages:
+  - local_first
+  - local_first_hive_storage
+  - local_first_sqlite_storage
+  - local_first/example
+
+command:
+  bootstrap:
+    usePubspecOverrides: true
+
+scripts:
+  analyze:
+    description: Run analyzer on all packages.
+    run: melos exec -c 1 -- "dart analyze . --fatal-infos"
+  format:
+    description: Format all Dart code.
+    run: dart format -o write .
+  format-ci:
+    description: Check formatting (no writes).
+    run: dart format --output=none --set-exit-if-changed .
+  test:
+    description: Run tests for packages that have a test directory.
+    run: melos exec -c 1 -- "flutter test"
+    packageFilters:
+      dirExists:
+        - test
