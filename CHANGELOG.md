@@ -1,3 +1,9 @@
+## 0.4.0
+
+- Add SQLite storage adapter (`SqliteLocalFirstStorage`) with schema/index support and query filtering
+- Document how to choose between Hive and SQLite storage backends
+- Expand example tooling with launch configs and relational sample polish
+
 ## 0.3.0
 
 - Switch models to the `LocalFirstModel` mixin for direct field access without wrappers
