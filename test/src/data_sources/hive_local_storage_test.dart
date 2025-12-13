@@ -81,6 +81,83 @@ void main() {
       expect(original.first['id'], '1');
     });
 
+    test('lazyCollections uses LazyBox for configured tables', () async {
+      final lazyStorage = HiveLocalFirstStorage(
+        customPath: tempDir.path,
+        namespace: 'lazyNs',
+        lazyCollections: {'lazy_users'},
+      );
+      await lazyStorage.initialize();
+
+      await lazyStorage.insert('lazy_users', {'id': '1', 'name': 'Lazy'}, 'id');
+      await lazyStorage.insert('eager_users', {'id': '2', 'name': 'Eager'}, 'id');
+
+      final lazyAll = await lazyStorage.getAll('lazy_users');
+      final eagerAll = await lazyStorage.getAll('eager_users');
+
+      expect(lazyAll.single['name'], 'Lazy');
+      expect(eagerAll.single['name'], 'Eager');
+
+      final lazyById = await lazyStorage.getById('lazy_users', '1');
+      expect(lazyById?['name'], 'Lazy');
+
+      await lazyStorage.close();
+    });
+
+    test('ensureSchema is a no-op (Hive is schemaless)', () async {
+      await storage.ensureSchema(
+        'users',
+        const {'anyField': LocalFieldType.text},
+        idFieldName: 'id',
+      );
+
+      // Still able to insert and read without schema enforcement.
+      await storage.insert('users', {'id': 'schema-less', 'name': 'Hive'}, 'id');
+      final fetched = await storage.getById('users', 'schema-less');
+      expect(fetched?['name'], 'Hive');
+      // Unknown field is preserved in stored data.
+      await storage.update('users', 'schema-less', {
+        'id': 'schema-less',
+        'name': 'Hive',
+        'extra': 123,
+      });
+      final updated = await storage.getById('users', 'schema-less');
+      expect(updated?['extra'], 123);
+    });
+
+    test('query handles lazy boxes with filters', () async {
+      final lazyStorage = HiveLocalFirstStorage(
+        customPath: tempDir.path,
+        namespace: 'lazyQuery',
+        lazyCollections: {'lazy_q'},
+      );
+      await lazyStorage.initialize();
+
+      await lazyStorage.insert('lazy_q', {'id': '1', 'age': 20}, 'id');
+      await lazyStorage.insert('lazy_q', {'id': '2', 'age': 35}, 'id');
+
+      final repo = LocalFirstRepository<_TestModel>.create(
+        name: 'lazy_q',
+        getId: (m) => m.id,
+        toJson: (m) => m.toJson(),
+        fromJson: _TestModel.fromJson,
+        onConflict: (l, r) => l,
+      );
+
+      final q = LocalFirstQuery<_TestModel>(
+        repositoryName: 'lazy_q',
+        delegate: lazyStorage,
+        fromJson: _TestModel.fromJson,
+        repository: repo,
+      );
+
+      final results = await q.where('age', isGreaterThan: 25).getAll();
+      expect(results.length, 1);
+      expect(results.first.id, '2');
+
+      await lazyStorage.close();
+    });
+
     test('namespace getter reflects current namespace', () async {
       expect(storage.namespace, 'ns1');
       await storage.useNamespace('ns2');

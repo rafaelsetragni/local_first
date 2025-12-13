@@ -15,6 +15,7 @@ abstract class DataSyncStrategy {
     _client = client;
   }
 
+  @visibleForTesting
   @protected
   LocalFirstClient get client => _client;
 

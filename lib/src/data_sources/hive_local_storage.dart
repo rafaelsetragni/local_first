@@ -10,7 +10,7 @@ part of '../../local_first.dart';
 /// - Supports reactive queries with box.watch()
 class HiveLocalFirstStorage implements LocalFirstStorage {
   /// Boxes for each table (lazy-loaded)
-  final Map<String, Box<Map<dynamic, dynamic>>> _boxes = {};
+  final Map<String, BoxBase<Map<dynamic, dynamic>>> _boxes = {};
 
   /// Box for sync metadata
   late Box<dynamic> _metadataBox;
@@ -28,6 +28,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
   final HiveInterface _hive;
   final Future<void> Function() _initFlutter;
+  final Set<String> _lazyCollections;
 
   /// Creates a new HiveLocalFirstStorage.
   ///
@@ -41,9 +42,11 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     String? namespace,
     HiveInterface? hive,
     Future<void> Function()? initFlutter,
+    Set<String> lazyCollections = const {},
   }) : _namespace = namespace ?? 'default',
        _hive = hive ?? Hive,
-       _initFlutter = initFlutter ?? Hive.initFlutter;
+       _initFlutter = initFlutter ?? Hive.initFlutter,
+       _lazyCollections = lazyCollections;
 
   @override
   Future<void> initialize() async {
@@ -97,7 +100,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   String _boxName(String tableName) => '${_namespace}__$tableName';
 
   /// Gets or creates a box for the table.
-  Future<Box<Map<dynamic, dynamic>>> _getBox(String tableName) async {
+  Future<BoxBase<Map<dynamic, dynamic>>> _getBox(String tableName) async {
     if (!_initialized) {
       throw StateError(
         'HiveLocalFirstStorage not initialized. Call initialize() first.',
@@ -109,7 +112,10 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     }
 
     // Open box and store in cache
-    final box = await _hive.openBox<Map>(_boxName(tableName));
+    final bool useLazy = _lazyCollections.contains(tableName);
+    final box = useLazy
+        ? await _hive.openLazyBox<Map>(_boxName(tableName))
+        : await _hive.openBox<Map>(_boxName(tableName));
     _boxes[tableName] = box;
     return box;
   }
@@ -118,14 +124,32 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   Future<List<Map<String, dynamic>>> getAll(String tableName) async {
     final box = await _getBox(tableName);
 
+    if (box is LazyBox<Map>) {
+      final keys = box.keys.cast<String>();
+      final List<Map<String, dynamic>> items = [];
+      for (final key in keys) {
+        final raw = await box.get(key);
+        if (raw != null) {
+          items.add(Map<String, dynamic>.from(raw));
+        }
+      }
+      return items;
+    }
+
     // Convert Hive values to List<Map<String, dynamic>>
-    return box.values.map((item) => Map<String, dynamic>.from(item)).toList();
+    return (box as Box<Map<dynamic, dynamic>>).values
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
   }
 
   @override
   Future<Map<String, dynamic>?> getById(String tableName, String id) {
-    return _getBox(tableName).then((box) {
-      final rawItem = box.get(id);
+    return _getBox(tableName).then((box) async {
+      if (box is LazyBox<Map>) {
+        final rawItem = await box.get(id);
+        return rawItem != null ? Map<String, dynamic>.from(rawItem) : null;
+      }
+      final rawItem = (box as Box<Map<dynamic, dynamic>>).get(id);
       return rawItem != null ? Map<String, dynamic>.from(rawItem) : null;
     });
   }
@@ -187,6 +211,16 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
+  Future<void> ensureSchema(
+    String tableName,
+    Map<String, LocalFieldType> schema, {
+    required String idFieldName,
+  }) async {
+    // Hive stores Map payloads; no schema enforcement required.
+    return;
+  }
+
+  @override
   Future<void> clearAllData() async {
     if (!_initialized) {
       throw StateError(
@@ -194,51 +228,51 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
       );
     }
 
-    // Lista de todos os boxes para deletar
+    // List all boxes to delete
     final boxesToDelete = <String>[
       for (final entry in _boxes.keys) _boxName(entry),
     ];
 
-    // Limpa conteúdo de todos os boxes abertos
+    // Clear contents of all open boxes
     for (var box in _boxes.values) {
       await box.clear();
     }
 
-    // Limpa metadata
+    // Clear metadata
     await _metadataBox.clear();
 
-    // Fecha todos os boxes abertos
+    // Close all open boxes
     for (var box in _boxes.values) {
       await box.close();
     }
     _boxes.clear();
 
-    // Fecha metadata
+    // Close metadata box
     await _metadataBox.close();
 
-    // Deleta cada box do disco individualmente (se houver)
+    // Delete each box from disk individually (if present)
     for (var boxName in boxesToDelete) {
       try {
         await _hive.deleteBoxFromDisk(boxName, path: customPath);
       } catch (e) {
-        // Ignora erros se box não existir
+        // Ignore errors if the box does not exist
       }
     }
 
-    // Deleta metadata box do disco
+    // Delete metadata box from disk
     try {
       await _hive.deleteBoxFromDisk(_metadataBoxName, path: customPath);
     } catch (e) {
-      // Ignora erros se box não existir
+      // Ignore errors if the box does not exist
     }
 
-    // Re-inicializa
+    // Re-initialize
     _initialized = false;
     await initialize();
   }
 
   // ============================================
-  // Query Support (Otimizado para Hive)
+  // Query Support (optimized for Hive)
   // ============================================
 
   @override
@@ -251,18 +285,20 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
     final box = await _getBox(query.repositoryName);
 
-    // Otimização: não carrega tudo de uma vez, itera lazy
+    // Optimization: iterate lazily instead of loading everything at once
     final results = <Map<String, dynamic>>[];
 
-    // Coleta todos os itens que passam pelos filtros
+    // Collect items that match filters
     for (var key in box.keys) {
-      final rawItem = box.get(key);
+      final rawItem = box is LazyBox<Map>
+          ? await box.get(key)
+          : (box as Box<Map<dynamic, dynamic>>).get(key);
       if (rawItem == null) continue;
 
-      // Converte Map<dynamic, dynamic> para Map<String, dynamic>
+      // Convert Map<dynamic, dynamic> to Map<String, dynamic>
       final item = Map<String, dynamic>.from(rawItem);
 
-      // Aplica filtros
+      // Apply filters
       bool matches = true;
       for (var filter in query.filters) {
         if (!filter.matches(item)) {
@@ -276,7 +312,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
       }
     }
 
-    // Aplica ordenação
+    // Apply sorting
     if (query.sorts.isNotEmpty) {
       results.sort((a, b) {
         for (var sort in query.sorts) {
@@ -296,7 +332,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
       });
     }
 
-    // Aplica offset e limit (paginação)
+    // Apply offset and limit (pagination)
     int start = query.offset ?? 0;
     int? end = query.limit != null ? start + query.limit! : null;
 
