@@ -29,19 +29,6 @@ class _TestStrategy extends DataSyncStrategy {
   }
 }
 
-class _RecordingClient extends Fake implements LocalFirstClient {
-  bool calledPull = false;
-
-  @override
-  dynamic noSuchMethod(Invocation invocation) {
-    if (invocation.memberName == #_pullRemoteChanges) {
-      calledPull = true;
-      return Future.value();
-    }
-    return super.noSuchMethod(invocation);
-  }
-}
-
 class _FakeStorage implements LocalFirstStorage {
   final Map<String, Map<String, Map<String, dynamic>>> _tables = {};
   final Map<String, String> _meta = {};

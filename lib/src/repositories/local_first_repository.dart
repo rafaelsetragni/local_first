@@ -22,7 +22,6 @@ enum LocalFieldType { text, integer, real, boolean, datetime, blob }
 /// }
 /// ```
 abstract class LocalFirstRepository<T extends LocalFirstModel> {
-
   /// The unique name identifier for this repository.
   final String name;
 
