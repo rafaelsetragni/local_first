@@ -35,3 +35,17 @@ melos:
       packageFilters:
         dirExists:
           - test
+    coverage:
+      description: Run coverage for all packages and merge into coverage/lcov.info
+      run: |
+        mkdir -p coverage
+        melos exec -c 1 -- \
+          "flutter test --coverage --coverage-path=../coverage/\${MELOS_PACKAGE_NAME}.info"
+        lcov -a coverage/local_first.info \
+            -a coverage/local_first_hive_storage.info \
+            -a coverage/local_first_sqlite_storage.info \
+            -o coverage/lcov.info
+      packageFilters:
+        dirExists:
+          - test
+        ignore: "*example*"

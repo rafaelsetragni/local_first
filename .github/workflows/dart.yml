@@ -1,0 +1,64 @@
+name: Full tests workflow
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lcov
+          dart pub global activate melos
+
+      - name: Bootstrap workspace
+        run: melos bootstrap
+
+      - name: Run core tests with coverage
+        run: |
+          cd local_first
+          flutter test --coverage
+          mv coverage/lcov.info ../coverage_core.info
+
+      - name: Run Hive adapter tests with coverage
+        run: |
+          cd local_first_hive_storage
+          flutter test --coverage
+          mv coverage/lcov.info ../coverage_hive.info
+
+      - name: Run SQLite adapter tests with coverage
+        run: |
+          cd local_first_sqlite_storage
+          flutter test --coverage
+          mv coverage/lcov.info ../coverage_sqlite.info
+
+      - name: Prefix coverage paths
+        run: |
+          sed -i 's|^SF:|SF:local_first/|g' coverage_core.info
+          sed -i 's|^SF:|SF:local_first_hive_storage/|g' coverage_hive.info
+          sed -i 's|^SF:|SF:local_first_sqlite_storage/|g' coverage_sqlite.info
+
+      - name: Merge coverage reports
+        run: |
+          mkdir -p coverage
+          lcov -a coverage_core.info -a coverage_hive.info -a coverage_sqlite.info -o coverage/lcov.info
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          file: coverage/lcov.info
+          flags: unittests
+          fail_ci_if_error: false
