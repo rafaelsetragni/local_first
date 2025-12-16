@@ -23,7 +23,7 @@ Add the core and the SQLite adapter to your `pubspec.yaml`:
 ```yaml
 dependencies:
   local_first: ^0.4.0
-  local_first_sqlite_storage: ^1.0.0
+  local_first_sqlite_storage: ^0.0.1
 ```
 
 ## Quick start
