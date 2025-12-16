@@ -62,7 +62,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
     // Initialize Hive
     if (customPath != null) {
-      _hive.init(customPath);
+      _hive.init(customPath!);
     } else {
       await _initFlutter();
     }
@@ -261,7 +261,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     // Delete each box from disk individually (if present)
     for (var boxName in boxesToDelete) {
       try {
-        await _hive.deleteBoxFromDisk(boxName, path: customPath);
+        await _hive.deleteBoxFromDisk(boxName);
       } catch (e) {
         // Ignore errors if the box does not exist
       }
@@ -269,7 +269,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
     // Delete metadata box from disk
     try {
-      await _hive.deleteBoxFromDisk(_metadataBoxName, path: customPath);
+      await _hive.deleteBoxFromDisk(_metadataBoxName);
     } catch (e) {
       // Ignore errors if the box does not exist
     }

@@ -27,7 +27,7 @@ jobs:
         run: melos bootstrap
 
       - name: Run coverage (melos)
-        run: melos coverage
+        run: melos coverage --no-select
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
