@@ -174,7 +174,7 @@ flutter run
 
 ## Roadmap
 
-- [ ] Implement Hive and SQLite storage adapters via add-on packages.
+- [X] Implement Hive and SQLite storage adapters via add-on packages.
 - [ ] Provide REST and WebSocket sync strategies via add-on packages.
 - [ ] Background sync helpers for Android/iOS via add-on packages.
 - [X] End-to-end sample app with authentication.
