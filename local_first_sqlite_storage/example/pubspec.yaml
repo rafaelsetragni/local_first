@@ -1,0 +1,32 @@
+name: example
+description: "A new Flutter project."
+publish_to: "none" #
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  intl: ^0.20.2
+
+  local_first:
+    path: ../../local_first
+  local_first_sqlite_storage:
+    path: ../
+
+  redis: ^4.0.0
+  mongo_dart: ^0.10.5
+  awesome_task_manager: ^2.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+dependency_overrides:
+  local_first:
+    path: ../../local_first
+flutter:
+  uses-material-design: true

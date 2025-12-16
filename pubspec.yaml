@@ -1,33 +1,54 @@
-name: local_first
-description: "Local-first Flutter package for offline sync with support for Hive, SQLite, and common databases. Fast, lightweight, and reliable."
-version: 0.4.0
-repository: https://github.com/rafaelsetragni/local_first
-issue_tracker: https://github.com/rafaelsetragni/local_first/issues
+name: local_first_workspace
+publish_to: none
 
 environment:
-  sdk: ^3.10.0
-  flutter: ">=1.17.0"
+  sdk: ^3.9.0
 
-topics:
-  - local-first
-  - repository
-  - sync
-  - offline-first
-
-
-dependencies:
-  flutter:
-    sdk: flutter
-  hive_flutter: ^1.1.0
-  path: ^1.9.0
-  sqflite: ^2.3.3
+workspace:
+  - local_first
+  - local_first_hive_storage
+  - local_first_sqlite_storage
+  - local_first/example
 
 dev_dependencies:
-  flutter_test:
-    sdk: flutter
   flutter_lints: ^6.0.0
-  mocktail: ^1.0.3
-  mockito: ^5.4.4
-  hive: ^2.2.3
-  build_runner: ^2.10.4
-  sqflite_common_ffi: ^2.3.5
+  melos: ^7.3.0
+
+melos:
+  command:
+    bootstrap:
+      usePubspecOverrides: true
+
+  scripts:
+    analyze:
+      description: Run analyzer on all packages.
+      run: melos exec -c 1 -- "dart analyze . --fatal-infos"
+    format:
+      description: Format all Dart code.
+      run: dart format -o write .
+    format-ci:
+      description: Check formatting (no writes).
+      run: dart format --output=none --set-exit-if-changed .
+    test:
+      description: Run tests for packages that have a test directory.
+      run: melos exec -c 1 -- "flutter test"
+      packageFilters:
+        dirExists:
+          - test
+    coverage:
+      description: Run coverage for all packages and merge into coverage/lcov.info
+      run: |
+        mkdir -p coverage
+        rm -f coverage/*.info
+        melos exec -c 1 -- \
+          "flutter test --coverage"
+        lcov -a local_first/coverage/lcov.info \
+            -a local_first_hive_storage/coverage/lcov.info \
+            -a local_first_sqlite_storage/coverage/lcov.info \
+            -o coverage/lcov.info --ignore-errors missing
+      packageFilters:
+        dirExists:
+          - test
+        ignore: "*example*"
+
+dependency_overrides:

@@ -1,0 +1,32 @@
+name: local_first_sqlite_storage
+description: "SQLite adapter for local_first: structured tables, indexes, and filtered queries."
+version: 0.1.0
+repository: https://github.com/rafaelsetragni/local_first
+issue_tracker: https://github.com/rafaelsetragni/local_first/issues
+
+resolution: workspace
+
+environment:
+  sdk: ^3.10.0
+  flutter: ">=1.17.0"
+
+topics:
+  - local-first
+  - sqlite
+  - storage
+
+dependencies:
+  flutter:
+    sdk: flutter
+  local_first: ^0.5.0
+  path: ^1.9.0
+  sqflite: ^2.3.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  mocktail: ^1.0.3
+  mockito: ^5.4.4
+  build_runner: ^2.10.4
+  sqflite_common_ffi: ^2.3.5
