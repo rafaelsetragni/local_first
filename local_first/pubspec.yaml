@@ -1,0 +1,29 @@
+name: local_first
+description: "Local-first Flutter package for offline sync with support for Hive, SQLite, and common databases. Fast, lightweight, and reliable."
+version: 0.5.0
+repository: https://github.com/rafaelsetragni/local_first
+issue_tracker: https://github.com/rafaelsetragni/local_first/issues
+
+environment:
+  sdk: ^3.10.0
+  flutter: ">=1.17.0"
+
+resolution: workspace
+
+topics:
+  - local-first
+  - repository
+  - sync
+  - offline-first
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  mocktail: ^1.0.3
+  mockito: ^5.4.4
+  build_runner: ^2.10.4
