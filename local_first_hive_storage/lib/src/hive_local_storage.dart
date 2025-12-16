@@ -1,4 +1,12 @@
-part of '../../local_first.dart';
+// ignore_for_file: unused_import
+
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:local_first/local_first.dart';
+import 'package:path/path.dart' as p;
 
 /// Implementation of [LocalFirstStorage] using Hive CE.
 ///

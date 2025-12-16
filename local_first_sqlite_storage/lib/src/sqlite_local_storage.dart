@@ -1,4 +1,12 @@
-part of '../../local_first.dart';
+import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:local_first/local_first.dart';
+import 'package:path/path.dart' as p;
+import 'package:sqflite/sqflite.dart';
+
+part 'sqlite_local_storage_test_helpers.dart';
 
 /// SQLite implementation of [LocalFirstStorage].
 ///

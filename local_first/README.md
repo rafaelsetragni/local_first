@@ -101,7 +101,9 @@ Future<void> main() async {
   // 3) Wire up local storage plus your sync strategy.
   final client = LocalFirstClient(
     repositories: [todoRepository],
-    localStorage: HiveLocalFirstStorage(), // swap for your storage adapter
+    // Choose your adapter (add dependency and import it):
+    // import 'package:local_first_hive_storage/local_first_hive_storage.dart';
+    localStorage: HiveLocalFirstStorage(),
     syncStrategies: [
       // Provide your own strategy that implements DataSyncStrategy.
       MyRestSyncStrategy(),
@@ -123,8 +125,8 @@ Future<void> main() async {
 
 ### Choose your storage backend
 
-- **Hive**: schema-less, fast key/value boxes. Use `HiveLocalFirstStorage()` (default in examples).
-- **SQLite**: structured tables with indexes for query filters/sorts. Use `SqliteLocalFirstStorage()`, and provide a schema when creating repositories:
+- **Hive**: schema-less, fast key/value boxes. Add `local_first_hive_storage` and use `HiveLocalFirstStorage()` (default in the basic example).
+- **SQLite**: structured tables with indexes for query filters/sorts. Use `SqliteLocalFirstStorage()` from the SQLite adapter, and provide a schema when creating repositories:
 
 ```dart
 final todoRepository = LocalFirstRepository<Todo>.create(

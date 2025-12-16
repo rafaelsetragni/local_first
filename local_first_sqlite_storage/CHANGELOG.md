@@ -1,3 +1,4 @@
-## 0.0.1
+## 1.0.0
 
-* TODO: Describe initial release.
+- Initial release of the SQLite adapter for local_first.
+- Supports schema/index creation, rich filtering/sorting, metadata storage, and reactive queries.

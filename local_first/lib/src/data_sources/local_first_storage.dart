@@ -3,8 +3,8 @@ part of '../../local_first.dart';
 /// Abstract interface for local database operations.
 ///
 /// Implement this interface to support different local storage backends
-/// (Hive, Isar, Drift, etc.). The package includes [HiveLocalFirstStorage]
-/// as the default implementation.
+/// (Hive, Isar, Drift, etc.). Storage adapters live in their own packages
+/// (e.g., `local_first_hive_storage`, `local_first_sqlite_storage`).
 ///
 /// Example:
 /// ```dart

@@ -1,3 +1,4 @@
-## 0.0.1
+## 1.0.0
 
-* TODO: Describe initial release.
+- Initial release of the Hive adapter for local_first.
+- Provides schema-less storage via Hive, namespaces, reactive queries, and metadata support.

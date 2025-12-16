@@ -1,4 +1,4 @@
-part of '../../local_first.dart';
+part of 'sqlite_local_storage.dart';
 
 extension SqliteLocalFirstStorageTestHelpers on SqliteLocalFirstStorage {
   int observerCount(String repositoryName) {

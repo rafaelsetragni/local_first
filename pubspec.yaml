@@ -39,13 +39,16 @@ melos:
       description: Run coverage for all packages and merge into coverage/lcov.info
       run: |
         mkdir -p coverage
+        rm -f coverage/*.info
         melos exec -c 1 -- \
-          "flutter test --coverage --coverage-path=../coverage/\${MELOS_PACKAGE_NAME}.info"
-        lcov -a coverage/local_first.info \
-            -a coverage/local_first_hive_storage.info \
-            -a coverage/local_first_sqlite_storage.info \
-            -o coverage/lcov.info
+          "flutter test --coverage"
+        lcov -a local_first/coverage/lcov.info \
+            -a local_first_hive_storage/coverage/lcov.info \
+            -a local_first_sqlite_storage/coverage/lcov.info \
+            -o coverage/lcov.info --ignore-errors missing
       packageFilters:
         dirExists:
           - test
         ignore: "*example*"
+
+dependency_overrides:
