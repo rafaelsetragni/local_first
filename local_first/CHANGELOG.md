@@ -1,3 +1,11 @@
+## 0.5.0
+
+- Split storage adapters into separate publishable packages:
+  - `local_first_hive_storage` for Hive-based storage
+  - `local_first_sqlite_storage` for SQLite-based storage
+- Core package no longer bundles adapter implementations.
+- Documentation and tooling updated for addon packages.
+
 ## 0.4.0
 
 - Add SQLite storage adapter (`SqliteLocalFirstStorage`) with schema/index support and query filtering

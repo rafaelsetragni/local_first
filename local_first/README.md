@@ -39,7 +39,9 @@ Add the dependency to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  local_first: ^0.4.0
+  local_first: ^0.5.0
+  local_first_hive_storage: ^0.0.1  # optional
+  local_first_sqlite_storage: ^0.0.1 # optional
 ```
 
 Then install it with:
@@ -103,7 +105,8 @@ Future<void> main() async {
     repositories: [todoRepository],
     // Choose your adapter (add dependency and import it):
     // import 'package:local_first_hive_storage/local_first_hive_storage.dart';
-    localStorage: HiveLocalFirstStorage(),
+    // import 'package:local_first_sqlite_storage/local_first_sqlite_storage.dart';
+    localStorage: HiveLocalFirstStorage(), // or SqliteLocalFirstStorage()
     syncStrategies: [
       // Provide your own strategy that implements DataSyncStrategy.
       MyRestSyncStrategy(),
@@ -126,7 +129,7 @@ Future<void> main() async {
 ### Choose your storage backend
 
 - **Hive**: schema-less, fast key/value boxes. Add `local_first_hive_storage` and use `HiveLocalFirstStorage()` (default in the basic example).
-- **SQLite**: structured tables with indexes for query filters/sorts. Use `SqliteLocalFirstStorage()` from the SQLite adapter, and provide a schema when creating repositories:
+- **SQLite**: structured tables with indexes for query filters/sorts. Add `local_first_sqlite_storage` and use `SqliteLocalFirstStorage()`, providing a schema when creating repositories:
 
 ```dart
 final todoRepository = LocalFirstRepository<Todo>.create(
