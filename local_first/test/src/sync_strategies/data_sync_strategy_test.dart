@@ -35,6 +35,18 @@ class _FakeStorage implements LocalFirstStorage {
   bool initialized = false;
 
   @override
+  Future<void> open({String namespace = 'default'}) async {}
+
+  @override
+  bool get isOpened => initialized;
+
+  @override
+  bool get isClosed => !initialized;
+
+  @override
+  String get currentNamespace => 'default';
+
+  @override
   Future<void> initialize() async {
     initialized = true;
   }

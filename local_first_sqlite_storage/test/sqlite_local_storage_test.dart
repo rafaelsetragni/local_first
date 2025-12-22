@@ -39,7 +39,6 @@ class MockableSqliteLocalFirstStorage extends SqliteLocalFirstStorage {
   MockableSqliteLocalFirstStorage({
     required super.dbFactory,
     required super.databasePath,
-    required super.namespace,
     required this.behavior,
   });
 
@@ -109,8 +108,8 @@ void main() {
       storage = SqliteLocalFirstStorage(
         databasePath: inMemoryDatabasePath,
         dbFactory: databaseFactoryFfi,
-        namespace: 'test_ns',
       );
+      await storage.open(namespace: 'test_ns');
       await storage.initialize();
       await storage.ensureSchema('users', schema, idFieldName: 'id');
     });
@@ -269,7 +268,6 @@ void main() {
       final uninit = SqliteLocalFirstStorage(
         databasePath: inMemoryDatabasePath,
         dbFactory: databaseFactoryFfi,
-        namespace: 'uninit',
       );
 
       expect(() => uninit.watchQuery(buildQuery()), throwsA(isA<StateError>()));
@@ -303,10 +301,10 @@ void main() {
       final throwing = MockableSqliteLocalFirstStorage(
         dbFactory: databaseFactoryFfi,
         databasePath: inMemoryDatabasePath,
-        namespace: 'error_ns',
         behavior: behavior,
       );
 
+      await throwing.open(namespace: 'error_ns');
       await throwing.initialize();
       await throwing.ensureSchema('users', schema, idFieldName: 'id');
 
@@ -326,9 +324,9 @@ void main() {
       final toggle = MockableSqliteLocalFirstStorage(
         dbFactory: databaseFactoryFfi,
         databasePath: inMemoryDatabasePath,
-        namespace: 'toggle_ns',
         behavior: behavior,
       );
+      await toggle.open(namespace: 'toggle_ns');
       await toggle.initialize();
       await toggle.ensureSchema('users', schema, idFieldName: 'id');
 
@@ -368,10 +366,10 @@ void main() {
         final observing = MockableSqliteLocalFirstStorage(
           dbFactory: databaseFactoryFfi,
           databasePath: inMemoryDatabasePath,
-          namespace: 'observer_ns',
           behavior: behavior,
         );
 
+        await observing.open(namespace: 'observer_ns');
         await observing.initialize();
         await observing.ensureSchema('users', schema, idFieldName: 'id');
 
@@ -647,9 +645,9 @@ void main() {
       storage = SqliteLocalFirstStorage(
         dbFactory: mockDbFactory,
         databasePath: 'path',
-        namespace: 'err_ns',
       );
 
+      await storage.open(namespace: 'err_ns');
       await storage.initialize();
       await storage.ensureSchema('users', schema, idFieldName: 'id');
     });
@@ -687,9 +685,9 @@ void main() {
 
       final store = SqliteLocalFirstStorage(
         databasePath: inMemoryDatabasePath,
-        namespace: 'default_factory',
       );
 
+      await store.open(namespace: 'default_factory');
       await store.initialize();
       await store.setMeta('df_key', 'df_value');
       expect(await store.getMeta('df_key'), 'df_value');
@@ -742,9 +740,9 @@ void main() {
         final throwing = MockableSqliteLocalFirstStorage(
           dbFactory: databaseFactoryFfi,
           databasePath: inMemoryDatabasePath,
-          namespace: 'err_notify',
           behavior: behavior,
         );
+        await throwing.open(namespace: 'err_notify');
         await throwing.initialize();
         await throwing.ensureSchema('users', schema, idFieldName: 'id');
 
@@ -825,7 +823,6 @@ void main() {
       final uninit = SqliteLocalFirstStorage(
         databasePath: inMemoryDatabasePath,
         dbFactory: databaseFactoryFfi,
-        namespace: 'uninit',
       );
 
       expect(() => uninit.getAll('users'), throwsStateError);

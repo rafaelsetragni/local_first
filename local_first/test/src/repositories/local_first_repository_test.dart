@@ -26,6 +26,7 @@ class _InMemoryStorage implements LocalFirstStorage {
   final Map<String, StreamController<List<Map<String, dynamic>>>> _controllers =
       {};
   bool initialized = false;
+  bool opened = false;
 
   StreamController<List<Map<String, dynamic>>> _controller(String name) {
     return _controllers.putIfAbsent(
@@ -41,12 +42,27 @@ class _InMemoryStorage implements LocalFirstStorage {
   }
 
   @override
+  Future<void> open({String namespace = 'default'}) async {
+    opened = true;
+  }
+
+  @override
+  bool get isOpened => opened;
+
+  @override
+  bool get isClosed => !opened;
+
+  @override
+  String get currentNamespace => 'default';
+
+  @override
   Future<void> initialize() async {
     initialized = true;
   }
 
   @override
   Future<void> close() async {
+    opened = false;
     initialized = false;
     for (final controller in _controllers.values) {
       await controller.close();

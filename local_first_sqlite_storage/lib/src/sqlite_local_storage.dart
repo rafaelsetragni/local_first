@@ -18,19 +18,18 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   SqliteLocalFirstStorage({
     this.databaseName = 'local_first.db',
     this.databasePath,
-    String namespace = 'default',
     DatabaseFactory? dbFactory,
-  }) : _namespace = namespace,
-       _factory = dbFactory ?? databaseFactory {
+  }) : _factory = dbFactory ?? databaseFactory {
     _validateIdentifier(_namespace, 'namespace');
   }
 
   final String databaseName;
   final String? databasePath;
-  final String _namespace;
+  String _namespace = 'default';
   final DatabaseFactory _factory;
 
   Database? _db;
+  bool _opened = false;
   bool _initialized = false;
 
   final Map<String, Set<_SqliteQueryObserver>> _observers = {};
@@ -40,18 +39,32 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
   String get _metadataTable => '${_namespace}__metadata';
 
+  @override
+  bool get isOpened => _opened;
+
+  @override
+  bool get isClosed => !_opened;
+
+  @override
+  String get currentNamespace => _namespace;
+
   Future<Database> get _database async {
-    if (!_initialized || _db == null) {
+    if (!_initialized || !_opened || _db == null) {
       throw StateError(
-        'SqliteLocalFirstStorage not initialized. Call initialize() first.',
+        'SqliteLocalFirstStorage not initialized. Call open() and initialize() first.',
       );
     }
     return _db!;
   }
 
   @override
-  Future<void> initialize() async {
-    if (_initialized) return;
+  Future<void> open({String namespace = 'default'}) async {
+    _validateIdentifier(namespace, 'namespace');
+    if (_namespace != namespace && _opened) {
+      await close();
+    }
+    _namespace = namespace;
+    if (_opened) return;
 
     final path = databasePath ?? p.join(await getDatabasesPath(), databaseName);
 
@@ -67,13 +80,24 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       ),
     );
 
+    _opened = true;
+    if (_initialized) {
+      await _ensureMetadataTable(db: _db);
+    }
+  }
+
+  @override
+  Future<void> initialize() async {
+    if (_initialized) return;
     _initialized = true;
-    await _ensureMetadataTable(db: _db);
+    if (_opened && _db != null) {
+      await _ensureMetadataTable(db: _db);
+    }
   }
 
   @override
   Future<void> close() async {
-    if (!_initialized) return;
+    if (!_opened) return;
 
     for (final observers in List.of(_observers.values)) {
       for (final observer in List.of(observers)) {
@@ -84,7 +108,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     await _db?.close();
     _db = null;
-    _initialized = false;
+    _opened = false;
   }
 
   @override
@@ -251,9 +275,9 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
   @override
   Stream<List<Map<String, dynamic>>> watchQuery(LocalFirstQuery query) {
-    if (!_initialized) {
+    if (!_initialized || !_opened) {
       throw StateError(
-        'SqliteLocalFirstStorage not initialized. Call initialize() first.',
+        'SqliteLocalFirstStorage not initialized. Call open() and initialize() first.',
       );
     }
 

@@ -8,6 +8,18 @@ class _FakeStorage extends LocalFirstStorage {
   String? lastIdField;
 
   @override
+  Future<void> open({String namespace = 'default'}) async {}
+
+  @override
+  bool get isOpened => true;
+
+  @override
+  bool get isClosed => false;
+
+  @override
+  String get currentNamespace => 'default';
+
+  @override
   Future<void> initialize() async {}
 
   @override

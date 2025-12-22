@@ -70,6 +70,11 @@ class LocalFirstClient {
     _onInitialize.complete();
   }
 
+  /// Opens the local storage connection.
+  Future<void> openStorage({String namespace = 'default'}) async {
+    await _localStorage.open(namespace: namespace);
+  }
+
   /// Clears all data from the local database.
   ///
   /// This will delete all stored data and reset all repositories.

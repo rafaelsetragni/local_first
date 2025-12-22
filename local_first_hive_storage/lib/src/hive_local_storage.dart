@@ -23,16 +23,26 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   /// Box for sync metadata
   late Box<dynamic> _metadataBox;
 
-  /// Initialization control flag
+  /// Open/initialize control flags
+  bool _opened = false;
   bool _initialized = false;
 
   /// Custom path (useful for testing)
   final String? customPath;
 
   /// Namespace used to isolate data per user/session.
-  String _namespace;
+  String _namespace = 'default';
 
   String get namespace => _namespace;
+
+  @override
+  bool get isOpened => _opened;
+
+  @override
+  bool get isClosed => !_opened;
+
+  @override
+  String get currentNamespace => _namespace;
 
   final HiveInterface _hive;
   final Future<void> Function() _initFlutter;
@@ -47,18 +57,20 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   /// - [initFlutter]: Optional initializer for Hive Flutter (useful for tests)
   HiveLocalFirstStorage({
     this.customPath,
-    String? namespace,
     HiveInterface? hive,
     Future<void> Function()? initFlutter,
     Set<String> lazyCollections = const {},
-  }) : _namespace = namespace ?? 'default',
-       _hive = hive ?? Hive,
+  }) : _hive = hive ?? Hive,
        _initFlutter = initFlutter ?? Hive.initFlutter,
        _lazyCollections = lazyCollections;
 
   @override
-  Future<void> initialize() async {
-    if (_initialized) return;
+  Future<void> open({String namespace = 'default'}) async {
+    if (_namespace != namespace && _opened) {
+      await close();
+    }
+    _namespace = namespace;
+    if (_opened) return;
 
     // Initialize Hive
     if (customPath != null) {
@@ -70,30 +82,23 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     // Open metadata box
     _metadataBox = await _hive.openBox<dynamic>(_metadataBoxName);
 
+    _opened = true;
+  }
+
+  @override
+  Future<void> initialize() async {
+    if (_initialized) return;
     _initialized = true;
   }
 
   @override
   Future<void> close() async {
-    if (!_initialized) return;
+    if (!_opened) return;
 
     await _closeAllBoxes();
     await _metadataBox.close();
 
-    _initialized = false;
-  }
-
-  /// Changes the active namespace, closing any open boxes.
-  Future<void> useNamespace(String namespace) async {
-    if (_namespace == namespace) return;
-    _namespace = namespace;
-
-    if (!_initialized) return;
-
-    await _closeAllBoxes();
-    _boxes.clear();
-    await _metadataBox.close();
-    _metadataBox = await _hive.openBox<dynamic>(_metadataBoxName);
+    _opened = false;
   }
 
   Future<void> _closeAllBoxes() async {
@@ -109,9 +114,9 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
   /// Gets or creates a box for the table.
   Future<BoxBase<Map<dynamic, dynamic>>> _getBox(String tableName) async {
-    if (!_initialized) {
+    if (!_initialized || !_opened) {
       throw StateError(
-        'HiveLocalFirstStorage not initialized. Call initialize() first.',
+        'HiveLocalFirstStorage not initialized. Call open() and initialize() first.',
       );
     }
 
@@ -199,9 +204,9 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
   @override
   Future<void> setMeta(String key, String value) async {
-    if (!_initialized) {
+    if (!_initialized || !_opened) {
       throw StateError(
-        'HiveLocalFirstStorage not initialized. Call initialize() first.',
+        'HiveLocalFirstStorage not initialized. Call open() and initialize() first.',
       );
     }
     await _metadataBox.put(key, value);
@@ -209,9 +214,9 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
   @override
   Future<String?> getMeta(String key) async {
-    if (!_initialized) {
+    if (!_initialized || !_opened) {
       throw StateError(
-        'HiveLocalFirstStorage not initialized. Call initialize() first.',
+        'HiveLocalFirstStorage not initialized. Call open() and initialize() first.',
       );
     }
     final value = _metadataBox.get(key);
@@ -230,9 +235,9 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
   @override
   Future<void> clearAllData() async {
-    if (!_initialized) {
+    if (!_initialized || !_opened) {
       throw StateError(
-        'HiveLocalFirstStorage not initialized. Call initialize() first.',
+        'HiveLocalFirstStorage not initialized. Call open() and initialize() first.',
       );
     }
 
@@ -274,8 +279,10 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
       // Ignore errors if the box does not exist
     }
 
-    // Re-initialize
+    // Re-open and re-initialize
+    _opened = false;
     _initialized = false;
+    await open();
     await initialize();
   }
 
@@ -285,9 +292,9 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
   @override
   Future<List<Map<String, dynamic>>> query(LocalFirstQuery query) async {
-    if (!_initialized) {
+    if (!_initialized || !_opened) {
       throw StateError(
-        'HiveLocalFirstStorage not initialized. Call initialize() first.',
+        'HiveLocalFirstStorage not initialized. Call open() and initialize() first.',
       );
     }
 
@@ -356,9 +363,9 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
   @override
   Stream<List<Map<String, dynamic>>> watchQuery(LocalFirstQuery query) {
-    if (!_initialized) {
+    if (!_initialized || !_opened) {
       throw StateError(
-        'HiveLocalFirstStorage not initialized. Call initialize() first.',
+        'HiveLocalFirstStorage not initialized. Call open() and initialize() first.',
       );
     }
 

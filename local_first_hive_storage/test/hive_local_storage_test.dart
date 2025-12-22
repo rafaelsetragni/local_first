@@ -16,8 +16,8 @@ void main() {
       tempDir = await Directory.systemTemp.createTemp('hive_local_first_test');
       storage = HiveLocalFirstStorage(
         customPath: tempDir.path,
-        namespace: 'ns1',
       );
+      await storage.open(namespace: 'ns1');
       await storage.initialize();
     });
 
@@ -66,17 +66,19 @@ void main() {
       expect(await storage.getMeta('key'), isNull);
     });
 
-    test('namespace isolation with useNamespace', () async {
+    test('namespace isolation with close/open', () async {
       await storage.insert('users', {'id': '1', 'name': 'Alice'}, 'id');
       expect((await storage.getAll('users')).length, 1);
 
-      await storage.useNamespace('ns2');
+      await storage.close();
+      await storage.open(namespace: 'ns2');
       expect(await storage.getAll('users'), isEmpty);
 
       await storage.insert('users', {'id': '2', 'name': 'Bob'}, 'id');
       expect((await storage.getAll('users')).length, 1);
 
-      await storage.useNamespace('ns1');
+      await storage.close();
+      await storage.open(namespace: 'ns1');
       final original = await storage.getAll('users');
       expect(original.length, 1);
       expect(original.first['id'], '1');
@@ -85,9 +87,9 @@ void main() {
     test('lazyCollections uses LazyBox for configured tables', () async {
       final lazyStorage = HiveLocalFirstStorage(
         customPath: tempDir.path,
-        namespace: 'lazyNs',
         lazyCollections: {'lazy_users'},
       );
+      await lazyStorage.open(namespace: 'lazyNs');
       await lazyStorage.initialize();
 
       await lazyStorage.insert('lazy_users', {'id': '1', 'name': 'Lazy'}, 'id');
@@ -133,9 +135,9 @@ void main() {
     test('query handles lazy boxes with filters', () async {
       final lazyStorage = HiveLocalFirstStorage(
         customPath: tempDir.path,
-        namespace: 'lazyQuery',
         lazyCollections: {'lazy_q'},
       );
+      await lazyStorage.open(namespace: 'lazyQuery');
       await lazyStorage.initialize();
 
       await lazyStorage.insert('lazy_q', {'id': '1', 'age': 20}, 'id');
@@ -165,7 +167,8 @@ void main() {
 
     test('namespace getter reflects current namespace', () async {
       expect(storage.namespace, 'ns1');
-      await storage.useNamespace('ns2');
+      await storage.close();
+      await storage.open(namespace: 'ns2');
       expect(storage.namespace, 'ns2');
     });
 
@@ -217,7 +220,6 @@ void main() {
     test('watchQuery throws if not initialized', () async {
       final uninitialized = HiveLocalFirstStorage(
         customPath: tempDir.path,
-        namespace: 'ns_uninitialized',
       );
       final q = LocalFirstQuery<_TestModel>(
         repositoryName: 'users',
@@ -272,8 +274,8 @@ void main() {
       );
       throwingStorage = HiveLocalFirstStorage(
         customPath: tempDir.path,
-        namespace: 'ns_throw',
       );
+      await throwingStorage.open(namespace: 'ns_throw');
       await throwingStorage.initialize();
       // Force an error by closing to make watchQuery emit StateError on listen.
       await throwingStorage.close();
@@ -336,10 +338,10 @@ void main() {
 
       final storage = _ThrowingQueryHiveStorage(
         customPath: Directory.systemTemp.path,
-        namespace: 'ns_emit_error',
         hive: fakeHive,
         initFlutter: () async {},
       );
+      await storage.open(namespace: 'ns_emit_error');
       await storage.initialize();
 
       final q = LocalFirstQuery<_TestModel>(
@@ -357,7 +359,7 @@ void main() {
     late HiveLocalFirstStorage uninitialized;
 
     setUp(() {
-      uninitialized = HiveLocalFirstStorage(namespace: 'ns_guard');
+      uninitialized = HiveLocalFirstStorage();
     });
 
     test('setMeta throws when not initialized', () async {
@@ -394,9 +396,9 @@ void main() {
       final dir = await Directory.systemTemp.createTemp('hive_custom_path');
       final storage = HiveLocalFirstStorage(
         customPath: dir.path,
-        namespace: 'ns_init',
       );
 
+      await storage.open(namespace: 'ns_init');
       await storage.initialize();
       await storage.setMeta('k', 'v');
 
@@ -444,9 +446,9 @@ void main() {
 
       final storage = HiveLocalFirstStorage(
         customPath: Directory.systemTemp.path,
-        namespace: 'ns_fail_delete',
         hive: fakeHive,
       );
+      await storage.open(namespace: 'ns_fail_delete');
       await storage.initialize();
       await storage.insert('users', {'id': '1'}, 'id');
 
@@ -476,13 +478,13 @@ void main() {
       when(() => mockMeta.values).thenReturn(const []);
 
       final storage = HiveLocalFirstStorage(
-        namespace: 'ns_default',
         hive: fakeHive,
         initFlutter: () async {
           initFlutterCalled = true;
         },
       );
 
+      await storage.open(namespace: 'ns_default');
       await storage.initialize();
       expect(initFlutterCalled, isTrue);
       verifyNever(() => fakeHive.init(any()));
@@ -519,9 +521,9 @@ void main() {
 
       final storage = HiveLocalFirstStorage(
         customPath: Directory.systemTemp.path,
-        namespace: 'ns_skip_null',
         hive: fakeHive,
       );
+      await storage.open(namespace: 'ns_skip_null');
       await storage.initialize();
 
       final q = LocalFirstQuery<_TestModel>(
@@ -569,7 +571,6 @@ class _MockBox<E> extends Mock implements Box<E> {}
 class _ThrowingQueryHiveStorage extends HiveLocalFirstStorage {
   _ThrowingQueryHiveStorage({
     super.customPath,
-    super.namespace,
     super.hive,
     super.initFlutter,
   });

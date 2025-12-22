@@ -13,7 +13,7 @@ Child package of the [local_first](https://pub.dev/packages/local_first) ecosyst
 
 - Fast key/value storage with Hive.
 - Schema-less: store your model maps directly, no column definitions needed.
-- Namespaces for multi-user isolation (`useNamespace`).
+- Namespaces for multi-user isolation (`open(namespace: ...)`).
 - Reactive queries via `watchQuery`.
 - Metadata storage via `setMeta` / `getMeta`.
 
@@ -82,7 +82,7 @@ Future<void> main() async {
 ## Features
 
 - Schema-less Hive boxes (lazy boxes supported via `lazyCollections`).
-- Namespaced storage with `useNamespace`.
+- Namespaced storage with `open(namespace: ...)`.
 - Reactive queries (`watchQuery`) and standard CRUD operations.
 - Metadata table for app/client state (`setMeta` / `getMeta`).
 

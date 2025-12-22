@@ -702,9 +702,10 @@ class RepositoryService {
 
     localFirst = LocalFirstClient(
       repositories: [userRepository, counterLogRepository],
-      localStorage: SqliteLocalFirstStorage(namespace: namespace),
+      localStorage: SqliteLocalFirstStorage(),
       syncStrategies: [syncStrategy],
     );
+    await localFirst!.localStorage.open(namespace: namespace);
     await localFirst!.initialize();
   }
 

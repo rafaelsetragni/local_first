@@ -52,6 +52,7 @@ class _InitProbeRepo extends LocalFirstRepository<_TestModel> {
 }
 
 class _InMemoryStorage implements LocalFirstStorage {
+  bool opened = false;
   bool initialized = false;
   bool closed = false;
   final Map<String, Map<String, Map<String, dynamic>>> tables = {};
@@ -72,6 +73,20 @@ class _InMemoryStorage implements LocalFirstStorage {
   }
 
   @override
+  Future<void> open({String namespace = 'default'}) async {
+    opened = true;
+  }
+
+  @override
+  bool get isOpened => opened;
+
+  @override
+  bool get isClosed => !opened;
+
+  @override
+  String get currentNamespace => 'default';
+
+  @override
   Future<void> initialize() async {
     initialized = true;
   }
@@ -79,6 +94,7 @@ class _InMemoryStorage implements LocalFirstStorage {
   @override
   Future<void> close() async {
     closed = true;
+    opened = false;
     for (final c in _controllers.values) {
       await c.close();
     }

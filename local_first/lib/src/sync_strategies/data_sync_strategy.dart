@@ -8,7 +8,7 @@ part of '../../local_first.dart';
 /// - [ConnectivitySyncStrategy]: Synchronizes when network connectivity is restored.
 /// - [WorkManagerSyncStrategy]: Uses a background service for robust synchronization.
 /// - [WebSocketSyncStrategy]: Listens to a WebSocket for real-time updates.
-abstract class DataSyncStrategy {
+abstract mixin class DataSyncStrategy {
   late LocalFirstClient _client;
 
   void attach(LocalFirstClient client) {

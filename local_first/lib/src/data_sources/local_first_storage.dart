@@ -10,14 +10,33 @@ part of '../../local_first.dart';
 /// ```dart
 /// class IsarLocalFirstDelegate implements LocalFirstStorage {
 ///   @override
+///   Future<void> open({String? namespace}) async {
+///     // Open Isar database connection
+///   }
+///
+///   @override
 ///   Future<void> initialize() async {
-///     // Initialize Isar database
+///     // Initialize Isar schema/collections
 ///   }
 ///
 ///   // Implement other methods...
 /// }
 /// ```
 abstract class LocalFirstStorage {
+  /// Opens the local database connection.
+  ///
+  /// Call this before [initialize].
+  Future<void> open({String namespace = 'default'});
+
+  /// True when the storage connection is open.
+  bool get isOpened;
+
+  /// True when the storage connection is closed.
+  bool get isClosed;
+
+  /// The active namespace used by the storage.
+  String get currentNamespace;
+
   /// Initializes the local database.
   ///
   /// Called once during [LocalFirstClient.initialize].

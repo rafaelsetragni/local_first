@@ -701,7 +701,8 @@ class RepositoryService {
 
     final storage = db.localStorage;
     if (storage is HiveLocalFirstStorage) {
-      await storage.useNamespace(namespace);
+      await storage.close();
+      await storage.open(namespace: namespace);
     }
   }
 
