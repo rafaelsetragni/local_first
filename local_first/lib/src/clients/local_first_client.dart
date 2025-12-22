@@ -147,6 +147,11 @@ class LocalFirstClient {
     }
   }
 
+  /// Closes the local storage connection.
+  Future<void> closeStorage() async {
+    await _localStorage.close();
+  }
+
   /// Clears all data from the local database.
   ///
   /// This will delete all stored data and reset all repositories.

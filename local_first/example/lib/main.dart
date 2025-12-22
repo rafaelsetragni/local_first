@@ -715,7 +715,7 @@ class RepositoryService {
 
   Future<void> _closeDatabase() async {
     syncStrategy.stop();
-    await localFirst?.dispose();
+    await localFirst?.closeStorage();
     _counterTotal = 0;
     _counterTotalController.add(_counterTotal);
   }
