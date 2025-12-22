@@ -8,7 +8,7 @@ part of '../../local_first.dart';
 /// - [ConnectivitySyncStrategy]: Synchronizes when network connectivity is restored.
 /// - [WorkManagerSyncStrategy]: Uses a background service for robust synchronization.
 /// - [WebSocketSyncStrategy]: Listens to a WebSocket for real-time updates.
-abstract mixin class DataSyncStrategy {
+abstract mixin class DataSyncStrategy<T extends LocalFirstModel> {
   late LocalFirstClient _client;
 
   void attach(LocalFirstClient client) {
@@ -19,10 +19,14 @@ abstract mixin class DataSyncStrategy {
   @protected
   LocalFirstClient get client => _client;
 
-  Future<SyncStatus> onPushToRemote(LocalFirstModel localData);
+  /// Returns true when this strategy should handle the given model.
+  bool supportsModel(LocalFirstModel model) => model is T;
 
-  Future<List<LocalFirstModel>> getPendingObjects() {
-    return _client.getAllPendingObjects();
+  Future<SyncStatus> onPushToRemote(T localData);
+
+  Future<List<T>> getPendingObjects() async {
+    final pending = await _client.getAllPendingObjects();
+    return pending.whereType<T>().toList();
   }
 
   Future<void> pullChangesToLocal(Map<String, dynamic> remoteChanges) {

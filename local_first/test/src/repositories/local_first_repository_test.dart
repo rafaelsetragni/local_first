@@ -20,6 +20,14 @@ class _TestModel with LocalFirstModel {
       _TestModel(json['id'] as String, value: json['value'] as String?);
 }
 
+class _OtherModel with LocalFirstModel {
+  _OtherModel(this.id);
+  final String id;
+
+  @override
+  Map<String, dynamic> toJson() => {'id': id};
+}
+
 class _InMemoryStorage implements LocalFirstStorage {
   final Map<String, Map<String, Map<String, dynamic>>> tables = {};
   final Map<String, String> meta = {};
@@ -161,6 +169,65 @@ class _InMemoryStorage implements LocalFirstStorage {
   }
 }
 
+class _InMemoryKeyValueStorage implements LocalFirstKeyValueStorage {
+  final Map<String, Object?> _store = {};
+  bool _opened = false;
+  String _namespace = 'default';
+
+  @override
+  bool get isOpened => _opened;
+
+  @override
+  bool get isClosed => !_opened;
+
+  @override
+  String get currentNamespace => _namespace;
+
+  @override
+  Future<void> open({String namespace = 'default'}) async {
+    _namespace = namespace;
+    _opened = true;
+  }
+
+  @override
+  Future<void> close() async {
+    _opened = false;
+  }
+
+  @override
+  Future<void> set<T>(String key, T value) async {
+    _ensureOpen();
+    _store[_namespaced(key)] = value;
+  }
+
+  @override
+  Future<T?> get<T>(String key) async {
+    _ensureOpen();
+    final value = _store[_namespaced(key)];
+    return value is T ? value : null;
+  }
+
+  @override
+  Future<bool> contains(String key) async {
+    _ensureOpen();
+    return _store.containsKey(_namespaced(key));
+  }
+
+  @override
+  Future<void> delete(String key) async {
+    _ensureOpen();
+    _store.remove(_namespaced(key));
+  }
+
+  void _ensureOpen() {
+    if (!_opened) {
+      throw StateError('KeyValueStorage not open');
+    }
+  }
+
+  String _namespaced(String key) => '${_namespace}__$key';
+}
+
 class _NoopStrategy extends DataSyncStrategy {
   @override
   Future<SyncStatus> onPushToRemote(LocalFirstModel localData) async {
@@ -185,6 +252,16 @@ class _ConditionalStrategy extends DataSyncStrategy {
   }
 }
 
+class _TypedOtherStrategy extends DataSyncStrategy<_OtherModel> {
+  int callCount = 0;
+
+  @override
+  Future<SyncStatus> onPushToRemote(_OtherModel localData) async {
+    callCount += 1;
+    return SyncStatus.ok;
+  }
+}
+
 void main() {
   group('LocalFirstRepository', () {
     late _InMemoryStorage storage;
@@ -193,6 +270,7 @@ void main() {
 
     setUp(() async {
       storage = _InMemoryStorage();
+      final metaStorage = _InMemoryKeyValueStorage();
       repo = LocalFirstRepository<_TestModel>.create(
         name: 'tests',
         getId: (m) => m.id,
@@ -203,6 +281,7 @@ void main() {
       client = LocalFirstClient(
         repositories: [repo],
         localStorage: storage,
+        metaStorage: metaStorage,
         syncStrategies: [_NoopStrategy()],
       );
       await client.initialize();
@@ -252,6 +331,29 @@ void main() {
       expect(stored['_sync_status'], SyncStatus.pending.index);
     });
 
+    test('typed sync strategy ignores unrelated model types', () async {
+      final typedStrategy = _TypedOtherStrategy();
+      final typedStorage = _InMemoryStorage();
+      final typedRepo = LocalFirstRepository<_TestModel>.create(
+        name: 'typed_tests',
+        getId: (m) => m.id,
+        toJson: (m) => m.toJson(),
+        fromJson: _TestModel.fromJson,
+        onConflict: (l, r) => l,
+      );
+      final typedClient = LocalFirstClient(
+        repositories: [typedRepo],
+        localStorage: typedStorage,
+        metaStorage: _InMemoryKeyValueStorage(),
+        syncStrategies: [typedStrategy],
+      );
+      await typedClient.initialize();
+
+      await typedRepo.upsert(_TestModel('typed'));
+
+      expect(typedStrategy.callCount, 0);
+    });
+
     test('delete removes unsynced insert', () async {
       final model = _TestModel('del', value: 'temp');
       await repo.upsert(model);
@@ -282,6 +384,7 @@ void main() {
         final failingClient = LocalFirstClient(
           repositories: [failingRepo],
           localStorage: failingStorage,
+          metaStorage: _InMemoryKeyValueStorage(),
           syncStrategies: [_FailingStrategy()],
         );
         await failingClient.initialize();
@@ -306,6 +409,7 @@ void main() {
       final conditionalClient = LocalFirstClient(
         repositories: [conditionalRepo],
         localStorage: conditionalStorage,
+        metaStorage: _InMemoryKeyValueStorage(),
         syncStrategies: [_ConditionalStrategy()],
       );
       await conditionalClient.initialize();

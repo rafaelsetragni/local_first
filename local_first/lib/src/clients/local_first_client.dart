@@ -10,8 +10,9 @@ part of '../../local_first.dart';
 class LocalFirstClient {
   final List<LocalFirstRepository> _repositories = [];
   final LocalFirstStorage _localStorage;
+  final LocalFirstKeyValueStorage _metaStorage;
 
-  final List<DataSyncStrategy> syncStrategies;
+  final List<DataSyncStrategy> syncStrategies = [];
   final Completer _onInitialize = Completer();
   bool _initialized = false;
 
@@ -26,22 +27,23 @@ class LocalFirstClient {
   /// - [repositories]: Optional list of [LocalFirstRepository] instances
   ///   to be managed. You can also call [registerRepositories] later.
   /// - [localStorage]: The local database delegate for storage operations
+  /// - [syncStrategies]: Optional list of [DataSyncStrategy] instances.
+  ///   You can also call [registerSyncStrategies] later.
+  /// - [metaStorage]: Optional key/value storage for metadata.
   ///
   /// Throws [ArgumentError] if there are duplicate node names.
   LocalFirstClient({
     List<LocalFirstRepository> repositories = const [],
     required LocalFirstStorage localStorage,
-    required this.syncStrategies,
-  }) : assert(
-         syncStrategies.isNotEmpty,
-         'You need to provide at least one sync strategy.',
-       ),
-       _localStorage = localStorage {
-    for (final strategy in syncStrategies) {
-      strategy.attach(this);
-    }
+    LocalFirstKeyValueStorage? metaStorage,
+    List<DataSyncStrategy> syncStrategies = const [],
+  }) : _localStorage = localStorage,
+       _metaStorage = metaStorage ?? SharedPreferencesKeyValueStorage() {
     if (repositories.isNotEmpty) {
       registerRepositories(repositories);
+    }
+    if (syncStrategies.isNotEmpty) {
+      registerSyncStrategies(syncStrategies);
     }
   }
 
@@ -65,9 +67,27 @@ class LocalFirstClient {
     }
     for (var repository in repositories) {
       repository._client = this;
-      repository._syncStrategies = syncStrategies;
+      repository._syncStrategies = List.unmodifiable(syncStrategies);
     }
     _repositories.addAll(repositories);
+  }
+
+  /// Registers sync strategies with the client.
+  ///
+  /// Call this before [initialize] when not providing strategies
+  /// in the constructor.
+  void registerSyncStrategies(List<DataSyncStrategy> strategies) {
+    if (strategies.isEmpty) return;
+    if (_initialized) {
+      throw StateError('Cannot register sync strategies after initialize');
+    }
+    for (final strategy in strategies) {
+      strategy.attach(this);
+    }
+    syncStrategies.addAll(strategies);
+    for (final repository in _repositories) {
+      repository._syncStrategies = List.unmodifiable(syncStrategies);
+    }
   }
 
   /// Gets a repository by its name.
@@ -86,6 +106,11 @@ class LocalFirstClient {
       _repositories.isNotEmpty,
       'You need to register at least one repository.',
     );
+    assert(
+      syncStrategies.isNotEmpty,
+      'You need to provide at least one sync strategy.',
+    );
+    await _metaStorage.open();
     await _localStorage.initialize();
 
     for (var repository in _repositories) {
@@ -118,6 +143,7 @@ class LocalFirstClient {
   /// Call this when you're done using the LocalFirstClient instance.
   Future<void> dispose() async {
     await _localStorage.close();
+    await _metaStorage.close();
   }
 
   Future<void> _pullRemoteChanges(Map<String, dynamic> map) async {
@@ -146,11 +172,11 @@ class LocalFirstClient {
   }
 
   Future<String?> getMeta(String key) async {
-    return await localStorage.getMeta(key);
+    return await _metaStorage.get(key);
   }
 
   Future<void> setKeyValue(String key, String value) async {
-    await localStorage.setMeta(key, value);
+    await _metaStorage.set(key, value);
   }
 
   Future<LocalFirstResponse> _buildOfflineResponse(

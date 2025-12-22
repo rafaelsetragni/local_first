@@ -187,9 +187,69 @@ class _InMemoryStorage implements LocalFirstStorage {
   }
 }
 
+class _InMemoryKeyValueStorage implements LocalFirstKeyValueStorage {
+  final Map<String, Object?> _store = {};
+  bool _opened = false;
+  String _namespace = 'default';
+
+  @override
+  bool get isOpened => _opened;
+
+  @override
+  bool get isClosed => !_opened;
+
+  @override
+  String get currentNamespace => _namespace;
+
+  @override
+  Future<void> open({String namespace = 'default'}) async {
+    _namespace = namespace;
+    _opened = true;
+  }
+
+  @override
+  Future<void> close() async {
+    _opened = false;
+  }
+
+  @override
+  Future<void> set<T>(String key, T value) async {
+    _ensureOpen();
+    _store[_namespaced(key)] = value;
+  }
+
+  @override
+  Future<T?> get<T>(String key) async {
+    _ensureOpen();
+    final value = _store[_namespaced(key)];
+    return value is T ? value : null;
+  }
+
+  @override
+  Future<bool> contains(String key) async {
+    _ensureOpen();
+    return _store.containsKey(_namespaced(key));
+  }
+
+  @override
+  Future<void> delete(String key) async {
+    _ensureOpen();
+    _store.remove(_namespaced(key));
+  }
+
+  void _ensureOpen() {
+    if (!_opened) {
+      throw StateError('KeyValueStorage not open');
+    }
+  }
+
+  String _namespaced(String key) => '${_namespace}__$key';
+}
+
 void main() {
   group('LocalFirstClient', () {
     late _InMemoryStorage storage;
+    late _InMemoryKeyValueStorage metaStorage;
     late LocalFirstRepository<_TestModel> repo;
     late LocalFirstClient client;
 
@@ -205,10 +265,12 @@ void main() {
 
     setUp(() async {
       storage = _InMemoryStorage();
+      metaStorage = _InMemoryKeyValueStorage();
       repo = buildRepo('tests');
       client = LocalFirstClient(
         repositories: [repo],
         localStorage: storage,
+        metaStorage: metaStorage,
         syncStrategies: [_OkStrategy()],
       );
     });
@@ -222,7 +284,22 @@ void main() {
       final emptyClient = LocalFirstClient(
         repositories: const [],
         localStorage: storage,
+        metaStorage: metaStorage,
         syncStrategies: [_OkStrategy()],
+      );
+
+      expect(
+        () => emptyClient.initialize(),
+        throwsA(isA<AssertionError>()),
+      );
+    });
+
+    test('initialize asserts when no sync strategies registered', () {
+      final emptyClient = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        metaStorage: metaStorage,
+        syncStrategies: const [],
       );
 
       expect(
@@ -235,6 +312,7 @@ void main() {
       final emptyClient = LocalFirstClient(
         repositories: const [],
         localStorage: storage,
+        metaStorage: metaStorage,
         syncStrategies: [_OkStrategy()],
       );
       final repoA = buildRepo('repo_a');
@@ -252,6 +330,7 @@ void main() {
       final emptyClient = LocalFirstClient(
         repositories: const [],
         localStorage: storage,
+        metaStorage: metaStorage,
         syncStrategies: [_OkStrategy()],
       );
       final repoA = buildRepo('dup');
@@ -269,6 +348,7 @@ void main() {
       final emptyClient = LocalFirstClient(
         repositories: [repoA],
         localStorage: storage,
+        metaStorage: metaStorage,
         syncStrategies: [_OkStrategy()],
       );
       await emptyClient.initialize();
@@ -279,11 +359,42 @@ void main() {
       );
     });
 
+    test('registerSyncStrategies supports multiple calls before initialize', () async {
+      final emptyClient = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        metaStorage: metaStorage,
+        syncStrategies: const [],
+      );
+
+      emptyClient.registerSyncStrategies([_OkStrategy()]);
+      emptyClient.registerSyncStrategies([_OkStrategy()]);
+
+      await emptyClient.initialize();
+      expect(emptyClient.syncStrategies.length, 2);
+    });
+
+    test('registerSyncStrategies throws after initialize', () async {
+      final emptyClient = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        metaStorage: metaStorage,
+        syncStrategies: [_OkStrategy()],
+      );
+      await emptyClient.initialize();
+
+      expect(
+        () => emptyClient.registerSyncStrategies([_OkStrategy()]),
+        throwsA(isA<StateError>()),
+      );
+    });
+
     test('duplicate repository names throw ArgumentError', () {
       expect(
         () => LocalFirstClient(
           repositories: [repo, repo],
           localStorage: _InMemoryStorage(),
+          metaStorage: metaStorage,
           syncStrategies: [_OkStrategy()],
         ),
         throwsA(isA<ArgumentError>()),
@@ -307,6 +418,7 @@ void main() {
       final clientWithProbe = LocalFirstClient(
         repositories: [probeRepo],
         localStorage: storage,
+        metaStorage: metaStorage,
         syncStrategies: [_OkStrategy()],
       );
       await clientWithProbe.initialize();
@@ -323,6 +435,7 @@ void main() {
     });
 
     test('setKeyValue / getMeta delegates to storage', () async {
+      await metaStorage.open();
       await client.setKeyValue('k', 'v');
       expect(await client.getMeta('k'), 'v');
     });

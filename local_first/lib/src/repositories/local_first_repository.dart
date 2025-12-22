@@ -118,8 +118,11 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
 
   Future<void> _pushLocalObject(T object) async {
     for (var strategy in _syncStrategies) {
+      if (!strategy.supportsModel(object)) {
+        continue;
+      }
       try {
-        final syncResult = await strategy.onPushToRemote(object);
+        final syncResult = await strategy.onPushToRemote(object as dynamic);
         object._setSyncStatus(syncResult);
         if (syncResult == SyncStatus.ok) return;
       } catch (e) {

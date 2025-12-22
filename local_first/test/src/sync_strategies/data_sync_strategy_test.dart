@@ -29,6 +29,21 @@ class _TestStrategy extends DataSyncStrategy {
   }
 }
 
+class _OtherModel with LocalFirstModel {
+  _OtherModel(this.id);
+  final String id;
+
+  @override
+  Map<String, dynamic> toJson() => {'id': id};
+}
+
+class _TypedStrategy extends DataSyncStrategy<_DummyModel> {
+  @override
+  Future<SyncStatus> onPushToRemote(_DummyModel localData) async {
+    return SyncStatus.ok;
+  }
+}
+
 class _FakeStorage implements LocalFirstStorage {
   final Map<String, Map<String, Map<String, dynamic>>> _tables = {};
   final Map<String, String> _meta = {};
@@ -137,6 +152,65 @@ class _FakeStorage implements LocalFirstStorage {
   }) async {}
 }
 
+class _InMemoryKeyValueStorage implements LocalFirstKeyValueStorage {
+  final Map<String, Object?> _store = {};
+  bool _opened = false;
+  String _namespace = 'default';
+
+  @override
+  bool get isOpened => _opened;
+
+  @override
+  bool get isClosed => !_opened;
+
+  @override
+  String get currentNamespace => _namespace;
+
+  @override
+  Future<void> open({String namespace = 'default'}) async {
+    _namespace = namespace;
+    _opened = true;
+  }
+
+  @override
+  Future<void> close() async {
+    _opened = false;
+  }
+
+  @override
+  Future<void> set<T>(String key, T value) async {
+    _ensureOpen();
+    _store[_namespaced(key)] = value;
+  }
+
+  @override
+  Future<T?> get<T>(String key) async {
+    _ensureOpen();
+    final value = _store[_namespaced(key)];
+    return value is T ? value : null;
+  }
+
+  @override
+  Future<bool> contains(String key) async {
+    _ensureOpen();
+    return _store.containsKey(_namespaced(key));
+  }
+
+  @override
+  Future<void> delete(String key) async {
+    _ensureOpen();
+    _store.remove(_namespaced(key));
+  }
+
+  void _ensureOpen() {
+    if (!_opened) {
+      throw StateError('KeyValueStorage not open');
+    }
+  }
+
+  String _namespaced(String key) => '${_namespace}__$key';
+}
+
 void main() {
   setUpAll(() {
     registerFallbackValue(<LocalFirstModel>[]);
@@ -177,9 +251,30 @@ void main() {
       verify(() => client.getAllPendingObjects()).called(1);
     });
 
+    test('getPendingObjects filters to typed model', () async {
+      final strategy = _TypedStrategy();
+      final client = _MockClient();
+      final pending = <LocalFirstModel>[
+        _DummyModel('1'),
+        _OtherModel('2'),
+        _DummyModel('3'),
+      ];
+
+      when(
+        () => client.getAllPendingObjects(),
+      ).thenAnswer((_) async => pending);
+      strategy.attach(client);
+
+      final result = await strategy.getPendingObjects();
+
+      expect(result.map((e) => e.id), ['1', '3']);
+      verify(() => client.getAllPendingObjects()).called(1);
+    });
+
     test('pullChangesToLocal calls client pull logic', () async {
       final strategy = _TestStrategy();
       final storage = _FakeStorage();
+      final metaStorage = _InMemoryKeyValueStorage();
       final repo = LocalFirstRepository<_DummyModel>.create(
         name: 'users',
         getId: (m) => m.id,
@@ -190,6 +285,7 @@ void main() {
       final client = LocalFirstClient(
         repositories: [repo],
         localStorage: storage,
+        metaStorage: metaStorage,
         syncStrategies: [strategy],
       );
       await client.initialize();
@@ -200,7 +296,7 @@ void main() {
       });
 
       final metaKey = '__last_sync__users';
-      final value = await storage.getMeta(metaKey);
+      final value = await metaStorage.get<String>(metaKey);
       expect(value, isNotNull);
     });
   });
