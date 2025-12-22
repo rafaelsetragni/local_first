@@ -555,14 +555,12 @@ class RepositoryService {
       localStorage: HiveLocalFirstStorage(),
       syncStrategies: [syncStrategy],
     );
-
     await localFirst.initialize();
     return await restoreLastUser();
   }
 
   Future<void> signIn({required String username}) async {
-    syncStrategy.stop();
-    await _switchUserDatabase('');
+    await _openDatabaseForUser(username);
     await _syncRemoteUsersToLocal();
     final existing = await userRepository
         .query()
@@ -577,7 +575,6 @@ class RepositoryService {
     );
     await userRepository.upsert(user);
     await _persistLastUsername(username);
-    syncStrategy.start();
     NavigatorService().navigateToHome();
   }
 
@@ -594,22 +591,20 @@ class RepositoryService {
   }
 
   Future<void> signOut() async {
-    syncStrategy.stop();
     authenticatedUser = null;
-    await _switchUserDatabase('');
     await localFirst?.setKeyValue(_lastUsernameKey, '');
+    await _closeDatabase();
     NavigatorService().navigateToSignIn();
   }
 
   Future<UserModel?> restoreUser(String username) async {
-    await _switchUserDatabase('');
+    await _openDatabaseForUser(username);
     final results = await userRepository
         .query()
         .where('username', isEqualTo: username)
         .getAll();
     if (results.isEmpty) return null;
     authenticatedUser = results.first;
-    syncStrategy.start();
     return authenticatedUser;
   }
 
@@ -691,19 +686,28 @@ class RepositoryService {
     await counterLogRepository.upsert(log);
   }
 
-  Future<void> _switchUserDatabase(String username) async {
+  Future<void> _openDatabaseForUser(String username) async {
     final db = localFirst;
     if (db == null) return;
 
+    syncStrategy.stop();
     final namespace = _sanitizeNamespace(username);
-    if (_currentNamespace == namespace) return;
-    _currentNamespace = namespace;
-
-    final storage = db.localStorage;
-    if (storage is HiveLocalFirstStorage) {
-      await storage.close();
-      await storage.open(namespace: namespace);
+    final shouldReset = _currentNamespace != namespace;
+    if (shouldReset) {
+      userRepository.reset();
+      counterLogRepository.reset();
     }
+
+    await db.localStorage.close();
+    await db.openStorage(namespace: namespace);
+    _currentNamespace = namespace;
+    await syncStrategy.syncNow();
+    syncStrategy.start();
+  }
+
+  Future<void> _closeDatabase() async {
+    syncStrategy.stop();
+    await localFirst?.dispose();
   }
 
   String _sanitizeNamespace(String username) {
@@ -916,6 +920,19 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     _timer = null;
     pendingChanges.clear();
     lastSyncedAt.clear();
+  }
+
+  Future<void> syncNow() async {
+    await client.awaitInitialization;
+    if (lastSyncedAt.isEmpty) {
+      for (final repository in mongoApi.repositoryNames) {
+        final value = await client.getMeta('__last_sync__$repository');
+        lastSyncedAt[repository] = value != null
+            ? DateTime.tryParse(value)
+            : null;
+      }
+    }
+    await _onTimerTick(null);
   }
 
   void dispose() {

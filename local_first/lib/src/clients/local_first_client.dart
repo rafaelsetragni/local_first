@@ -14,7 +14,8 @@ class LocalFirstClient {
 
   final List<DataSyncStrategy> syncStrategies = [];
   final Completer _onInitialize = Completer();
-  bool _initialized = false;
+  Future<void>? _initializeFuture;
+  bool get _initialized => _onInitialize.isCompleted;
 
   Future get awaitInitialization => _onInitialize.future;
 
@@ -102,27 +103,48 @@ class LocalFirstClient {
   /// This must be called before using any LocalFirstClient functionality.
   /// It initializes the local database and all registered repositories.
   Future<void> initialize() async {
-    assert(
-      _repositories.isNotEmpty,
-      'You need to register at least one repository.',
-    );
-    assert(
-      syncStrategies.isNotEmpty,
-      'You need to provide at least one sync strategy.',
-    );
-    await _metaStorage.open();
-    await _localStorage.initialize();
-
-    for (var repository in _repositories) {
-      await repository.initialize();
+    if (_initializeFuture != null) {
+      return _initializeFuture!;
     }
-    _initialized = true;
-    _onInitialize.complete();
+    _initializeFuture = _runInitialize();
+    return _initializeFuture!;
+  }
+
+  Future<void> _runInitialize() async {
+    try {
+      assert(
+        !_initialized,
+        'Initialize should only be called once in the entire application.',
+      );
+      assert(
+        _repositories.isNotEmpty,
+        'You need to register at least one repository.',
+      );
+      assert(
+        syncStrategies.isNotEmpty,
+        'You need to provide at least one sync strategy.',
+      );
+      await _metaStorage.open();
+      await _localStorage.initialize();
+      if (!_onInitialize.isCompleted) {
+        _onInitialize.complete();
+      }
+    } catch (e) {
+      _initializeFuture = null;
+      rethrow;
+    }
   }
 
   /// Opens the local storage connection.
   Future<void> openStorage({String namespace = 'default'}) async {
+    if (!_initialized) {
+      await initialize();
+    }
     await _localStorage.open(namespace: namespace);
+    for (var repository in _repositories) {
+      repository.reset();
+      await repository.initialize();
+    }
   }
 
   /// Clears all data from the local database.

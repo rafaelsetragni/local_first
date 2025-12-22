@@ -275,7 +275,7 @@ void main() {
       );
     });
 
-    test('initialize sets up storage and repositories', () async {
+    test('initialize sets up storage', () async {
       await client.initialize();
       expect(storage.initialized, isTrue);
     });
@@ -462,7 +462,7 @@ void main() {
       expect(storage.closed, isTrue);
     });
 
-    test('awaitInitialization completes only after initialize runs', () async {
+    test('awaitInitialization completes only after openStorage runs', () async {
       final completerOrder = <String>[];
 
       unawaited(
@@ -475,7 +475,7 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 10));
       expect(completerOrder, isEmpty);
 
-      await client.initialize();
+      await client.openStorage();
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
       expect(completerOrder, contains('awaitInitialization'));
