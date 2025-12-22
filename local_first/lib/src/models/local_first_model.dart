@@ -82,8 +82,9 @@ extension LocalFirstModelsX<T extends LocalFirstModel> on List<T> {
   /// Converts a list of objects to the sync JSON format.
   ///
   /// Groups objects by operation type (insert, update, delete) as expected
-  /// by the push endpoint.
-  Map<String, dynamic> toJson() {
+  /// by the push endpoint. Use [idFieldName] when your model id key differs
+  /// from 'id'.
+  Map<String, dynamic> toJson({String idFieldName = 'id'}) {
     final inserts = <Map<String, dynamic>>[];
     final updates = <Map<String, dynamic>>[];
     final deletes = <String>[];
@@ -99,7 +100,7 @@ extension LocalFirstModelsX<T extends LocalFirstModel> on List<T> {
           updates.add(itemJson);
           break;
         case SyncOperation.delete:
-          deletes.add(itemJson['id']?.toString() ?? '');
+          deletes.add(itemJson[idFieldName]?.toString() ?? '');
           break;
       }
     }

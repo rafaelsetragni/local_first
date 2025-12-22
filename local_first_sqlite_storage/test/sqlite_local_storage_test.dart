@@ -79,7 +79,7 @@ void main() {
         repositoryName: 'users',
         delegate: storage,
         fromJson: DummyModel.fromJson,
-        repository: LocalFirstRepository<DummyModel>.create(
+        repository: LocalFirstRepository.create<DummyModel>(
           name: 'users',
           getId: (m) => m.id,
           toJson: (m) => m.toJson(),
@@ -587,7 +587,7 @@ void main() {
         repositoryName: 'users',
         delegate: storage,
         fromJson: DummyModel.fromJson,
-        repository: LocalFirstRepository<DummyModel>.create(
+        repository: LocalFirstRepository.create<DummyModel>(
           name: 'users',
           getId: (m) => m.id,
           toJson: (m) => m.toJson(),

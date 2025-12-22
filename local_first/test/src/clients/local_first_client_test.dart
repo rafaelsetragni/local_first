@@ -25,14 +25,22 @@ class _OkStrategy extends DataSyncStrategy {
   }
 }
 
-class _InitProbeRepo extends LocalFirstRepository<_TestModel> {
+class _InitProbeRepo with LocalFirstRepository<_TestModel> {
   _InitProbeRepo({
-    required super.name,
-    required super.getId,
-    required super.toJson,
-    required super.fromJson,
-    required super.onConflict,
-  });
+    required String name,
+    required String Function(_TestModel item) getId,
+    required Map<String, dynamic> Function(_TestModel item) toJson,
+    required _TestModel Function(Map<String, dynamic>) fromJson,
+    required _TestModel Function(_TestModel local, _TestModel remote) onConflict,
+  }) {
+    initLocalFirstRepository(
+      name: name,
+      getId: getId,
+      toJson: toJson,
+      fromJson: fromJson,
+      onConflict: onConflict,
+    );
+  }
 
   bool initialized = false;
   bool resetCalled = false;
@@ -254,7 +262,7 @@ void main() {
     late LocalFirstClient client;
 
     LocalFirstRepository<_TestModel> buildRepo(String name) {
-      return LocalFirstRepository<_TestModel>.create(
+      return LocalFirstRepository.create<_TestModel>(
         name: name,
         getId: (m) => m.id,
         toJson: (m) => m.toJson(),

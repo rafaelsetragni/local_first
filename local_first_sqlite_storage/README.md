@@ -57,7 +57,7 @@ class Todo with LocalFirstModel {
       local.updatedAt.isAfter(remote.updatedAt) ? local : remote;
 }
 
-final todoRepository = LocalFirstRepository<Todo>.create(
+final todoRepository = LocalFirstRepository.create<Todo>(
   name: 'todo',
   getId: (todo) => todo.id,
   toJson: (todo) => todo.toJson(),

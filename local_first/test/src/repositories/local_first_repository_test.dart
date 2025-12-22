@@ -271,7 +271,7 @@ void main() {
     setUp(() async {
       storage = _InMemoryStorage();
       final metaStorage = _InMemoryKeyValueStorage();
-      repo = LocalFirstRepository<_TestModel>.create(
+      repo = LocalFirstRepository.create<_TestModel>(
         name: 'tests',
         getId: (m) => m.id,
         toJson: (m) => m.toJson(),
@@ -334,7 +334,7 @@ void main() {
     test('typed sync strategy ignores unrelated model types', () async {
       final typedStrategy = _TypedOtherStrategy();
       final typedStorage = _InMemoryStorage();
-      final typedRepo = LocalFirstRepository<_TestModel>.create(
+      final typedRepo = LocalFirstRepository.create<_TestModel>(
         name: 'typed_tests',
         getId: (m) => m.id,
         toJson: (m) => m.toJson(),
@@ -374,7 +374,7 @@ void main() {
       '_updateObjectStatus persists last sync status from failing strategy',
       () async {
         final failingStorage = _InMemoryStorage();
-        final failingRepo = LocalFirstRepository<_TestModel>.create(
+        final failingRepo = LocalFirstRepository.create<_TestModel>(
           name: 'tests',
           getId: (m) => m.id,
           toJson: (m) => m.toJson(),
@@ -399,7 +399,7 @@ void main() {
 
     test('_pushLocalObject failure does not affect subsequent items', () async {
       final conditionalStorage = _InMemoryStorage();
-      final conditionalRepo = LocalFirstRepository<_TestModel>.create(
+      final conditionalRepo = LocalFirstRepository.create<_TestModel>(
         name: 'tests',
         getId: (m) => m.id,
         toJson: (m) => m.toJson(),
@@ -496,7 +496,7 @@ void main() {
     });
 
     test('resolveConflict can prefer remote when resolver defines so', () {
-      final remoteFirstRepo = LocalFirstRepository<_TestModel>.create(
+      final remoteFirstRepo = LocalFirstRepository.create<_TestModel>(
         name: 'tests',
         getId: (m) => m.id,
         toJson: (m) => m.toJson(),
@@ -513,7 +513,7 @@ void main() {
     });
 
     test('resolveConflict surfaces resolver exceptions', () {
-      final throwingRepo = LocalFirstRepository<_TestModel>.create(
+      final throwingRepo = LocalFirstRepository.create<_TestModel>(
         name: 'tests',
         getId: (m) => m.id,
         toJson: (m) => m.toJson(),

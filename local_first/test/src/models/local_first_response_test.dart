@@ -10,15 +10,16 @@ class _DummyModel with LocalFirstModel {
   Map<String, dynamic> toJson() => {'id': id};
 }
 
-class _DummyRepo extends LocalFirstRepository<_DummyModel> {
-  _DummyRepo()
-    : super(
-        name: 'dummy',
-        getId: (m) => m.id,
-        toJson: (m) => m.toJson(),
-        fromJson: (json) => _DummyModel(json['id'] as String),
-        onConflict: (l, r) => l,
-      );
+class _DummyRepo with LocalFirstRepository<_DummyModel> {
+  _DummyRepo() {
+    initLocalFirstRepository(
+      name: 'dummy',
+      getId: (m) => m.id,
+      toJson: (m) => m.toJson(),
+      fromJson: (json) => _DummyModel(json['id'] as String),
+      onConflict: (l, r) => l,
+    );
+  }
 }
 
 void main() {

@@ -23,20 +23,21 @@ class _DummyModel with LocalFirstModel {
   };
 }
 
-class _DummyRepo extends LocalFirstRepository<_DummyModel> {
-  _DummyRepo()
-    : super(
-        name: 'dummy',
-        getId: (m) => m.id,
-        toJson: (m) => m.toJson(),
-        fromJson: (json) => _DummyModel(
-          id: json['id'] as String,
-          name: json['name'] as String,
-          score: json['score'] as int,
-          note: json['note'] as String?,
-        ),
-        onConflict: (l, r) => l,
-      );
+class _DummyRepo with LocalFirstRepository<_DummyModel> {
+  _DummyRepo() {
+    initLocalFirstRepository(
+      name: 'dummy',
+      getId: (m) => m.id,
+      toJson: (m) => m.toJson(),
+      fromJson: (json) => _DummyModel(
+        id: json['id'] as String,
+        name: json['name'] as String,
+        score: json['score'] as int,
+        note: json['note'] as String?,
+      ),
+      onConflict: (l, r) => l,
+    );
+  }
 }
 
 class _FakeStorage extends LocalFirstStorage {

@@ -12,6 +12,15 @@ class _DummyModel with LocalFirstModel {
   Map<String, dynamic> toJson() => {'id': id, 'value': value};
 }
 
+class _UuidModel with LocalFirstModel {
+  _UuidModel({required this.uuid});
+
+  final String uuid;
+
+  @override
+  Map<String, dynamic> toJson() => {'uuid': uuid};
+}
+
 void main() {
   group('LocalFirstModel mixin', () {
     test('defaults to ok/insert and no createdAt', () {
@@ -59,6 +68,28 @@ void main() {
         {'id': '2', 'value': 'two'},
       ]);
       expect(payload['delete'], ['3']);
+    });
+
+    test('LocalFirstModelsX.toJson uses default id field for deletes', () {
+      final delete = _DummyModel(id: '9', value: 'nine')
+        ..debugSetSyncOperation(SyncOperation.delete);
+
+      final payload = [delete].toJson();
+
+      expect(payload['delete'], ['9']);
+      expect(payload['insert'], isEmpty);
+      expect(payload['update'], isEmpty);
+    });
+
+    test('LocalFirstModelsX.toJson uses custom id field for deletes', () {
+      final delete = _UuidModel(uuid: '3')
+        ..debugSetSyncOperation(SyncOperation.delete);
+
+      final payload = [delete].toJson(idFieldName: 'uuid');
+
+      expect(payload['delete'], ['3']);
+      expect(payload['insert'], isEmpty);
+      expect(payload['update'], isEmpty);
     });
 
     test('debug setters update sync metadata internally', () {

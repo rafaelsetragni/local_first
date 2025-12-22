@@ -143,7 +143,7 @@ void main() {
       await lazyStorage.insert('lazy_q', {'id': '1', 'age': 20}, 'id');
       await lazyStorage.insert('lazy_q', {'id': '2', 'age': 35}, 'id');
 
-      final repo = LocalFirstRepository<_TestModel>.create(
+      final repo = LocalFirstRepository.create<_TestModel>(
         name: 'lazy_q',
         getId: (m) => m.id,
         toJson: (m) => m.toJson(),
@@ -553,15 +553,16 @@ class _TestModel with LocalFirstModel {
       _TestModel(id: json['id'] as String, age: json['age'] as int?);
 }
 
-class _DummyRepo extends LocalFirstRepository<_TestModel> {
-  _DummyRepo()
-    : super(
-        name: 'users',
-        getId: (m) => m.id,
-        toJson: (m) => m.toJson(),
-        fromJson: _TestModel.fromJson,
-        onConflict: (l, r) => l,
-      );
+class _DummyRepo with LocalFirstRepository<_TestModel> {
+  _DummyRepo() {
+    initLocalFirstRepository(
+      name: 'users',
+      getId: (m) => m.id,
+      toJson: (m) => m.toJson(),
+      fromJson: _TestModel.fromJson,
+      onConflict: (l, r) => l,
+    );
+  }
 }
 
 class _MockHive extends Mock implements HiveInterface {}

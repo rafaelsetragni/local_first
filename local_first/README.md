@@ -91,7 +91,7 @@ class Todo with LocalFirstModel {
 }
 
 // 2) Create a repository for the model.
-final todoRepository = LocalFirstRepository<Todo>.create(
+final todoRepository = LocalFirstRepository.create<Todo>(
   name: 'todo',
   getId: (todo) => todo.id,
   toJson: (todo) => todo.toJson(),
@@ -132,7 +132,7 @@ Future<void> main() async {
 - **SQLite**: structured tables with indexes for query filters/sorts. Add `local_first_sqlite_storage` and use `SqliteLocalFirstStorage()`, providing a schema when creating repositories:
 
 ```dart
-final todoRepository = LocalFirstRepository<Todo>.create(
+final todoRepository = LocalFirstRepository.create<Todo>(
   name: 'todo',
   getId: (todo) => todo.id,
   toJson: (todo) => todo.toJson(),

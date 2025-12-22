@@ -275,7 +275,7 @@ void main() {
       final strategy = _TestStrategy();
       final storage = _FakeStorage();
       final metaStorage = _InMemoryKeyValueStorage();
-      final repo = LocalFirstRepository<_DummyModel>.create(
+      final repo = LocalFirstRepository.create<_DummyModel>(
         name: 'users',
         getId: (m) => m.id,
         toJson: (m) => m.toJson(),

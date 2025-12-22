@@ -1057,7 +1057,8 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     return {
       'lastSyncedAt': DateTime.now().toIso8601String(),
       'changes': {
-        for (final entry in changes.entries) entry.key: entry.value.toJson(),
+        for (final entry in changes.entries)
+          entry.key: entry.value.toJson(idFieldName: entry.key.idFieldName),
       },
     };
   }

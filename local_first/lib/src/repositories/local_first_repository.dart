@@ -6,68 +6,75 @@ enum LocalFieldType { text, integer, real, boolean, datetime, blob }
 /// Represents a data collection (similar to a table).
 ///
 /// Each repository manages a specific type of object and handles CRUD operations
-/// independently. Repositories can be used standalone or by inheritance.
+/// independently. Repositories can be used standalone, by inheritance, or as a
+/// mixin.
 ///
 /// Example:
 /// ```dart
-/// class ChatService extends LocalFirstRepository<Chat> {
-///   ChatService()
-///     : super(
-///         'chat',
-///         getId: (chat) => chat.id,
-///         toJson: (chat) => chat.toJson(),
-///         fromJson: Chat.fromJson,
-///         onConflict: (local, remote) => remote,
-///       );
+/// class ChatService with LocalFirstRepository<Chat> {
+///   ChatService() {
+///     initLocalFirstRepository(
+///       name: 'chat',
+///       getId: (chat) => chat.id,
+///       toJson: (chat) => chat.toJson(),
+///       fromJson: Chat.fromJson,
+///       onConflict: (local, remote) => remote,
+///     );
+///   }
 /// }
 /// ```
-abstract class LocalFirstRepository<T extends LocalFirstModel> {
+mixin LocalFirstRepository<T extends LocalFirstModel> {
   /// The unique name identifier for this repository.
-  final String name;
+  late final String name;
 
   /// Serialization helpers for the repository items.
-  final String Function(T item) _getId;
-  final Map<String, dynamic> Function(T item) _toJson;
-  final T Function(Map<String, dynamic> json) _fromJson;
-  final T Function(T local, T remote) _resolveConflict;
+  late final String Function(T item) _getId;
+  late final Map<String, dynamic> Function(T item) _toJson;
+  late final T Function(Map<String, dynamic> json) _fromJson;
+  late final T Function(T local, T remote) _resolveConflict;
 
   /// Field name used as identifier in persisted maps.
-  final String idFieldName;
+  late final String idFieldName;
 
   /// Schema definition for native storage backends (e.g. SQLite).
-  final Map<String, LocalFieldType> schema;
+  late final Map<String, LocalFieldType> schema;
 
   late LocalFirstClient _client;
 
   late List<DataSyncStrategy> _syncStrategies;
 
-  /// Creates a new LocalFirstRepository.
+  bool _isConfigured = false;
+
+  /// Initializes a repository mixed into another class.
   ///
-  /// Parameters:
-  /// - [name]: Unique identifier for this repository
-  /// - [getId]: Returns the primary key of the model
-  /// - [toJson]: Serializes the model to Map
-  /// - [fromJson]: Deserializes the model from Map
-  /// - [onConflict]: Resolves conflicts between local/remote models
-  /// - [idFieldName]: Key used to persist the model id (default: `id`)
-  /// - [schema]: Optional schema used by SQL backends for column creation
-  LocalFirstRepository({
-    required this.name,
+  /// Call this from your constructor when using [LocalFirstRepository]
+  /// as a mixin.
+  @protected
+  void initLocalFirstRepository({
+    required String name,
     required String Function(T item) getId,
     required Map<String, dynamic> Function(T item) toJson,
     required T Function(Map<String, dynamic>) fromJson,
     required T Function(T local, T remote) onConflict,
-    this.idFieldName = 'id',
+    String idFieldName = 'id',
     Map<String, LocalFieldType> schema = const {},
-  }) : _getId = getId,
-       _toJson = toJson,
-       _fromJson = fromJson,
-       _resolveConflict = onConflict,
-       schema = Map.unmodifiable(schema);
+  }) {
+    if (_isConfigured) {
+      throw StateError('LocalFirstRepository already configured');
+    }
+    this.name = name;
+    _getId = getId;
+    _toJson = toJson;
+    _fromJson = fromJson;
+    _resolveConflict = onConflict;
+    this.idFieldName = idFieldName;
+    this.schema = Map.unmodifiable(schema);
+    _isConfigured = true;
+  }
 
   /// Creates a configured instance of LocalFirstRepository.
   ///
-  /// Use this factory when you prefer not to use inheritance.
+  /// Use this when you prefer not to mix it into another class.
   ///
   /// Example:
   /// ```dart
@@ -79,15 +86,25 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
   ///   onConflict: (local, remote) => local,
   /// );
   /// ```
-  factory LocalFirstRepository.create({
+  static LocalFirstRepository<T> create<T extends LocalFirstModel>({
     required String name,
     required String Function(T item) getId,
     required Map<String, dynamic> Function(T item) toJson,
     required T Function(Map<String, dynamic>) fromJson,
     required T Function(T local, T remote) onConflict,
-    String idFieldName,
-    Map<String, LocalFieldType> schema,
-  }) = _LocalFirstRepository;
+    String idFieldName = 'id',
+    Map<String, LocalFieldType> schema = const {},
+  }) {
+    return _LocalFirstRepository<T>(
+      name: name,
+      getId: getId,
+      toJson: toJson,
+      fromJson: fromJson,
+      onConflict: onConflict,
+      idFieldName: idFieldName,
+      schema: schema,
+    );
+  }
 
   String getId(T item) => _getId(item);
   Map<String, dynamic> toJson(T item) => _toJson(item);
@@ -370,14 +387,24 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
 }
 
 final class _LocalFirstRepository<T extends LocalFirstModel>
-    extends LocalFirstRepository<T> {
+    with LocalFirstRepository<T> {
   _LocalFirstRepository({
-    required super.name,
-    required super.getId,
-    required super.toJson,
-    required super.fromJson,
-    required super.onConflict,
-    super.idFieldName = 'id',
-    super.schema = const {},
-  });
+    required String name,
+    required String Function(T item) getId,
+    required Map<String, dynamic> Function(T item) toJson,
+    required T Function(Map<String, dynamic>) fromJson,
+    required T Function(T local, T remote) onConflict,
+    String idFieldName = 'id',
+    Map<String, LocalFieldType> schema = const {},
+  }) {
+    initLocalFirstRepository(
+      name: name,
+      getId: getId,
+      toJson: toJson,
+      fromJson: fromJson,
+      onConflict: onConflict,
+      idFieldName: idFieldName,
+      schema: schema,
+    );
+  }
 }
