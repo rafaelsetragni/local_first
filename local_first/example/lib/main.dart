@@ -539,6 +539,10 @@ class RepositoryService {
   UserModel? authenticatedUser;
   String _currentNamespace = 'default';
   final _lastUsernameKey = '__last_username__';
+  final _counterTotalKey = '__counter_total__';
+  final StreamController<int> _counterTotalController =
+      StreamController<int>.broadcast();
+  int _counterTotal = 0;
 
   final LocalFirstRepository<UserModel> userRepository;
   final LocalFirstRepository<CounterLogModel> counterLogRepository;
@@ -547,7 +551,9 @@ class RepositoryService {
   RepositoryService._internal()
     : userRepository = _buildUserRepository(),
       counterLogRepository = _buildCounterLogRepository(),
-      syncStrategy = MongoPeriodicSyncStrategy();
+      syncStrategy = MongoPeriodicSyncStrategy() {
+    syncStrategy.onCounterDelta = _applyCounterDelta;
+  }
 
   Future<UserModel?> initialize() async {
     final localFirst = this.localFirst ??= LocalFirstClient(
@@ -629,9 +635,10 @@ class RepositoryService {
       .orderBy('created_at', descending: true)
       .watch();
 
-  Stream<int> watchCounter() => watchLogs().map(
-    (logs) => logs.fold<int>(0, (sum, log) => sum + log.increment),
-  );
+  Stream<int> watchCounter() async* {
+    yield _counterTotal;
+    yield* _counterTotalController.stream;
+  }
 
   Stream<List<CounterLogModel>> watchRecentLogs({int limit = 5}) =>
       watchLogs().map((logs) => logs.take(limit).toList());
@@ -701,6 +708,7 @@ class RepositoryService {
     await db.localStorage.close();
     await db.openStorage(namespace: namespace);
     _currentNamespace = namespace;
+    await _loadCounterTotal();
     await syncStrategy.syncNow();
     syncStrategy.start();
   }
@@ -708,6 +716,8 @@ class RepositoryService {
   Future<void> _closeDatabase() async {
     syncStrategy.stop();
     await localFirst?.dispose();
+    _counterTotal = 0;
+    _counterTotalController.add(_counterTotal);
   }
 
   String _sanitizeNamespace(String username) {
@@ -717,6 +727,24 @@ class RepositoryService {
       '_',
     );
     return 'user__$sanitized';
+  }
+
+  Future<void> _loadCounterTotal() async {
+    final value = await localFirst?.getMeta(_counterTotalKey);
+    if (value == null) {
+      final logs = await counterLogRepository.query().getAll();
+      _counterTotal = logs.fold(0, (sum, log) => sum + log.increment);
+      await localFirst?.setKeyValue(_counterTotalKey, _counterTotal.toString());
+    } else {
+      _counterTotal = int.tryParse(value) ?? 0;
+    }
+    _counterTotalController.add(_counterTotal);
+  }
+
+  Future<void> _applyCounterDelta(int delta) async {
+    _counterTotal += delta;
+    _counterTotalController.add(_counterTotal);
+    await localFirst?.setKeyValue(_counterTotalKey, _counterTotal.toString());
   }
 }
 
@@ -896,6 +924,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   Timer? _timer;
   final JsonMap<DateTime?> lastSyncedAt = {};
   final JsonMap<List<LocalFirstModel>> pendingChanges = {};
+  Future<void> Function(int delta)? onCounterDelta;
 
   void start() {
     stop();
@@ -958,7 +987,11 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     }
     final remoteChanges = await mongoApi.pull(lastSyncedAt);
     if (remoteChanges['changes']?.isNotEmpty) {
+      final delta = _counterDeltaFromRemote(remoteChanges);
       await pullChangesToLocal(remoteChanges);
+      if (delta != 0) {
+        await onCounterDelta?.call(delta);
+      }
 
       // Use the latest updated_at seen in this pull as the new lastSyncedAt
       final latest = mongoApi.latestUpdatedAt(remoteChanges);
@@ -972,6 +1005,31 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
         }
       }
     }
+  }
+
+  int _counterDeltaFromRemote(JsonMap<dynamic> remoteChanges) {
+    final changes = remoteChanges['changes'];
+    if (changes is! Map) return 0;
+    final counterChanges = changes['counter_log'];
+    if (counterChanges is! Map<String, dynamic>) return 0;
+    int delta = 0;
+    final inserts = counterChanges['insert'];
+    if (inserts is List) {
+      for (final item in inserts) {
+        if (item is Map && item['increment'] is int) {
+          delta += item['increment'] as int;
+        }
+      }
+    }
+    final updates = counterChanges['update'];
+    if (updates is List) {
+      for (final item in updates) {
+        if (item is Map && item['increment'] is int) {
+          delta += item['increment'] as int;
+        }
+      }
+    }
+    return delta;
   }
 
   Future<void> _pushToRemote(JsonMap<List<LocalFirstModel>> changes) async {

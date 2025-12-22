@@ -422,6 +422,7 @@ void main() {
         syncStrategies: [_OkStrategy()],
       );
       await clientWithProbe.initialize();
+      await clientWithProbe.openStorage();
       await probeRepo.upsert(_TestModel('1'));
 
       expect(await storage.getById('probe', '1'), isNotNull);
