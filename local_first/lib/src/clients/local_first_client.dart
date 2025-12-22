@@ -8,11 +8,12 @@ part of '../../local_first.dart';
 /// - Maintaining sync state across nodes
 /// - Providing access to the local database delegate
 class LocalFirstClient {
-  late final List<LocalFirstRepository> _repositories;
+  final List<LocalFirstRepository> _repositories = [];
   final LocalFirstStorage _localStorage;
 
   final List<DataSyncStrategy> syncStrategies;
   final Completer _onInitialize = Completer();
+  bool _initialized = false;
 
   Future get awaitInitialization => _onInitialize.future;
 
@@ -22,12 +23,13 @@ class LocalFirstClient {
   /// Creates an instance of LocalFirstClient.
   ///
   /// Parameters:
-  /// - [nodes]: List of [LocalFirstRepository] instances to be managed
+  /// - [repositories]: Optional list of [LocalFirstRepository] instances
+  ///   to be managed. You can also call [registerRepositories] later.
   /// - [localStorage]: The local database delegate for storage operations
   ///
   /// Throws [ArgumentError] if there are duplicate node names.
   LocalFirstClient({
-    required List<LocalFirstRepository> repositories,
+    List<LocalFirstRepository> repositories = const [],
     required LocalFirstStorage localStorage,
     required this.syncStrategies,
   }) : assert(
@@ -35,19 +37,37 @@ class LocalFirstClient {
          'You need to provide at least one sync strategy.',
        ),
        _localStorage = localStorage {
-    final names = repositories.map((n) => n.name).toSet();
-    if (names.length != repositories.length) {
+    for (final strategy in syncStrategies) {
+      strategy.attach(this);
+    }
+    if (repositories.isNotEmpty) {
+      registerRepositories(repositories);
+    }
+  }
+
+  /// Registers repositories with the client.
+  ///
+  /// Call this before [initialize] when not providing repositories
+  /// in the constructor.
+  void registerRepositories(List<LocalFirstRepository> repositories) {
+    if (repositories.isEmpty) return;
+    if (_initialized) {
+      throw StateError('Cannot register repositories after initialize');
+    }
+    final existingNames = _repositories.map((n) => n.name).toSet();
+    final incomingNames = repositories.map((n) => n.name).toSet();
+    if (incomingNames.length != repositories.length) {
+      throw ArgumentError('Duplicate node names');
+    }
+    final overlap = existingNames.intersection(incomingNames);
+    if (overlap.isNotEmpty) {
       throw ArgumentError('Duplicate node names');
     }
     for (var repository in repositories) {
       repository._client = this;
       repository._syncStrategies = syncStrategies;
     }
-    for (final strategy in syncStrategies) {
-      strategy.attach(this);
-    }
-
-    _repositories = List.unmodifiable(repositories);
+    _repositories.addAll(repositories);
   }
 
   /// Gets a repository by its name.
@@ -62,11 +82,16 @@ class LocalFirstClient {
   /// This must be called before using any LocalFirstClient functionality.
   /// It initializes the local database and all registered repositories.
   Future<void> initialize() async {
+    assert(
+      _repositories.isNotEmpty,
+      'You need to register at least one repository.',
+    );
     await _localStorage.initialize();
 
     for (var repository in _repositories) {
       await repository.initialize();
     }
+    _initialized = true;
     _onInitialize.complete();
   }
 

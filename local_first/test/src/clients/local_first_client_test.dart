@@ -193,15 +193,19 @@ void main() {
     late LocalFirstRepository<_TestModel> repo;
     late LocalFirstClient client;
 
-    setUp(() async {
-      storage = _InMemoryStorage();
-      repo = LocalFirstRepository<_TestModel>.create(
-        name: 'tests',
+    LocalFirstRepository<_TestModel> buildRepo(String name) {
+      return LocalFirstRepository<_TestModel>.create(
+        name: name,
         getId: (m) => m.id,
         toJson: (m) => m.toJson(),
         fromJson: _TestModel.fromJson,
         onConflict: (l, r) => l,
       );
+    }
+
+    setUp(() async {
+      storage = _InMemoryStorage();
+      repo = buildRepo('tests');
       client = LocalFirstClient(
         repositories: [repo],
         localStorage: storage,
@@ -212,6 +216,67 @@ void main() {
     test('initialize sets up storage and repositories', () async {
       await client.initialize();
       expect(storage.initialized, isTrue);
+    });
+
+    test('initialize asserts when no repositories registered', () {
+      final emptyClient = LocalFirstClient(
+        repositories: const [],
+        localStorage: storage,
+        syncStrategies: [_OkStrategy()],
+      );
+
+      expect(
+        () => emptyClient.initialize(),
+        throwsA(isA<AssertionError>()),
+      );
+    });
+
+    test('registerRepositories supports multiple calls before initialize', () async {
+      final emptyClient = LocalFirstClient(
+        repositories: const [],
+        localStorage: storage,
+        syncStrategies: [_OkStrategy()],
+      );
+      final repoA = buildRepo('repo_a');
+      final repoB = buildRepo('repo_b');
+
+      emptyClient.registerRepositories([repoA]);
+      emptyClient.registerRepositories([repoB]);
+
+      await emptyClient.initialize();
+      expect(emptyClient.getRepositoryByName('repo_a'), same(repoA));
+      expect(emptyClient.getRepositoryByName('repo_b'), same(repoB));
+    });
+
+    test('registerRepositories throws on duplicate names across calls', () {
+      final emptyClient = LocalFirstClient(
+        repositories: const [],
+        localStorage: storage,
+        syncStrategies: [_OkStrategy()],
+      );
+      final repoA = buildRepo('dup');
+      final repoB = buildRepo('dup');
+
+      emptyClient.registerRepositories([repoA]);
+      expect(
+        () => emptyClient.registerRepositories([repoB]),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('registerRepositories throws after initialize', () async {
+      final repoA = buildRepo('init_repo');
+      final emptyClient = LocalFirstClient(
+        repositories: [repoA],
+        localStorage: storage,
+        syncStrategies: [_OkStrategy()],
+      );
+      await emptyClient.initialize();
+
+      expect(
+        () => emptyClient.registerRepositories([buildRepo('late_repo')]),
+        throwsA(isA<StateError>()),
+      );
     });
 
     test('duplicate repository names throw ArgumentError', () {
