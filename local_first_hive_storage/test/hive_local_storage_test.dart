@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hive/hive.dart';
+import 'package:hive_ce/hive.dart';
 import 'package:local_first/local_first.dart';
 import 'package:local_first_hive_storage/local_first_hive_storage.dart';
 import 'package:mocktail/mocktail.dart';
