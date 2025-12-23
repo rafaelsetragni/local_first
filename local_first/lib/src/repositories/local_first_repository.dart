@@ -106,6 +106,7 @@ mixin LocalFirstRepository<T extends LocalFirstModel> {
     );
   }
 
+  @mustCallSuper
   String getId(T item) => _getId(item);
   Map<String, dynamic> toJson(T item) => _toJson(item);
   T fromJson(Map<String, dynamic> json) => _fromJson(json);

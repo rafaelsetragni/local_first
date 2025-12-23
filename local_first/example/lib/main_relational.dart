@@ -708,6 +708,7 @@ class RepositoryService {
     await db.localStorage.close();
     await db.openStorage(namespace: namespace);
     _currentNamespace = namespace;
+    syncStrategy.setNamespace(namespace);
     await _loadCounterTotal();
     await syncStrategy.syncNow();
     syncStrategy.start();
@@ -730,11 +731,14 @@ class RepositoryService {
   }
 
   Future<void> _loadCounterTotal() async {
-    final value = await localFirst?.getMeta(_counterTotalKey);
+    final value = await localFirst?.getMeta(_counterTotalKeyForNamespace());
     if (value == null) {
       final logs = await counterLogRepository.query().getAll();
       _counterTotal = logs.fold(0, (sum, log) => sum + log.increment);
-      await localFirst?.setKeyValue(_counterTotalKey, _counterTotal.toString());
+      await localFirst?.setKeyValue(
+        _counterTotalKeyForNamespace(),
+        _counterTotal.toString(),
+      );
     } else {
       _counterTotal = int.tryParse(value) ?? 0;
     }
@@ -744,7 +748,14 @@ class RepositoryService {
   Future<void> _applyCounterDelta(int delta) async {
     _counterTotal += delta;
     _counterTotalController.add(_counterTotal);
-    await localFirst?.setKeyValue(_counterTotalKey, _counterTotal.toString());
+    await localFirst?.setKeyValue(
+      _counterTotalKeyForNamespace(),
+      _counterTotal.toString(),
+    );
+  }
+
+  String _counterTotalKeyForNamespace() {
+    return '${_counterTotalKey}__$_currentNamespace';
   }
 }
 
@@ -934,9 +945,18 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   );
 
   Timer? _timer;
+  String _namespace = 'default';
   final JsonMap<DateTime?> lastSyncedAt = {};
   final JsonMap<List<LocalFirstModel>> pendingChanges = {};
   Future<void> Function(int delta)? onCounterDelta;
+
+  void setNamespace(String namespace) {
+    _namespace = namespace;
+  }
+
+  String _lastSyncKey(String repository) {
+    return '__last_sync__${_namespace}__$repository';
+  }
 
   void start() {
     stop();
@@ -947,7 +967,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
         _addPending(object);
       }
       for (final repository in mongoApi.repositoryNames) {
-        final value = await client.getMeta('__last_sync__$repository');
+        final value = await client.getMeta(_lastSyncKey(repository));
         lastSyncedAt[repository] = value != null
             ? DateTime.tryParse(value)
             : null;
@@ -967,7 +987,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     await client.awaitInitialization;
     if (lastSyncedAt.isEmpty) {
       for (final repository in mongoApi.repositoryNames) {
-        final value = await client.getMeta('__last_sync__$repository');
+        final value = await client.getMeta(_lastSyncKey(repository));
         lastSyncedAt[repository] = value != null
             ? DateTime.tryParse(value)
             : null;
@@ -1011,7 +1031,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
         for (final repo in mongoApi.repositoryNames) {
           lastSyncedAt[repo] = latest;
           await client.setKeyValue(
-            '__last_sync__$repo',
+            _lastSyncKey(repo),
             latest.toIso8601String(),
           );
         }
@@ -1058,7 +1078,9 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
       'lastSyncedAt': DateTime.now().toIso8601String(),
       'changes': {
         for (final entry in changes.entries)
-          entry.key: entry.value.toJson(idFieldName: entry.key.idFieldName),
+          entry.key: entry.value.toJson(
+            idFieldName: client.getRepositoryByName(entry.key).idFieldName,
+          ),
       },
     };
   }
