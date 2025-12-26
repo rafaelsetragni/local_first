@@ -176,11 +176,11 @@ class LocalFirstClient {
   Future<void> _pullRemoteChanges(Map<String, dynamic> map) async {
     final LocalFirstResponse response = await _buildOfflineResponse(map);
 
-    for (final MapEntry<LocalFirstRepository, LocalFirstModels> entry
+    for (final MapEntry<LocalFirstRepository, List<LocalFirstEvent>> entry
         in response.changes.entries) {
       final LocalFirstRepository repository = entry.key;
-      final LocalFirstModels remoteObjects = entry.value;
-      await repository._mergeRemoteItems(remoteObjects);
+      final List<LocalFirstEvent> remoteEvents = entry.value;
+      await repository._mergeRemoteItems(remoteEvents);
     }
 
     for (final repository in _repositories) {
@@ -191,7 +191,7 @@ class LocalFirstClient {
     }
   }
 
-  Future<LocalFirstModels> getAllPendingObjects() async {
+  Future<List<LocalFirstEvent>> getAllPendingObjects() async {
     final results = await Future.wait([
       for (var repository in _repositories) repository.getPendingObjects(),
     ]);
@@ -215,11 +215,11 @@ class LocalFirstClient {
 
     final timestamp = DateTime.parse(json['timestamp'] as String);
     final changesJson = json['changes'] as Map;
-    final repositoryObjects = <LocalFirstRepository, List<LocalFirstModel>>{};
+    final repositoryObjects = <LocalFirstRepository, List<LocalFirstEvent>>{};
 
     for (var repositoryName in changesJson.keys) {
       final repository = getRepositoryByName(repositoryName as String);
-      final objects = <LocalFirstModel>[];
+      final objects = <LocalFirstEvent>[];
 
       final repositoryChangeJson =
           changesJson[repositoryName] as Map<String, dynamic>;
@@ -227,7 +227,7 @@ class LocalFirstClient {
       if (repositoryChangeJson.containsKey('insert')) {
         final inserts = (repositoryChangeJson['insert'] as List);
         for (var element in inserts) {
-          final object = repository._buildRemoteObject(
+          final object = repository._buildRemoteEvent(
             Map<String, dynamic>.from(element),
             operation: SyncOperation.insert,
           );
@@ -236,7 +236,7 @@ class LocalFirstClient {
       } else if (repositoryChangeJson.containsKey('update')) {
         final updates = (repositoryChangeJson['update'] as List);
         for (var element in updates) {
-          final object = repository._buildRemoteObject(
+          final object = repository._buildRemoteEvent(
             Map<String, dynamic>.from(element),
             operation: SyncOperation.update,
           );

@@ -4,27 +4,24 @@ part of '../../local_first.dart';
 ///
 /// Provides a fluent API for building complex queries with filtering,
 /// ordering, and pagination capabilities.
-class LocalFirstQuery<T extends LocalFirstModel> {
+class LocalFirstQuery<T> {
   final String repositoryName;
   final List<QueryFilter> filters;
   final List<QuerySort> sorts;
   final int? limit;
   final int? offset;
   final LocalFirstStorage _delegate;
-  final T Function(Map<String, dynamic>) _fromJson;
   final LocalFirstRepository<T> _repository;
 
   LocalFirstQuery({
     required this.repositoryName,
     required LocalFirstStorage delegate,
-    required T Function(Map<String, dynamic>) fromJson,
     required LocalFirstRepository<T> repository,
     this.filters = const [],
     this.sorts = const [],
     this.limit,
     this.offset,
   }) : _delegate = delegate,
-       _fromJson = fromJson,
        _repository = repository;
 
   LocalFirstQuery<T> copyWith({
@@ -36,7 +33,6 @@ class LocalFirstQuery<T extends LocalFirstModel> {
     return LocalFirstQuery<T>(
       repositoryName: repositoryName,
       delegate: _delegate,
-      fromJson: _fromJson,
       repository: _repository,
       filters: filters ?? this.filters,
       sorts: sorts ?? this.sorts,
@@ -122,7 +118,7 @@ class LocalFirstQuery<T extends LocalFirstModel> {
 
   /// Executes the query and returns all matching results.
   ///
-  /// Returns a list of models with sync metadata.
+  /// Returns a list of models from the local store.
   Future<List<T>> getAll() async {
     final results = await _delegate.query(this);
     return _mapResults(results);
@@ -146,32 +142,10 @@ class LocalFirstQuery<T extends LocalFirstModel> {
   List<T> _mapResults(List<Map<String, dynamic>> results) {
     return results
         .map((json) {
-          final itemJson = Map<String, dynamic>.from(json);
-          final item = _fromJson(
-            itemJson..removeWhere((key, _) => key.startsWith('_sync_')),
-          );
-
-          // Extract sync metadata stored alongside the model
-          final syncStatus = json['_sync_status'] != null
-              ? SyncStatus.values[json['_sync_status'] as int]
-              : SyncStatus.ok;
-
-          final syncOperation = json['_sync_operation'] != null
-              ? SyncOperation.values[json['_sync_operation'] as int]
-              : SyncOperation.insert;
-
-          item._setSyncStatus(syncStatus);
-          item._setSyncOperation(syncOperation);
-          final createdAt = json['_sync_created_at'] as int?;
-          item._setSyncCreatedAt(
-            createdAt != null
-                ? DateTime.fromMillisecondsSinceEpoch(createdAt, isUtc: true)
-                : null,
-          );
-          item._setRepositoryName(repositoryName);
-          return item;
+          final event = _repository._eventFromJson(json);
+          return event.isDeleted ? null : event.data;
         })
-        .where((obj) => !obj.isDeleted)
+        .whereType<T>()
         .toList();
   }
 }

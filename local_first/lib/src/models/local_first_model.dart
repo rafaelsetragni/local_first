@@ -24,26 +24,36 @@ enum SyncOperation {
   delete,
 }
 
-/// Type alias for a list of models with sync metadata.
-typedef LocalFirstModels<T extends LocalFirstModel> = List<T>;
+/// Type alias for a list of events with sync metadata.
+typedef LocalFirstEvents<T> = List<LocalFirstEvent<T>>;
 
-/// Mixin that adds synchronization metadata to your models.
+/// Wrapper that adds synchronization metadata to a domain model.
 ///
-/// Apply this mixin to your domain classes so repositories can manage
-/// sync state without wrapping your objects.
-mixin LocalFirstModel {
-  SyncStatus _syncStatus = SyncStatus.ok;
-  SyncOperation _syncOperation = SyncOperation.insert;
+/// Use this wrapper so your models can remain immutable/const without
+/// requiring a mixin.
+class LocalFirstEvent<T> {
+  LocalFirstEvent({
+    required this.data,
+    SyncStatus syncStatus = SyncStatus.ok,
+    SyncOperation syncOperation = SyncOperation.insert,
+    DateTime? syncCreatedAt,
+    String repositoryName = '',
+  }) : _syncStatus = syncStatus,
+       _syncOperation = syncOperation,
+       _syncCreatedAt = syncCreatedAt?.toUtc(),
+       _repositoryName = repositoryName;
+
+  final T data;
+
+  SyncStatus _syncStatus;
+  SyncOperation _syncOperation;
   DateTime? _syncCreatedAt;
-  String _repositoryName = '';
+  String _repositoryName;
 
   SyncStatus get syncStatus => _syncStatus;
   SyncOperation get syncOperation => _syncOperation;
   DateTime? get syncCreatedAt => _syncCreatedAt;
   String get repositoryName => _repositoryName;
-
-  /// Override to serialize your domain fields (metadata is added separately).
-  Map<String, dynamic> toJson();
 
   /// Returns true if this object has pending changes that need sync.
   bool get needSync => syncStatus != SyncStatus.ok;
@@ -77,22 +87,25 @@ mixin LocalFirstModel {
   void debugSetRepositoryName(String name) => _setRepositoryName(name);
 }
 
-/// Extension methods for lists of models with sync metadata.
-extension LocalFirstModelsX<T extends LocalFirstModel> on List<T> {
-  /// Converts a list of objects to the sync JSON format.
+/// Extension methods for lists of events with sync metadata.
+extension LocalFirstEventsX<T> on List<LocalFirstEvent<T>> {
+  /// Converts a list of events to the sync JSON format.
   ///
   /// Groups objects by operation type (insert, update, delete) as expected
   /// by the push endpoint. Use [idFieldName] when your model id key differs
   /// from 'id'.
-  Map<String, dynamic> toJson({String idFieldName = 'id'}) {
+  Map<String, dynamic> toJson({
+    required Map<String, dynamic> Function(T item) serializer,
+    String idFieldName = 'id',
+  }) {
     final inserts = <Map<String, dynamic>>[];
     final updates = <Map<String, dynamic>>[];
     final deletes = <String>[];
 
-    for (var obj in this) {
-      final itemJson = obj.toJson();
+    for (var event in this) {
+      final itemJson = serializer(event.data);
 
-      switch (obj.syncOperation) {
+      switch (event.syncOperation) {
         case SyncOperation.insert:
           inserts.add(itemJson);
           break;
@@ -115,7 +128,7 @@ extension LocalFirstModelsX<T extends LocalFirstModel> on List<T> {
 /// the server's timestamp for tracking sync progress.
 class LocalFirstResponse {
   /// Map of repositories to their changed objects.
-  final Map<LocalFirstRepository, List<LocalFirstModel>> changes;
+  final Map<LocalFirstRepository, List<LocalFirstEvent>> changes;
 
   /// Server timestamp when this response was generated.
   final DateTime timestamp;
