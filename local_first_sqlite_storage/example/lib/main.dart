@@ -162,6 +162,11 @@ class MyHomePageState extends State<MyHomePage> {
   late final Stream<List<UserModel>> usersStream;
   late final Stream<List<CounterLogModel>> recentLogsStream;
   late final Stream<bool> remoteConnectionStream;
+  final GlobalKey<AnimatedListState> recentLogsListKey =
+      GlobalKey<AnimatedListState>();
+  final List<CounterLogModel> recentLogs = [];
+  static const int maxRecentLogs = 5;
+  static const double logItemExtent = 52.0;
 
   @override
   void initState() {
@@ -169,7 +174,7 @@ class MyHomePageState extends State<MyHomePage> {
     final service = RepositoryService();
     usersStream = service.watchUsers();
     counterStream = service.watchCounter();
-    recentLogsStream = service.watchRecentLogs(limit: 5);
+    recentLogsStream = service.watchRecentLogs(limit: maxRecentLogs);
     remoteConnectionStream = service.watchRemoteConnection();
   }
 
@@ -382,30 +387,112 @@ class MyHomePageState extends State<MyHomePage> {
             style: Theme.of(context).textTheme.titleMedium,
           ),
         ),
-        Container(
-          color: ColorScheme.of(context).surfaceContainerLow,
-          padding: const EdgeInsets.all(24.0),
-          child: StreamBuilder(
-            stream: recentLogsStream,
-            builder: (context, logsSnapshot) {
-              final recentLogs = logsSnapshot.data ?? const [];
-              if (logsSnapshot.connectionState == ConnectionState.waiting) {
-                return const Center(child: CircularProgressIndicator());
-              }
-              return ListView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: recentLogs.length,
-                itemBuilder: (context, index) {
-                  final log = recentLogs[index];
-                  final avatar = avatarMap[log.username] ?? '';
-                  return CounterLogTile(log: log, avatarUrl: avatar);
-                },
-              );
-            },
+        SizedBox(
+          height: logItemExtent * maxRecentLogs + 48,
+          child: Container(
+            color: ColorScheme.of(context).surfaceContainerLow,
+            padding: const EdgeInsets.all(24.0),
+            child: StreamBuilder(
+              stream: recentLogsStream,
+              builder: (context, logsSnapshot) {
+                final logs = logsSnapshot.data ?? const [];
+                if (logsSnapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
+                  updateRecentLogs(logs, avatarMap);
+                });
+                return AnimatedList(
+                  key: recentLogsListKey,
+                  physics: const NeverScrollableScrollPhysics(),
+                  initialItemCount: recentLogs.length,
+                  itemBuilder: (context, index, animation) {
+                    final log = recentLogs[index];
+                    final avatar = avatarMap[log.username] ?? '';
+                    return buildAnimatedLogTile(log, avatar, animation);
+                  },
+                );
+              },
+            ),
           ),
         ),
       ],
+    );
+  }
+
+  void updateRecentLogs(
+    List<CounterLogModel> updated,
+    Map<String, String?> avatarMap,
+  ) {
+    final listState = recentLogsListKey.currentState;
+    if (listState == null) {
+      setState(() {
+        recentLogs
+          ..clear()
+          ..addAll(updated);
+      });
+      return;
+    }
+
+    final updatedIds = {for (final log in updated) log.id};
+
+    for (var i = recentLogs.length - 1; i >= 0; i -= 1) {
+      final log = recentLogs[i];
+      if (!updatedIds.contains(log.id)) {
+        final removed = recentLogs.removeAt(i);
+        listState.removeItem(
+          i,
+          (context, animation) => buildAnimatedLogTile(
+            removed,
+            avatarMap[removed.username] ?? '',
+            animation,
+          ),
+        );
+      }
+    }
+
+    for (var i = 0; i < updated.length; i += 1) {
+      final log = updated[i];
+      if (i < recentLogs.length && recentLogs[i].id == log.id) {
+        recentLogs[i] = log;
+        continue;
+      }
+
+      final existingIndex = recentLogs.indexWhere((item) => item.id == log.id);
+      if (existingIndex == -1) {
+        recentLogs.insert(i, log);
+        listState.insertItem(i);
+      } else {
+        final moved = recentLogs.removeAt(existingIndex);
+        listState.removeItem(
+          existingIndex,
+          (context, animation) => buildAnimatedLogTile(
+            moved,
+            avatarMap[moved.username] ?? '',
+            animation,
+          ),
+        );
+        recentLogs.insert(i, moved);
+        listState.insertItem(i);
+      }
+    }
+  }
+
+  Widget buildAnimatedLogTile(
+    CounterLogModel log,
+    String avatarUrl,
+    Animation<double> animation,
+  ) {
+    return SizeTransition(
+      sizeFactor: animation,
+      child: FadeTransition(
+        opacity: animation,
+        child: SizedBox(
+          height: logItemExtent,
+          child: CounterLogTile(log: log, avatarUrl: avatarUrl),
+        ),
+      ),
     );
   }
 
@@ -678,13 +765,12 @@ class RepositoryService {
       .orderBy('created_at', descending: true)
       .watch();
 
-  Stream<int> watchCounter() => counterDeviceRepository.query().watch().map((
-    counters,
-  ) {
-    final total = counters.fold(0, (sum, counter) => sum + counter.count);
-    counterTotal = total;
-    return total;
-  });
+  Stream<int> watchCounter() =>
+      counterDeviceRepository.query().watch().map((counters) {
+        final total = counters.fold(0, (sum, counter) => sum + counter.count);
+        counterTotal = total;
+        return total;
+      });
 
   Stream<bool> watchRemoteConnection() => (() async* {
     yield isRemoteConnected;
@@ -1407,11 +1493,11 @@ class MongoApi {
       final cutoff = lastSyncByNode[repositoryName];
       final collection = await this.collection(repositoryName);
       final cursor = cutoff == null
-          ? (repositoryName == 'counter_device'
-                ? collection.find(where.sortBy('updated_at'))
-                : collection.find(
+          ? (repositoryName == 'counter_log'
+                ? collection.find(
                     where.sortBy('updated_at', descending: true).limit(5),
-                  ))
+                  )
+                : collection.find(where.sortBy('updated_at')))
           : collection.find(
               where.gt('updated_at', cutoff).sortBy('updated_at'),
             );
