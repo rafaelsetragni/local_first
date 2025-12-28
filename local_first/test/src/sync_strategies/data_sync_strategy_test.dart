@@ -4,11 +4,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:local_first/local_first.dart';
 import 'package:mocktail/mocktail.dart';
 
-class _DummyModel with LocalFirstModel {
+class _DummyModel {
   _DummyModel(this.id);
   final String id;
 
-  @override
   Map<String, dynamic> toJson() => {'id': id};
 }
 
@@ -24,22 +23,21 @@ class _TestStrategy extends DataSyncStrategy {
   }
 
   @override
-  Future<SyncStatus> onPushToRemote(LocalFirstModel localData) async {
+  Future<SyncStatus> onPushToRemote(LocalFirstEvent localData) async {
     return SyncStatus.ok;
   }
 }
 
-class _OtherModel with LocalFirstModel {
+class _OtherModel {
   _OtherModel(this.id);
   final String id;
 
-  @override
   Map<String, dynamic> toJson() => {'id': id};
 }
 
 class _TypedStrategy extends DataSyncStrategy<_DummyModel> {
   @override
-  Future<SyncStatus> onPushToRemote(_DummyModel localData) async {
+  Future<SyncStatus> onPushToRemote(LocalFirstEvent event) async {
     return SyncStatus.ok;
   }
 }
@@ -213,7 +211,7 @@ class _InMemoryKeyValueStorage implements LocalFirstKeyValueStorage {
 
 void main() {
   setUpAll(() {
-    registerFallbackValue(<LocalFirstModel>[]);
+    registerFallbackValue(<LocalFirstEvent>[]);
   });
 
   group('DataSyncStrategy', () {
@@ -238,7 +236,9 @@ void main() {
     test('getPendingObjects delegates to client', () async {
       final strategy = _TestStrategy();
       final client = _MockClient();
-      final pending = [_DummyModel('1')];
+      final pending = <LocalFirstEvent>[
+        LocalFirstEvent(data: _DummyModel('1')),
+      ];
 
       when(
         () => client.getAllPendingObjects(),
@@ -254,10 +254,10 @@ void main() {
     test('getPendingObjects filters to typed model', () async {
       final strategy = _TypedStrategy();
       final client = _MockClient();
-      final pending = <LocalFirstModel>[
-        _DummyModel('1'),
-        _OtherModel('2'),
-        _DummyModel('3'),
+      final pending = <LocalFirstEvent>[
+        LocalFirstEvent(data: _DummyModel('1')),
+        LocalFirstEvent(data: _OtherModel('2')),
+        LocalFirstEvent(data: _DummyModel('3')),
       ];
 
       when(
@@ -267,7 +267,7 @@ void main() {
 
       final result = await strategy.getPendingObjects();
 
-      expect(result.map((e) => e.id), ['1', '3']);
+      expect(result.map((e) => e.dataAs<_DummyModel>().id), ['1', '3']);
       verify(() => client.getAllPendingObjects()).called(1);
     });
 

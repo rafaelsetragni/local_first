@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_first/local_first.dart';
 
-class _DummyModel with LocalFirstModel {
+class _DummyModel {
   _DummyModel({
     required this.id,
     required this.name,
@@ -14,7 +14,6 @@ class _DummyModel with LocalFirstModel {
   final int score;
   final String? note;
 
-  @override
   Map<String, dynamic> toJson() => {
     'id': id,
     'name': name,
@@ -166,22 +165,17 @@ void main() {
       query = LocalFirstQuery<_DummyModel>(
         repositoryName: 'dummy',
         delegate: storage,
-        fromJson: repo.fromJson,
         repository: repo,
       );
     });
 
-    test('maps results and attaches sync metadata', () async {
+    test('maps results and filters deleted entries', () async {
       final results = await query.getAll();
       expect(results.length, 3); // delete filtered out
 
       final alice = results.firstWhere((m) => m.id == '1');
       expect(alice.name, 'alice');
       expect(alice.score, 10);
-      expect(alice.syncStatus, SyncStatus.ok);
-      expect(alice.syncOperation, SyncOperation.insert);
-      expect(alice.repositoryName, 'dummy');
-      expect(alice.syncCreatedAt, DateTime.utc(2024, 1, 1));
     });
 
     test('applies filtering, ordering, and pagination', () async {

@@ -2,42 +2,38 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:local_first/local_first.dart';
 
-class _DummyModel with LocalFirstModel {
+class _DummyModel {
   _DummyModel({required this.id, required this.value});
 
   final String id;
   final String value;
-
-  @override
   Map<String, dynamic> toJson() => {'id': id, 'value': value};
 }
 
-class _UuidModel with LocalFirstModel {
+class _UuidModel {
   _UuidModel({required this.uuid});
 
   final String uuid;
-
-  @override
   Map<String, dynamic> toJson() => {'uuid': uuid};
 }
 
 void main() {
-  group('LocalFirstModel mixin', () {
+  group('LocalFirstEvent', () {
     test('defaults to ok/insert and no createdAt', () {
-      final model = _DummyModel(id: '1', value: 'a');
+      final event = LocalFirstEvent(data: _DummyModel(id: '1', value: 'a'));
 
-      expect(model.syncStatus, SyncStatus.ok);
-      expect(model.syncOperation, SyncOperation.insert);
-      expect(model.syncCreatedAt, isNull);
-      expect(model.repositoryName, '');
-      expect(model.needSync, isFalse);
-      expect(model.isDeleted, isFalse);
+      expect(event.syncStatus, SyncStatus.ok);
+      expect(event.syncOperation, SyncOperation.insert);
+      expect(event.syncCreatedAt, isNull);
+      expect(event.repositoryName, '');
+      expect(event.needSync, isFalse);
+      expect(event.isDeleted, isFalse);
     });
 
     test('needSync reflects pending or failed states', () {
-      final pending = _DummyModel(id: '1', value: 'a')
+      final pending = LocalFirstEvent(data: _DummyModel(id: '1', value: 'a'))
         ..debugSetSyncStatus(SyncStatus.pending);
-      final failed = _DummyModel(id: '2', value: 'b')
+      final failed = LocalFirstEvent(data: _DummyModel(id: '2', value: 'b'))
         ..debugSetSyncStatus(SyncStatus.failed);
 
       expect(pending.needSync, isTrue);
@@ -45,21 +41,26 @@ void main() {
     });
 
     test('isDeleted reflects delete operation', () {
-      final model = _DummyModel(id: '1', value: 'a')
+      final event = LocalFirstEvent(data: _DummyModel(id: '1', value: 'a'))
         ..debugSetSyncOperation(SyncOperation.delete);
 
-      expect(model.isDeleted, isTrue);
+      expect(event.isDeleted, isTrue);
     });
 
-    test('LocalFirstModelsX.toJson groups by operation', () {
-      final insert = _DummyModel(id: '1', value: 'one')
-        ..debugSetSyncOperation(SyncOperation.insert);
-      final update = _DummyModel(id: '2', value: 'two')
-        ..debugSetSyncOperation(SyncOperation.update);
-      final delete = _DummyModel(id: '3', value: 'three')
-        ..debugSetSyncOperation(SyncOperation.delete);
+    test('LocalFirstEventsX.toJson groups by operation', () {
+      final insert =
+          LocalFirstEvent(data: _DummyModel(id: '1', value: 'one'))
+            ..debugSetSyncOperation(SyncOperation.insert);
+      final update =
+          LocalFirstEvent(data: _DummyModel(id: '2', value: 'two'))
+            ..debugSetSyncOperation(SyncOperation.update);
+      final delete =
+          LocalFirstEvent(data: _DummyModel(id: '3', value: 'three'))
+            ..debugSetSyncOperation(SyncOperation.delete);
 
-      final payload = [insert, update, delete].toJson();
+      final payload = [insert, update, delete].toJson<_DummyModel>(
+        serializer: (model) => model.toJson(),
+      );
 
       expect(payload['insert'], [
         {'id': '1', 'value': 'one'},
@@ -70,22 +71,28 @@ void main() {
       expect(payload['delete'], ['3']);
     });
 
-    test('LocalFirstModelsX.toJson uses default id field for deletes', () {
-      final delete = _DummyModel(id: '9', value: 'nine')
-        ..debugSetSyncOperation(SyncOperation.delete);
+    test('LocalFirstEventsX.toJson uses default id field for deletes', () {
+      final delete =
+          LocalFirstEvent(data: _DummyModel(id: '9', value: 'nine'))
+            ..debugSetSyncOperation(SyncOperation.delete);
 
-      final payload = [delete].toJson();
+      final payload = [delete].toJson<_DummyModel>(
+        serializer: (model) => model.toJson(),
+      );
 
       expect(payload['delete'], ['9']);
       expect(payload['insert'], isEmpty);
       expect(payload['update'], isEmpty);
     });
 
-    test('LocalFirstModelsX.toJson uses custom id field for deletes', () {
-      final delete = _UuidModel(uuid: '3')
+    test('LocalFirstEventsX.toJson uses custom id field for deletes', () {
+      final delete = LocalFirstEvent(data: _UuidModel(uuid: '3'))
         ..debugSetSyncOperation(SyncOperation.delete);
 
-      final payload = [delete].toJson(idFieldName: 'uuid');
+      final payload = [delete].toJson<_UuidModel>(
+        serializer: (model) => model.toJson(),
+        idFieldName: 'uuid',
+      );
 
       expect(payload['delete'], ['3']);
       expect(payload['insert'], isEmpty);
@@ -93,17 +100,17 @@ void main() {
     });
 
     test('debug setters update sync metadata internally', () {
-      final model = _DummyModel(id: '1', value: 'x')
+      final event = LocalFirstEvent(data: _DummyModel(id: '1', value: 'x'))
         ..debugSetSyncStatus(SyncStatus.failed)
         ..debugSetSyncOperation(SyncOperation.update)
         ..debugSetSyncCreatedAt(DateTime.utc(2020, 1, 1))
         ..debugSetRepositoryName('repo');
 
-      expect(model.syncStatus, SyncStatus.failed);
-      expect(model.syncOperation, SyncOperation.update);
-      expect(model.syncCreatedAt, DateTime.utc(2020, 1, 1));
-      expect(model.repositoryName, 'repo');
-      expect(model.needSync, isTrue);
+      expect(event.syncStatus, SyncStatus.failed);
+      expect(event.syncOperation, SyncOperation.update);
+      expect(event.syncCreatedAt, DateTime.utc(2020, 1, 1));
+      expect(event.repositoryName, 'repo');
+      expect(event.needSync, isTrue);
     });
   });
 }

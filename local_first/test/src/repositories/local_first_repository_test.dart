@@ -5,12 +5,11 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_first/local_first.dart';
 
-class _TestModel with LocalFirstModel {
+class _TestModel {
   _TestModel(this.id, {this.value});
   final String id;
   final String? value;
 
-  @override
   Map<String, dynamic> toJson() => {
     'id': id,
     if (value != null) 'value': value,
@@ -20,11 +19,10 @@ class _TestModel with LocalFirstModel {
       _TestModel(json['id'] as String, value: json['value'] as String?);
 }
 
-class _OtherModel with LocalFirstModel {
+class _OtherModel {
   _OtherModel(this.id);
   final String id;
 
-  @override
   Map<String, dynamic> toJson() => {'id': id};
 }
 
@@ -230,22 +228,23 @@ class _InMemoryKeyValueStorage implements LocalFirstKeyValueStorage {
 
 class _NoopStrategy extends DataSyncStrategy {
   @override
-  Future<SyncStatus> onPushToRemote(LocalFirstModel localData) async {
+  Future<SyncStatus> onPushToRemote(LocalFirstEvent localData) async {
     return SyncStatus.ok;
   }
 }
 
 class _FailingStrategy extends DataSyncStrategy {
   @override
-  Future<SyncStatus> onPushToRemote(LocalFirstModel localData) async {
+  Future<SyncStatus> onPushToRemote(LocalFirstEvent localData) async {
     return SyncStatus.failed;
   }
 }
 
 class _ConditionalStrategy extends DataSyncStrategy {
   @override
-  Future<SyncStatus> onPushToRemote(LocalFirstModel localData) async {
-    if (localData is _TestModel && localData.id == 'fail-push') {
+  Future<SyncStatus> onPushToRemote(LocalFirstEvent localData) async {
+    if (localData.isA<_TestModel>() &&
+        localData.dataAs<_TestModel>().id == 'fail-push') {
       throw Exception('push failed');
     }
     return SyncStatus.ok;
@@ -256,7 +255,7 @@ class _TypedOtherStrategy extends DataSyncStrategy<_OtherModel> {
   int callCount = 0;
 
   @override
-  Future<SyncStatus> onPushToRemote(_OtherModel localData) async {
+  Future<SyncStatus> onPushToRemote(LocalFirstEvent localData) async {
     callCount += 1;
     return SyncStatus.ok;
   }
@@ -317,7 +316,6 @@ void main() {
       final model = _TestModel('1', value: 'a');
       await repo.upsert(model);
       // Simulate synced
-      model.debugSetSyncStatus(SyncStatus.ok);
       await storage.update('tests', '1', {
         ...model.toJson(),
         '_sync_status': SyncStatus.ok.index,
@@ -371,7 +369,7 @@ void main() {
     });
 
     test(
-      '_updateObjectStatus persists last sync status from failing strategy',
+      '_updateEventStatus persists last sync status from failing strategy',
       () async {
         final failingStorage = _InMemoryStorage();
         final failingRepo = LocalFirstRepository.create<_TestModel>(
@@ -397,7 +395,7 @@ void main() {
       },
     );
 
-    test('_pushLocalObject failure does not affect subsequent items', () async {
+    test('_pushLocalEvent failure does not affect subsequent items', () async {
       final conditionalStorage = _InMemoryStorage();
       final conditionalRepo = LocalFirstRepository.create<_TestModel>(
         name: 'tests',
@@ -427,7 +425,7 @@ void main() {
       expect(ok?['_sync_operation'], SyncOperation.insert.index);
     });
 
-    test('query returns mapped models with sync metadata', () async {
+    test('query returns mapped models', () async {
       final createdAt = DateTime.now().toUtc().millisecondsSinceEpoch;
       await storage.insert('tests', {
         'id': '10',
@@ -440,9 +438,6 @@ void main() {
       final results = await repo.query().getAll();
       expect(results.length, 1);
       expect(results.first.id, '10');
-      expect(results.first.syncStatus, SyncStatus.ok);
-      expect(results.first.syncOperation, SyncOperation.insert);
-      expect(results.first.syncCreatedAt?.millisecondsSinceEpoch, createdAt);
     });
 
     test('getPendingObjects returns only pending items', () async {
@@ -462,8 +457,14 @@ void main() {
       }, 'id');
 
       final pending = await repo.getPendingObjects();
-      expect(pending.map((e) => e.id), contains('p1'));
-      expect(pending.any((e) => e.id == 'ok1'), isFalse);
+      expect(
+        pending.map((e) => e.dataAs<_TestModel>().id),
+        contains('p1'),
+      );
+      expect(
+        pending.any((e) => e.dataAs<_TestModel>().id == 'ok1'),
+        isFalse,
+      );
     });
 
     test(
