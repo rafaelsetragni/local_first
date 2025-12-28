@@ -1,3 +1,10 @@
+## 0.6.0
+
+- BREAKING: Replace `LocalFirstModel` mixin with `LocalFirstEvent<T>` wrapper for sync metadata
+- BREAKING: `DataSyncStrategy.onPushToRemote` now receives `LocalFirstEvent<T>`
+- Queries now return plain models; sync metadata lives on events
+- Examples and docs updated to the new event-based flow
+
 ## 0.5.0
 
 - Split storage adapters into separate publishable packages:

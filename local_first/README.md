@@ -39,7 +39,7 @@ Add the dependency to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  local_first: ^0.5.0
+  local_first: ^0.6.0
   local_first_hive_storage: ^0.0.1  # optional
   local_first_sqlite_storage: ^0.0.1 # optional
 ```
@@ -57,8 +57,8 @@ The API is evolving, but the intended flow looks like this:
 ```dart
 import 'package:local_first/local_first.dart';
 
-// 1) Describe your model and add LocalFirstModel to get sync metadata.
-class Todo with LocalFirstModel {
+// 1) Describe your model (no mixin required).
+class Todo {
   Todo({
     required this.id,
     required this.title,
@@ -69,8 +69,6 @@ class Todo with LocalFirstModel {
   final String title;
   final bool completed;
   final DateTime updatedAt;
-
-  @override
   Map<String, dynamic> toJson() => {
         'id': id,
         'title': title,
@@ -89,6 +87,8 @@ class Todo with LocalFirstModel {
   static Todo resolveConflict(Todo local, Todo remote) =>
       local.updatedAt.isAfter(remote.updatedAt) ? local : remote;
 }
+
+// Sync metadata is tracked separately via LocalFirstEvent during sync flows.
 
 // 2) Create a repository for the model.
 final todoRepository = LocalFirstRepository.create<Todo>(
@@ -178,7 +178,7 @@ flutter run
 - [ ] Provide REST and WebSocket sync strategies via add-on packages.
 - [ ] Background sync helpers for Android/iOS via add-on packages.
 - [X] End-to-end sample app with authentication.
-- [X] Comprehensive docs and testing utilities (models now use `LocalFirstModel` mixin; full test coverage added).
+- [X] Comprehensive docs and testing utilities (models use `LocalFirstEvent` wrapper; full test coverage added).
 
 ## Contributing
 
