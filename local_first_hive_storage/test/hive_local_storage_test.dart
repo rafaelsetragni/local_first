@@ -154,7 +154,6 @@ void main() {
       final q = LocalFirstQuery<_TestModel>(
         repositoryName: 'lazy_q',
         delegate: lazyStorage,
-        fromJson: _TestModel.fromJson,
         repository: repo,
       );
 
@@ -181,7 +180,6 @@ void main() {
       final q = LocalFirstQuery<_TestModel>(
         repositoryName: 'users',
         delegate: storage,
-        fromJson: _TestModel.fromJson,
         repository: _DummyRepo(),
       );
 
@@ -207,7 +205,6 @@ void main() {
       final q = LocalFirstQuery<_TestModel>(
         repositoryName: 'users',
         delegate: storage,
-        fromJson: _TestModel.fromJson,
         repository: _DummyRepo(),
       );
 
@@ -224,7 +221,6 @@ void main() {
       final q = LocalFirstQuery<_TestModel>(
         repositoryName: 'users',
         delegate: uninitialized,
-        fromJson: _TestModel.fromJson,
         repository: _DummyRepo(),
       );
 
@@ -238,7 +234,6 @@ void main() {
       final q = LocalFirstQuery<_TestModel>(
         repositoryName: 'users',
         delegate: storage,
-        fromJson: _TestModel.fromJson,
         repository: _DummyRepo(),
       );
 
@@ -296,7 +291,6 @@ void main() {
       final q = LocalFirstQuery<_TestModel>(
         repositoryName: 'users',
         delegate: throwingStorage,
-        fromJson: _TestModel.fromJson,
         repository: _DummyRepo(),
       );
 
@@ -347,7 +341,6 @@ void main() {
       final q = LocalFirstQuery<_TestModel>(
         repositoryName: 'users',
         delegate: storage,
-        fromJson: _TestModel.fromJson,
         repository: _DummyRepo(),
       );
 
@@ -384,7 +377,6 @@ void main() {
       final q = LocalFirstQuery<_TestModel>(
         repositoryName: 'users',
         delegate: uninitialized,
-        fromJson: _TestModel.fromJson,
         repository: _DummyRepo(),
       );
       await expectLater(uninitialized.query(q), throwsA(isA<StateError>()));
@@ -529,7 +521,6 @@ void main() {
       final q = LocalFirstQuery<_TestModel>(
         repositoryName: 'users',
         delegate: storage,
-        fromJson: _TestModel.fromJson,
         repository: _DummyRepo(),
       );
 
@@ -540,13 +531,12 @@ void main() {
   });
 }
 
-class _TestModel with LocalFirstModel {
+class _TestModel {
   _TestModel({required this.id, this.age});
 
   final String id;
   final int? age;
 
-  @override
   Map<String, dynamic> toJson() => {'id': id, if (age != null) 'age': age};
 
   factory _TestModel.fromJson(Map<String, dynamic> json) =>

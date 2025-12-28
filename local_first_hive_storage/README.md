@@ -23,7 +23,7 @@ Add the core and the Hive adapter to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  local_first: ^0.5.0
+  local_first: ^0.6.0
   local_first_hive_storage: ^0.1.0
 ```
 
@@ -33,15 +33,13 @@ dependencies:
 import 'package:local_first/local_first.dart';
 import 'package:local_first_hive_storage/local_first_hive_storage.dart';
 
-class Todo with LocalFirstModel {
+class Todo {
   Todo({required this.id, required this.title})
       : updatedAt = DateTime.now();
 
   final String id;
   final String title;
   final DateTime updatedAt;
-
-  @override
   Map<String, dynamic> toJson() => {
         'id': id,
         'title': title,
