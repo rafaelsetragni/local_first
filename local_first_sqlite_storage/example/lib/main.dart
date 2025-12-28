@@ -682,7 +682,7 @@ class RepositoryService {
   }
 
   Future<UserModel?> initialize() async {
-    final localFirst = this.localFirst ??= LocalFirstClient(
+    localFirst ??= LocalFirstClient(
       repositories: [
         userRepository,
         counterLogRepository,
@@ -691,7 +691,8 @@ class RepositoryService {
       localStorage: SqliteLocalFirstStorage(),
       syncStrategies: [syncStrategy],
     );
-    await localFirst.initialize();
+    final client = localFirst!;
+    await client.initialize();
     return await restoreLastUser();
   }
 
@@ -907,9 +908,9 @@ class RepositoryService {
 
   Future<void> updateDeviceCounter(String username, int delta) async {
     await ensureDeviceId();
-    final deviceId = this.deviceId;
-    if (deviceId == null) return;
-    final id = CounterDeviceModel.composeId(username, deviceId);
+    final currentDeviceId = deviceId;
+    if (currentDeviceId == null) return;
+    final id = CounterDeviceModel.composeId(username, currentDeviceId);
     final existing = await counterDeviceRepository
         .query()
         .where('id', isEqualTo: id)
@@ -918,7 +919,7 @@ class RepositoryService {
     final updated = CounterDeviceModel(
       id: id,
       username: username,
-      deviceId: deviceId,
+      deviceId: currentDeviceId,
       count: (current?.count ?? 0) + delta,
       createdAt: current?.createdAt,
     );
@@ -1200,8 +1201,8 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   void Function(bool connected)? onConnectionStatus;
   bool isConnected = true;
 
-  void setNamespace(String namespace) {
-    this.namespace = namespace;
+  void setNamespace(String namespaceValue) {
+    namespace = namespaceValue;
   }
 
   String lastSyncKey(String repository) {
@@ -1282,9 +1283,9 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
       }
       setConnectionStatus(true);
       if (remoteChanges['changes']?.isNotEmpty) {
-        final hasCounterChanges = this.hasCounterChanges(remoteChanges);
+        final counterChangesDetected = hasCounterChanges(remoteChanges);
         await pullChangesToLocal(remoteChanges);
-        if (hasCounterChanges) {
+        if (counterChangesDetected) {
           await onCounterDelta?.call(0);
         }
 
@@ -1389,11 +1390,11 @@ class MongoApi {
     final current = db;
     if (current != null && current.isConnected) return current;
     try {
-      final db = await Db.create(uri);
-      await withTimeout(db.open());
+      final newDb = await Db.create(uri);
+      await withTimeout(newDb.open());
       dev.log('Connected to MongoDB at $uri', name: logTag);
-      this.db = db;
-      return db;
+      db = newDb;
+      return newDb;
     } catch (e) {
       dev.log('Failed to connect to MongoDB at $uri', name: logTag, error: e);
       db = null;
@@ -1403,15 +1404,15 @@ class MongoApi {
 
   Future<DbCollection> collection(String repositoryName) async {
     final db = await getDb();
-    final collection = db.collection('$collectionPrefix$repositoryName');
+    final collectionRef = db.collection('$collectionPrefix$repositoryName');
 
     try {
-      await withTimeout(collection.createIndex(keys: {'updated_at': 1}));
+      await withTimeout(collectionRef.createIndex(keys: {'updated_at': 1}));
     } catch (_) {
       // Ignora erros de índice existente
     }
 
-    return collection;
+    return collectionRef;
   }
 
   Future<void> push(JsonMap<dynamic> payload) async {
@@ -1432,7 +1433,7 @@ class MongoApi {
       final repositoryName = entry.key;
       final operations = entry.value;
       if (operations is! JsonMap<dynamic>) continue;
-      final collection = await this.collection(repositoryName);
+      final collectionRef = await collection(repositoryName);
 
       final insertItems = operations['insert'];
       if (insertItems is List) {
@@ -1446,7 +1447,7 @@ class MongoApi {
             'updated_at': now,
           };
           await withTimeout(
-            collection.replaceOne(where.eq('id', id), doc, upsert: true),
+            collectionRef.replaceOne(where.eq('id', id), doc, upsert: true),
           );
         }
       }
@@ -1463,7 +1464,7 @@ class MongoApi {
             'updated_at': now,
           };
           await withTimeout(
-            collection.replaceOne(where.eq('id', id), doc, upsert: true),
+            collectionRef.replaceOne(where.eq('id', id), doc, upsert: true),
           );
         }
       }
@@ -1473,7 +1474,7 @@ class MongoApi {
         for (final id in deleteItems) {
           if (id == null) continue;
           await withTimeout(
-            collection.replaceOne(where.eq('id', id.toString()), {
+            collectionRef.replaceOne(where.eq('id', id.toString()), {
               'id': id.toString(),
               'operation': 'delete',
               'updated_at': now,
@@ -1491,14 +1492,14 @@ class MongoApi {
 
     for (final repositoryName in repositoryNames) {
       final cutoff = lastSyncByNode[repositoryName];
-      final collection = await this.collection(repositoryName);
+      final collectionRef = await collection(repositoryName);
       final cursor = cutoff == null
           ? (repositoryName == 'counter_log'
-                ? collection.find(
+                ? collectionRef.find(
                     where.sortBy('updated_at', descending: true).limit(5),
                   )
-                : collection.find(where.sortBy('updated_at')))
-          : collection.find(
+                : collectionRef.find(where.sortBy('updated_at')))
+          : collectionRef.find(
               where.gt('updated_at', cutoff).sortBy('updated_at'),
             );
 
@@ -1543,8 +1544,8 @@ class MongoApi {
 
   Future<List<JsonMap<dynamic>>> fetchUsers() async {
     dev.log('Fetching users snapshot', name: logTag);
-    final collection = await this.collection('user');
-    final cursor = collection.find(where.ne('operation', 'delete'));
+    final collectionRef = await collection('user');
+    final cursor = collectionRef.find(where.ne('operation', 'delete'));
 
     final users = <String, JsonMap<dynamic>>{};
 
