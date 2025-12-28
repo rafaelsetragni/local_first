@@ -234,7 +234,8 @@ class LocalFirstClient {
           );
           objects.add(object);
         }
-      } else if (repositoryChangeJson.containsKey('update')) {
+      }
+      if (repositoryChangeJson.containsKey('update')) {
         final updates = (repositoryChangeJson['update'] as List);
         for (var element in updates) {
           final object = repository._buildRemoteEvent(
@@ -243,7 +244,8 @@ class LocalFirstClient {
           );
           objects.add(object);
         }
-      } else if (repositoryChangeJson.containsKey('delete')) {
+      }
+      if (repositoryChangeJson.containsKey('delete')) {
         final deleteIds = (repositoryChangeJson['delete'] as List<String>);
         for (var id in deleteIds) {
           final object = await repository._getById(id);
