@@ -292,11 +292,10 @@ mixin LocalFirstRepository<T extends Object> {
     };
 
     for (final remoteEvent in remoteEvents) {
-      final data = remoteEvent.data;
-      if (data is! T) {
+      final remoteObj = remoteEvent.data;
+      if (remoteObj is! T) {
         continue;
       }
-      final remoteObj = data as T;
       final remoteId = getId(remoteObj);
       final localEvent = localMap[remoteId];
 
