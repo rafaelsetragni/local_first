@@ -195,7 +195,8 @@ class LocalFirstClient {
     final results = await Future.wait([
       for (var repository in _repositories) repository.getPendingObjects(),
     ]);
-    return results.expand((e) => e).toList();
+    final pending = results.expand((events) => events);
+    return pending.toList();
   }
 
   Future<String?> getMeta(String key) async {

@@ -8,7 +8,7 @@ part of '../../local_first.dart';
 /// - [ConnectivitySyncStrategy]: Synchronizes when network connectivity is restored.
 /// - [WorkManagerSyncStrategy]: Uses a background service for robust synchronization.
 /// - [WebSocketSyncStrategy]: Listens to a WebSocket for real-time updates.
-abstract mixin class DataSyncStrategy<T> {
+abstract mixin class DataSyncStrategy<T extends Object> {
   late LocalFirstClient _client;
 
   void attach(LocalFirstClient client) {
@@ -22,22 +22,14 @@ abstract mixin class DataSyncStrategy<T> {
   /// Returns true when this strategy should handle the given event.
   bool supportsEvent(LocalFirstEvent event) => event.data is T;
 
-  Future<SyncStatus> onPushToRemote(LocalFirstEvent<T> event);
+  Future<SyncStatus> onPushToRemote(LocalFirstEvent event);
 
-  Future<List<LocalFirstEvent<T>>> getPendingObjects() async {
+  Future<List<LocalFirstEvent>> getPendingObjects() async {
     final pending = await _client.getAllPendingObjects();
-    return pending
-        .where((event) => event.data is T)
-        .map(
-          (event) => LocalFirstEvent<T>(
-            data: event.data as T,
-            syncStatus: event.syncStatus,
-            syncOperation: event.syncOperation,
-            syncCreatedAt: event.syncCreatedAt,
-            repositoryName: event.repositoryName,
-          ),
-        )
-        .toList();
+    if (T == dynamic) {
+      return pending;
+    }
+    return pending.where((event) => event.data is T).toList();
   }
 
   Future<void> pullChangesToLocal(Map<String, dynamic> remoteChanges) {

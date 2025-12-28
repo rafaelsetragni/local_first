@@ -4,7 +4,7 @@ part of '../../local_first.dart';
 ///
 /// Provides a fluent API for building complex queries with filtering,
 /// ordering, and pagination capabilities.
-class LocalFirstQuery<T> {
+class LocalFirstQuery<T extends Object> {
   final String repositoryName;
   final List<QueryFilter> filters;
   final List<QuerySort> sorts;
@@ -143,7 +143,7 @@ class LocalFirstQuery<T> {
     return results
         .map((json) {
           final event = _repository._eventFromJson(json);
-          return event.isDeleted ? null : event.data;
+          return event.isDeleted ? null : event.dataAs<T>();
         })
         .whereType<T>()
         .toList();

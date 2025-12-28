@@ -25,13 +25,13 @@ enum SyncOperation {
 }
 
 /// Type alias for a list of events with sync metadata.
-typedef LocalFirstEvents<T> = List<LocalFirstEvent<T>>;
+typedef LocalFirstEvents = List<LocalFirstEvent>;
 
 /// Wrapper that adds synchronization metadata to a domain model.
 ///
 /// Use this wrapper so your models can remain immutable/const without
 /// requiring a mixin.
-class LocalFirstEvent<T> {
+class LocalFirstEvent {
   LocalFirstEvent({
     required this.data,
     SyncStatus syncStatus = SyncStatus.ok,
@@ -43,7 +43,10 @@ class LocalFirstEvent<T> {
        _syncCreatedAt = syncCreatedAt?.toUtc(),
        _repositoryName = repositoryName;
 
-  final T data;
+  final Object data;
+
+  bool isA<T>() => data is T;
+  T dataAs<T extends Object>() => data as T;
 
   SyncStatus _syncStatus;
   SyncOperation _syncOperation;
@@ -88,13 +91,13 @@ class LocalFirstEvent<T> {
 }
 
 /// Extension methods for lists of events with sync metadata.
-extension LocalFirstEventsX<T> on List<LocalFirstEvent<T>> {
+extension LocalFirstEventsX on List<LocalFirstEvent> {
   /// Converts a list of events to the sync JSON format.
   ///
   /// Groups objects by operation type (insert, update, delete) as expected
   /// by the push endpoint. Use [idFieldName] when your model id key differs
   /// from 'id'.
-  Map<String, dynamic> toJson({
+  Map<String, dynamic> toJson<T extends Object>({
     required Map<String, dynamic> Function(T item) serializer,
     String idFieldName = 'id',
   }) {
@@ -103,7 +106,7 @@ extension LocalFirstEventsX<T> on List<LocalFirstEvent<T>> {
     final deletes = <String>[];
 
     for (var event in this) {
-      final itemJson = serializer(event.data);
+      final itemJson = serializer(event.dataAs<T>());
 
       switch (event.syncOperation) {
         case SyncOperation.insert:
