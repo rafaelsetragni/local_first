@@ -486,7 +486,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
   @override
   Future<List<Map<String, dynamic>>> query(
-    LocalFirstQuery<LocalFirstModel> query,
+    LocalFirstQuery query,
   ) async {
     final db = await _database;
     await _ensureTable(query.repositoryName);

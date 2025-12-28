@@ -1,3 +1,8 @@
+## 0.2.0
+
+- Align with local_first 0.6.0 event-based sync metadata.
+- Update example flow to use LocalFirstEvent payloads.
+
 ## 0.1.0
 
 - Fix pubspec metadata and align workspace configuration.

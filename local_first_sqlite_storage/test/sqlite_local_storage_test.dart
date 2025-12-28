@@ -10,7 +10,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'sqlite_local_storage_test.mocks.dart';
 
 @GenerateMocks([QueryBehavior, DatabaseFactory, Database])
-class DummyModel with LocalFirstModel {
+class DummyModel {
   DummyModel(this.id, {required this.username, required this.age});
 
   final String id;
@@ -25,14 +25,11 @@ class DummyModel with LocalFirstModel {
     );
   }
 
-  @override
   Map<String, dynamic> toJson() => {'id': id, 'username': username, 'age': age};
 }
 
 abstract class QueryBehavior {
-  Future<List<Map<String, dynamic>>> call(
-    LocalFirstQuery<LocalFirstModel> query,
-  );
+  Future<List<Map<String, dynamic>>> call(LocalFirstQuery query);
 }
 
 class MockableSqliteLocalFirstStorage extends SqliteLocalFirstStorage {
@@ -46,7 +43,7 @@ class MockableSqliteLocalFirstStorage extends SqliteLocalFirstStorage {
 
   @override
   Future<List<Map<String, dynamic>>> query(
-    LocalFirstQuery<LocalFirstModel> query,
+    LocalFirstQuery query,
   ) {
     return behavior(query);
   }
@@ -78,7 +75,6 @@ void main() {
       return LocalFirstQuery<DummyModel>(
         repositoryName: 'users',
         delegate: storage,
-        fromJson: DummyModel.fromJson,
         repository: LocalFirstRepository.create<DummyModel>(
           name: 'users',
           getId: (m) => m.id,
@@ -586,7 +582,6 @@ void main() {
       return LocalFirstQuery<DummyModel>(
         repositoryName: 'users',
         delegate: storage,
-        fromJson: DummyModel.fromJson,
         repository: LocalFirstRepository.create<DummyModel>(
           name: 'users',
           getId: (m) => m.id,
