@@ -149,6 +149,8 @@ class _MyHomePageState extends State<MyHomePage> {
   late final Stream<int> _counterStream;
   late final Stream<List<UserModel>> _usersStream;
   late final Stream<List<CounterLogModel>> _recentLogsStream;
+  late final Stream<bool> _remoteConnectionStream;
+  static const double _bannerMaxHeight = 24;
 
   @override
   void initState() {
@@ -157,6 +159,7 @@ class _MyHomePageState extends State<MyHomePage> {
     _usersStream = service.watchUsers();
     _counterStream = service.watchCounter();
     _recentLogsStream = service.watchRecentLogs(limit: 5);
+    _remoteConnectionStream = service.watchRemoteConnection();
   }
 
   Future<void> _onAvatarTap(BuildContext context, String currentAvatar) async {
@@ -216,21 +219,66 @@ class _MyHomePageState extends State<MyHomePage> {
     if (user == null) return const SizedBox.shrink();
 
     return Scaffold(
+      extendBodyBehindAppBar: true,
       appBar: _buildSignOutAppBar(),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            _buildAvatarAndGlobalCounter(user),
-            Column(
-              children: [
-                _buildUserList(context),
-                _buildRecentActivities(context),
-              ],
+      body: Stack(
+        children: [
+          SafeArea(
+            child: StreamBuilder<List<UserModel>>(
+              stream: _usersStream,
+              builder: (context, snapshot) {
+                final users = snapshot.data ?? const <UserModel>[];
+                return SingleChildScrollView(
+                  padding: const EdgeInsets.only(top: kToolbarHeight),
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        _buildAvatarAndGlobalCounter(user, users),
+                        Column(
+                          children: [
+                            _buildUserList(context, users),
+                            _buildRecentActivities(context, users),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
             ),
-          ],
-        ),
+          ),
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            height: _bannerMaxHeight,
+            child: StreamBuilder<bool>(
+              stream: _remoteConnectionStream,
+              initialData: true,
+              builder: (context, snapshot) {
+                final connected = snapshot.data ?? true;
+                final color = connected
+                    ? Colors.green.shade600
+                    : Colors.red.shade700;
+                final message = connected
+                    ? 'Conexao remota estabelecida'
+                    : 'Sem conexao com o banco remoto';
+                return Container(
+                  height: _bannerMaxHeight,
+                  color: color,
+                  alignment: Alignment.center,
+                  child: Text(
+                    message,
+                    style: const TextStyle(color: Colors.white),
+                    textAlign: TextAlign.center,
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
       ),
       floatingActionButton: Column(
         mainAxisSize: MainAxisSize.min,
@@ -253,54 +301,46 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
-  StreamBuilder<List<UserModel>> _buildAvatarAndGlobalCounter(UserModel user) {
-    return StreamBuilder(
-      stream: _usersStream,
-      builder: (context, snapshot) {
-        final users = snapshot.data ?? const [];
-        final avatarMap = {for (final u in users) u.username: u.avatarUrl};
-        final currentUserAvatar =
-            avatarMap[user.username] ?? user.avatarUrl ?? '';
+  Column _buildAvatarAndGlobalCounter(UserModel user, List<UserModel> users) {
+    final avatarMap = {for (final u in users) u.username: u.avatarUrl};
+    final currentUserAvatar = avatarMap[user.username] ?? user.avatarUrl ?? '';
 
-        return Column(
-          children: [
-            GestureDetector(
-              onTap: () => _onAvatarTap(context, currentUserAvatar),
-              child: AvatarPreview(
-                avatarUrl: currentUserAvatar,
-                showEditIndicator: true,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'Hello, ${user.username}!',
-              textAlign: TextAlign.center,
-              style: Theme.of(
-                context,
-              ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 48),
-            const Text('Global counter updated by all users:'),
-            StreamBuilder<int>(
-              stream: _counterStream,
-              builder: (context, counterSnapshot) {
-                final total = counterSnapshot.data ?? 0;
-                if (counterSnapshot.connectionState ==
-                    ConnectionState.waiting) {
-                  return const Padding(
-                    padding: EdgeInsets.all(8.0),
-                    child: CircularProgressIndicator(),
-                  );
-                }
-                return Text(
-                  '$total',
-                  style: Theme.of(context).textTheme.headlineLarge,
-                );
-              },
-            ),
-          ],
-        );
-      },
+    return Column(
+      children: [
+        GestureDetector(
+          onTap: () => _onAvatarTap(context, currentUserAvatar),
+          child: AvatarPreview(
+            avatarUrl: currentUserAvatar,
+            showEditIndicator: true,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          'Hello, ${user.username}!',
+          textAlign: TextAlign.center,
+          style: Theme.of(
+            context,
+          ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 48),
+        const Text('Global counter updated by all users:'),
+        StreamBuilder<int>(
+          stream: _counterStream,
+          builder: (context, counterSnapshot) {
+            final total = counterSnapshot.data ?? 0;
+            if (counterSnapshot.connectionState == ConnectionState.waiting) {
+              return const Padding(
+                padding: EdgeInsets.all(8.0),
+                child: CircularProgressIndicator(),
+              );
+            }
+            return Text(
+              '$total',
+              style: Theme.of(context).textTheme.headlineLarge,
+            );
+          },
+        ),
+      ],
     );
   }
 
@@ -316,7 +356,8 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
-  Column _buildRecentActivities(BuildContext context) {
+  Column _buildRecentActivities(BuildContext context, List<UserModel> users) {
+    final avatarMap = {for (final u in users) u.username: u.avatarUrl};
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -328,84 +369,66 @@ class _MyHomePageState extends State<MyHomePage> {
           ),
         ),
         const SizedBox(height: 8),
-        StreamBuilder(
-          stream: _usersStream,
-          builder: (context, usersSnapshot) {
-            final avatarMap = {
-              for (final u in usersSnapshot.data ?? const [])
-                u.username: u.avatarUrl,
-            };
-            return Container(
-              color: ColorScheme.of(context).surfaceContainerLow,
-              padding: const EdgeInsets.all(24.0),
-              height: MediaQuery.of(context).size.height * 0.35,
-              child: StreamBuilder(
-                stream: _recentLogsStream,
-                builder: (context, logsSnapshot) {
-                  final recentLogs = logsSnapshot.data ?? const [];
-                  if (logsSnapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  return ListView.builder(
-                    itemCount: recentLogs.length,
-                    itemBuilder: (context, index) {
-                      final log = recentLogs[index];
-                      final avatar = avatarMap[log.username] ?? '';
-                      return CounterLogTile(log: log, avatarUrl: avatar);
-                    },
-                  );
+        Container(
+          color: ColorScheme.of(context).surfaceContainerLow,
+          padding: const EdgeInsets.all(24.0),
+          height: MediaQuery.of(context).size.height * 0.35,
+          child: StreamBuilder(
+            stream: _recentLogsStream,
+            builder: (context, logsSnapshot) {
+              final recentLogs = logsSnapshot.data ?? const [];
+              if (logsSnapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              return ListView.builder(
+                itemCount: recentLogs.length,
+                itemBuilder: (context, index) {
+                  final log = recentLogs[index];
+                  final avatar = avatarMap[log.username] ?? '';
+                  return CounterLogTile(log: log, avatarUrl: avatar);
                 },
-              ),
-            );
-          },
+              );
+            },
+          ),
         ),
       ],
     );
   }
 
-  SizedBox _buildUserList(BuildContext context) {
+  SizedBox _buildUserList(BuildContext context, List<UserModel> users) {
     return SizedBox(
       height: MediaQuery.of(context).size.height * 0.15,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 8.0),
-        child: StreamBuilder(
-          stream: _usersStream,
-          builder: (context, usersSnapshot) {
-            final users = usersSnapshot.data ?? const [];
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text('Users:', style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 8),
-                Expanded(
-                  child:
-                      usersSnapshot.connectionState == ConnectionState.waiting
-                      ? const Center(child: CircularProgressIndicator())
-                      : ListView.separated(
-                          scrollDirection: Axis.horizontal,
-                          itemCount: users.length,
-                          separatorBuilder: (_, _) => const SizedBox(width: 12),
-                          itemBuilder: (context, index) {
-                            final item = users[index];
-                            final avatar = item.avatarUrl ?? '';
-                            return Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                AvatarPreview(
-                                  radius: 22,
-                                  avatarUrl: avatar,
-                                  showEditIndicator: false,
-                                ),
-                                const SizedBox(height: 6),
-                                Text(item.username),
-                              ],
-                            );
-                          },
-                        ),
-                ),
-              ],
-            );
-          },
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Users:', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Expanded(
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: users.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 12),
+                itemBuilder: (context, index) {
+                  final item = users[index];
+                  final avatar = item.avatarUrl ?? '';
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      AvatarPreview(
+                        radius: 22,
+                        avatarUrl: avatar,
+                        showEditIndicator: false,
+                      ),
+                      const SizedBox(height: 6),
+                      Text(item.username),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -543,6 +566,9 @@ class RepositoryService {
   final StreamController<int> _counterTotalController =
       StreamController<int>.broadcast();
   int _counterTotal = 0;
+  final StreamController<bool> _remoteConnectionController =
+      StreamController<bool>.broadcast();
+  bool _isRemoteConnected = true;
 
   final LocalFirstRepository<UserModel> userRepository;
   final LocalFirstRepository<CounterLogModel> counterLogRepository;
@@ -553,6 +579,7 @@ class RepositoryService {
       counterLogRepository = _buildCounterLogRepository(),
       syncStrategy = MongoPeriodicSyncStrategy() {
     syncStrategy.onCounterDelta = _applyCounterDelta;
+    syncStrategy.onConnectionStatus = _setRemoteConnection;
   }
 
   Future<UserModel?> initialize() async {
@@ -633,18 +660,24 @@ class RepositoryService {
   Stream<List<CounterLogModel>> watchLogs() => counterLogRepository
       .query()
       .orderBy('created_at', descending: true)
-      .watch();
+      .watch()
+      .asBroadcastStream();
 
-  Stream<int> watchCounter() async* {
+  Stream<int> watchCounter() => (() async* {
     yield _counterTotal;
     yield* _counterTotalController.stream;
-  }
+  })().asBroadcastStream();
+
+  Stream<bool> watchRemoteConnection() => (() async* {
+    yield _isRemoteConnected;
+    yield* _remoteConnectionController.stream;
+  })().asBroadcastStream();
 
   Stream<List<CounterLogModel>> watchRecentLogs({int limit = 5}) =>
-      watchLogs().map((logs) => logs.take(limit).toList());
+      watchLogs().map((logs) => logs.take(limit).toList()).asBroadcastStream();
 
   Stream<List<UserModel>> watchUsers() =>
-      userRepository.query().orderBy('username').watch();
+      userRepository.query().orderBy('username').watch().asBroadcastStream();
 
   Future<JsonMap<String?>> getAvatarsForUsers(Set<String> usernames) async {
     if (usernames.isEmpty) return {};
@@ -691,6 +724,7 @@ class RepositoryService {
 
     final log = CounterLogModel(username: username, increment: amount);
     await counterLogRepository.upsert(log);
+    await _refreshCounterTotalFromLocal();
   }
 
   Future<void> _openDatabaseForUser(String username) async {
@@ -730,26 +764,29 @@ class RepositoryService {
   }
 
   Future<void> _loadCounterTotal() async {
-    final value = await localFirst?.getMeta(_counterTotalKey);
-    if (value == null) {
-      final logs = await counterLogRepository.query().getAll();
-      _counterTotal = logs.fold(0, (sum, log) => sum + log.increment);
-      await localFirst?.setKeyValue(_counterTotalKey, _counterTotal.toString());
-    } else {
-      _counterTotal = int.tryParse(value) ?? 0;
-    }
-    _counterTotalController.add(_counterTotal);
+    await _refreshCounterTotalFromLocal();
   }
 
   Future<void> _applyCounterDelta(int delta) async {
-    _counterTotal += delta;
+    await _refreshCounterTotalFromLocal();
+  }
+
+  Future<void> _refreshCounterTotalFromLocal() async {
+    final logs = await counterLogRepository.query().getAll();
+    _counterTotal = logs.fold(0, (sum, log) => sum + log.increment);
     _counterTotalController.add(_counterTotal);
     await localFirst?.setKeyValue(_counterTotalKey, _counterTotal.toString());
+  }
+
+  void _setRemoteConnection(bool connected) {
+    if (_isRemoteConnected == connected) return;
+    _isRemoteConnected = connected;
+    _remoteConnectionController.add(connected);
   }
 }
 
 /// Domain model for a user with avatar metadata.
-class UserModel with LocalFirstModel {
+class UserModel {
   final String id;
   final String username;
   final String? avatarUrl;
@@ -781,8 +818,6 @@ class UserModel with LocalFirstModel {
     );
   }
 
-  @override
-  @override
   JsonMap<dynamic> toJson() {
     return {
       'id': id,
@@ -822,7 +857,7 @@ class UserModel with LocalFirstModel {
   }
 }
 
-class CounterLogModel with LocalFirstModel {
+class CounterLogModel {
   final String id;
   final String username;
   final int increment;
@@ -854,7 +889,6 @@ class CounterLogModel with LocalFirstModel {
     );
   }
 
-  @override
   JsonMap<dynamic> toJson() {
     return {
       'id': id,
@@ -935,8 +969,10 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
 
   Timer? _timer;
   final JsonMap<DateTime?> lastSyncedAt = {};
-  final JsonMap<List<LocalFirstModel>> pendingChanges = {};
+  final JsonMap<List<LocalFirstEvent>> pendingChanges = {};
   Future<void> Function(int delta)? onCounterDelta;
+  void Function(bool connected)? onConnectionStatus;
+  bool _isConnected = true;
 
   void start() {
     stop();
@@ -980,42 +1016,59 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     stop();
   }
 
-  void _addPending(LocalFirstModel object) {
+  void _addPending(LocalFirstEvent object) {
     pendingChanges.putIfAbsent(object.repositoryName, () => []).add(object);
   }
 
   @override
-  Future<SyncStatus> onPushToRemote(LocalFirstModel object) async {
+  Future<SyncStatus> onPushToRemote(LocalFirstEvent object) async {
     _addPending(object);
     return SyncStatus.pending;
   }
 
   Future<void> _onTimerTick(_) async {
-    if (pendingChanges.isNotEmpty) {
-      final changes = JsonMap<List<LocalFirstModel>>.from(pendingChanges);
-      pendingChanges.clear();
-
-      await _pushToRemote(changes);
-    }
-    final remoteChanges = await mongoApi.pull(lastSyncedAt);
-    if (remoteChanges['changes']?.isNotEmpty) {
-      final delta = _counterDeltaFromRemote(remoteChanges);
-      await pullChangesToLocal(remoteChanges);
-      if (delta != 0) {
-        await onCounterDelta?.call(delta);
-      }
-
-      // Use the latest updated_at seen in this pull as the new lastSyncedAt
-      final latest = mongoApi.latestUpdatedAt(remoteChanges);
-      if (latest != null) {
-        for (final repo in mongoApi.repositoryNames) {
-          lastSyncedAt[repo] = latest;
-          await client.setKeyValue(
-            '__last_sync__$repo',
-            latest.toIso8601String(),
-          );
+    try {
+      if (pendingChanges.isNotEmpty) {
+        final changes = JsonMap<List<LocalFirstEvent>>.from(pendingChanges);
+        pendingChanges.clear();
+        final pushed = await _pushToRemote(changes);
+        if (!pushed) {
+          _setConnectionStatus(false);
+          _requeueChanges(changes);
+          return;
         }
       }
+      JsonMap<dynamic> remoteChanges;
+      try {
+        remoteChanges = await mongoApi.pull(lastSyncedAt);
+      } catch (e) {
+        _setConnectionStatus(false);
+        dev.log('Pull failed, keeping local state', name: logTag, error: e);
+        return;
+      }
+      _setConnectionStatus(true);
+      if (remoteChanges['changes']?.isNotEmpty) {
+        final delta = _counterDeltaFromRemote(remoteChanges);
+        await pullChangesToLocal(remoteChanges);
+        if (delta != 0) {
+          await onCounterDelta?.call(delta);
+        }
+
+        // Use the latest updated_at seen in this pull as the new lastSyncedAt
+        final latest = mongoApi.latestUpdatedAt(remoteChanges);
+        if (latest != null) {
+          for (final repo in mongoApi.repositoryNames) {
+            lastSyncedAt[repo] = latest;
+            await client.setKeyValue(
+              '__last_sync__$repo',
+              latest.toIso8601String(),
+            );
+          }
+        }
+      }
+    } catch (e) {
+      _setConnectionStatus(false);
+      dev.log('Sync tick failed', name: logTag, error: e);
     }
   }
 
@@ -1044,20 +1097,47 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     return delta;
   }
 
-  Future<void> _pushToRemote(JsonMap<List<LocalFirstModel>> changes) async {
-    if (changes.isEmpty) return;
+  Future<bool> _pushToRemote(JsonMap<List<LocalFirstEvent>> changes) async {
+    if (changes.isEmpty) return true;
     dev.log(
       'Pushing changes for ${changes.length} repository(ies)',
       name: logTag,
     );
-    await mongoApi.push(_buildUploadPayload(changes));
+    try {
+      await mongoApi.push(_buildUploadPayload(changes));
+      _setConnectionStatus(true);
+      return true;
+    } catch (e) {
+      _setConnectionStatus(false);
+      dev.log('Push failed, will retry later', name: logTag, error: e);
+      return false;
+    }
   }
 
-  JsonMap<dynamic> _buildUploadPayload(JsonMap<List<LocalFirstModel>> changes) {
+  void _requeueChanges(JsonMap<List<LocalFirstEvent>> changes) {
+    for (final entry in changes.entries) {
+      pendingChanges.putIfAbsent(entry.key, () => []).addAll(entry.value);
+    }
+  }
+
+  void _setConnectionStatus(bool connected) {
+    if (_isConnected == connected) return;
+    _isConnected = connected;
+    onConnectionStatus?.call(connected);
+  }
+
+  JsonMap<dynamic> _buildUploadPayload(JsonMap<List<LocalFirstEvent>> changes) {
     return {
       'lastSyncedAt': DateTime.now().toIso8601String(),
       'changes': {
-        for (final entry in changes.entries) entry.key: entry.value.toJson(),
+        for (final entry in changes.entries)
+          entry.key: (() {
+            final repository = client.getRepositoryByName(entry.key);
+            return entry.value.toJson<Object>(
+              serializer: (Object item) => repository.toJson(item as dynamic),
+              idFieldName: repository.idFieldName,
+            );
+          })(),
       },
     };
   }
@@ -1073,6 +1153,7 @@ class MongoApi {
   final String uri;
   final List<String> repositoryNames;
   final String collectionPrefix;
+  final Duration requestTimeout;
 
   Db? _db;
 
@@ -1080,17 +1161,25 @@ class MongoApi {
     required this.uri,
     required this.repositoryNames,
     this.collectionPrefix = 'offline_',
+    this.requestTimeout = const Duration(seconds: 5),
   });
+
+  Future<T> _withTimeout<T>(Future<T> future) => future.timeout(requestTimeout);
 
   Future<Db> _getDb() async {
     final current = _db;
     if (current != null && current.isConnected) return current;
-
-    final db = await Db.create(uri);
-    await db.open();
-    dev.log('Connected to MongoDB at $uri', name: logTag);
-    _db = db;
-    return db;
+    try {
+      final db = await Db.create(uri);
+      await _withTimeout(db.open());
+      dev.log('Connected to MongoDB at $uri', name: logTag);
+      _db = db;
+      return db;
+    } catch (e) {
+      dev.log('Failed to connect to MongoDB at $uri', name: logTag, error: e);
+      _db = null;
+      rethrow;
+    }
   }
 
   Future<DbCollection> _collection(String repositoryName) async {
@@ -1098,7 +1187,7 @@ class MongoApi {
     final collection = db.collection('$collectionPrefix$repositoryName');
 
     try {
-      await collection.createIndex(keys: {'updated_at': 1});
+      await _withTimeout(collection.createIndex(keys: {'updated_at': 1}));
     } catch (_) {
       // Ignora erros de índice existente
     }
@@ -1137,7 +1226,9 @@ class MongoApi {
             'operation': 'insert',
             'updated_at': now,
           };
-          await collection.replaceOne(where.eq('id', id), doc, upsert: true);
+          await _withTimeout(
+            collection.replaceOne(where.eq('id', id), doc, upsert: true),
+          );
         }
       }
 
@@ -1152,7 +1243,9 @@ class MongoApi {
             'operation': 'update',
             'updated_at': now,
           };
-          await collection.replaceOne(where.eq('id', id), doc, upsert: true);
+          await _withTimeout(
+            collection.replaceOne(where.eq('id', id), doc, upsert: true),
+          );
         }
       }
 
@@ -1160,11 +1253,13 @@ class MongoApi {
       if (deleteItems is List) {
         for (final id in deleteItems) {
           if (id == null) continue;
-          await collection.replaceOne(where.eq('id', id.toString()), {
-            'id': id.toString(),
-            'operation': 'delete',
-            'updated_at': now,
-          }, upsert: true);
+          await _withTimeout(
+            collection.replaceOne(where.eq('id', id.toString()), {
+              'id': id.toString(),
+              'operation': 'delete',
+              'updated_at': now,
+            }, upsert: true),
+          );
         }
       }
     }
@@ -1188,21 +1283,23 @@ class MongoApi {
       final updates = <dynamic>[];
       final deletes = <dynamic>[];
 
-      await cursor.forEach((doc) {
-        final op = doc['operation'];
-        if (op == 'delete') {
-          if (doc['id'] != null) deletes.add(doc['id']);
-          return;
-        }
-        final item = Map<String, dynamic>.from(doc)
-          ..remove('operation')
-          ..remove('_id');
-        if (op == 'insert') {
-          inserts.add(_fromMongoDateFields(item));
-        } else {
-          updates.add(_fromMongoDateFields(item));
-        }
-      });
+      await _withTimeout(
+        cursor.forEach((doc) {
+          final op = doc['operation'];
+          if (op == 'delete') {
+            if (doc['id'] != null) deletes.add(doc['id']);
+            return;
+          }
+          final item = Map<String, dynamic>.from(doc)
+            ..remove('operation')
+            ..remove('_id');
+          if (op == 'insert') {
+            inserts.add(_fromMongoDateFields(item));
+          } else {
+            updates.add(_fromMongoDateFields(item));
+          }
+        }),
+      );
 
       final finalChanges = {
         if (inserts.isNotEmpty) 'insert': inserts,
@@ -1228,14 +1325,16 @@ class MongoApi {
 
     final users = <String, JsonMap<dynamic>>{};
 
-    await cursor.forEach((doc) {
-      final id = doc['id'];
-      if (id is! String) return;
-      final data = Map<String, dynamic>.from(doc)
-        ..remove('_id')
-        ..remove('operation');
-      users[id] = _fromMongoDateFields(data);
-    });
+    await _withTimeout(
+      cursor.forEach((doc) {
+        final id = doc['id'];
+        if (id is! String) return;
+        final data = Map<String, dynamic>.from(doc)
+          ..remove('_id')
+          ..remove('operation');
+        users[id] = _fromMongoDateFields(data);
+      }),
+    );
 
     return users.values.toList();
   }
