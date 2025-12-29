@@ -62,12 +62,26 @@ void main() {
         serializer: (model) => model.toJson(),
       );
 
-      expect(payload['insert'], [
-        {'id': '1', 'value': 'one'},
-      ]);
-      expect(payload['update'], [
-        {'id': '2', 'value': 'two'},
-      ]);
+      final inserts = payload['insert'] as List;
+      final updates = payload['update'] as List;
+      expect(inserts, hasLength(1));
+      expect(updates, hasLength(1));
+      expect(
+        inserts.first,
+        {
+          'id': '1',
+          'value': 'one',
+          'event_id': isA<String>(),
+        },
+      );
+      expect(
+        updates.first,
+        {
+          'id': '2',
+          'value': 'two',
+          'event_id': isA<String>(),
+        },
+      );
       expect(payload['delete'], ['3']);
     });
 

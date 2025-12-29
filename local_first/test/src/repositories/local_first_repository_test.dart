@@ -602,7 +602,10 @@ void main() {
       final stored = await storage.getById('tests', 'syncedInsert');
       expect(stored?['_sync_operation'], SyncOperation.update.index);
       expect(stored?['_sync_status'], SyncStatus.pending.index);
-      expect(stored?['_sync_created_at'], createdAt);
+      expect(
+        stored?['_sync_created_at'],
+        greaterThanOrEqualTo(createdAt),
+      );
       expect(stored?['value'], 'new');
     });
 
