@@ -29,6 +29,7 @@ class _OtherModel {
 class _InMemoryStorage implements LocalFirstStorage {
   final Map<String, Map<String, Map<String, dynamic>>> tables = {};
   final Map<String, String> meta = {};
+  final Map<String, DateTime> registeredEvents = {};
   final Map<String, StreamController<List<Map<String, dynamic>>>> _controllers =
       {};
   bool initialized = false;
@@ -140,6 +141,22 @@ class _InMemoryStorage implements LocalFirstStorage {
   @override
   Future<void> setMeta(String key, String value) async {
     meta[key] = value;
+  }
+
+  @override
+  Future<void> registerEvent(String eventId, DateTime createdAt) async {
+    registeredEvents.putIfAbsent(eventId, () => createdAt.toUtc());
+  }
+
+  @override
+  Future<bool> isEventRegistered(String eventId) async {
+    return registeredEvents.containsKey(eventId);
+  }
+
+  @override
+  Future<void> pruneRegisteredEvents(DateTime before) async {
+    final threshold = before.toUtc();
+    registeredEvents.removeWhere((_, value) => value.isBefore(threshold));
   }
 
   @override

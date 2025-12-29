@@ -82,6 +82,25 @@ abstract class LocalFirstStorage {
   /// Reads arbitrary metadata stored by key.
   Future<String?> getMeta(String key);
 
+  /// Registers a processed event by its ID and creation time.
+  ///
+  /// Storage backends can use this for idempotency and cleanup.
+  Future<void> registerEvent(String eventId, DateTime createdAt) async {
+    await setMeta(
+      '__event_id__$eventId',
+      createdAt.toUtc().millisecondsSinceEpoch.toString(),
+    );
+  }
+
+  /// Checks if an event ID has already been processed.
+  Future<bool> isEventRegistered(String eventId) async {
+    final value = await getMeta('__event_id__$eventId');
+    return value != null;
+  }
+
+  /// Removes registered events older than [before].
+  Future<void> pruneRegisteredEvents(DateTime before) async {}
+
   /// Ensures the storage backend has an up-to-date schema for a repository.
   ///
   /// Backends that do not use schemas can ignore this call.

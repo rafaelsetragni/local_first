@@ -45,6 +45,7 @@ class _TypedStrategy extends DataSyncStrategy<_DummyModel> {
 class _FakeStorage implements LocalFirstStorage {
   final Map<String, Map<String, Map<String, dynamic>>> _tables = {};
   final Map<String, String> _meta = {};
+  final Map<String, DateTime> _registeredEvents = {};
   bool initialized = false;
 
   @override
@@ -124,6 +125,22 @@ class _FakeStorage implements LocalFirstStorage {
   @override
   Future<void> setMeta(String key, String value) async {
     _meta[key] = value;
+  }
+
+  @override
+  Future<void> registerEvent(String eventId, DateTime createdAt) async {
+    _registeredEvents.putIfAbsent(eventId, () => createdAt.toUtc());
+  }
+
+  @override
+  Future<bool> isEventRegistered(String eventId) async {
+    return _registeredEvents.containsKey(eventId);
+  }
+
+  @override
+  Future<void> pruneRegisteredEvents(DateTime before) async {
+    final threshold = before.toUtc();
+    _registeredEvents.removeWhere((_, value) => value.isBefore(threshold));
   }
 
   @override

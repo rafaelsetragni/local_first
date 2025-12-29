@@ -23,6 +23,9 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   /// Box for sync metadata
   late Box<dynamic> _metadataBox;
 
+  /// Box for processed event ids
+  late Box<dynamic> _eventLogBox;
+
   /// Open/initialize control flags
   bool _opened = false;
   bool _initialized = false;
@@ -81,6 +84,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
     // Open metadata box
     _metadataBox = await _hive.openBox<dynamic>(_metadataBoxName);
+    _eventLogBox = await _hive.openBox<dynamic>(_eventLogBoxName);
 
     _opened = true;
   }
@@ -97,6 +101,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
     await _closeAllBoxes();
     await _metadataBox.close();
+    await _eventLogBox.close();
 
     _opened = false;
   }
@@ -109,6 +114,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   String get _metadataBoxName => '${_namespace}__offline_metadata';
+  String get _eventLogBoxName => '${_namespace}__event_log';
 
   String _boxName(String tableName) => '${_namespace}__$tableName';
 
@@ -224,6 +230,46 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
+  Future<void> registerEvent(String eventId, DateTime createdAt) async {
+    if (!_initialized || !_opened) {
+      throw StateError(
+        'HiveLocalFirstStorage not initialized. Call open() and initialize() first.',
+      );
+    }
+    await _eventLogBox.put(
+      eventId,
+      createdAt.toUtc().millisecondsSinceEpoch,
+    );
+  }
+
+  @override
+  Future<bool> isEventRegistered(String eventId) async {
+    if (!_initialized || !_opened) {
+      throw StateError(
+        'HiveLocalFirstStorage not initialized. Call open() and initialize() first.',
+      );
+    }
+    return _eventLogBox.containsKey(eventId);
+  }
+
+  @override
+  Future<void> pruneRegisteredEvents(DateTime before) async {
+    if (!_initialized || !_opened) {
+      throw StateError(
+        'HiveLocalFirstStorage not initialized. Call open() and initialize() first.',
+      );
+    }
+    final threshold = before.toUtc().millisecondsSinceEpoch;
+    final keys = _eventLogBox.keys.toList();
+    for (final key in keys) {
+      final value = _eventLogBox.get(key);
+      if (value is int && value < threshold) {
+        await _eventLogBox.delete(key);
+      }
+    }
+  }
+
+  @override
   Future<void> ensureSchema(
     String tableName,
     Map<String, LocalFieldType> schema, {
@@ -253,6 +299,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
     // Clear metadata
     await _metadataBox.clear();
+    await _eventLogBox.clear();
 
     // Close all open boxes
     for (var box in _boxes.values) {
@@ -262,6 +309,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
     // Close metadata box
     await _metadataBox.close();
+    await _eventLogBox.close();
 
     // Delete each box from disk individually (if present)
     for (var boxName in boxesToDelete) {
@@ -275,6 +323,11 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     // Delete metadata box from disk
     try {
       await _hive.deleteBoxFromDisk(_metadataBoxName);
+    } catch (e) {
+      // Ignore errors if the box does not exist
+    }
+    try {
+      await _hive.deleteBoxFromDisk(_eventLogBoxName);
     } catch (e) {
       // Ignore errors if the box does not exist
     }

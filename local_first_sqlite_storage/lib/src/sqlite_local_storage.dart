@@ -323,6 +323,16 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     );
   }
 
+  Future<void> _ensureEventLogTable({Database? db}) async {
+    db ??= await _database;
+    await db.execute(
+      'CREATE TABLE IF NOT EXISTS $_eventLogTable (event_id TEXT PRIMARY KEY, created_at INTEGER NOT NULL)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS ${_eventLogTable}__created_at ON $_eventLogTable(created_at)',
+    );
+  }
+
   Map<String, LocalFieldType> _schemaFor(String repositoryName) {
     return _schemas[repositoryName] ?? const {};
   }
@@ -334,6 +344,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     const reservedColumns = {
       'id',
       'data',
+      '_event_id',
       '_sync_status',
       '_sync_operation',
       '_sync_created_at',
@@ -342,6 +353,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     final columnDefinitions = StringBuffer(
       'id TEXT PRIMARY KEY, '
       'data TEXT NOT NULL, '
+      '_event_id TEXT, '
       '_sync_status INTEGER, '
       '_sync_operation INTEGER, '
       '_sync_created_at INTEGER',
@@ -372,6 +384,8 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return '${_namespace}__$name';
   }
 
+  String get _eventLogTable => '${_namespace}__event_log';
+
   static void _validateIdentifier(String name, String label) {
     if (!_validName.hasMatch(name)) {
       throw ArgumentError(
@@ -379,6 +393,45 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
         'are supported.',
       );
     }
+  }
+
+  @override
+  Future<void> registerEvent(String eventId, DateTime createdAt) async {
+    final db = await _database;
+    await _ensureEventLogTable(db: db);
+    await db.insert(
+      _eventLogTable,
+      {
+        'event_id': eventId,
+        'created_at': createdAt.toUtc().millisecondsSinceEpoch,
+      },
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+  }
+
+  @override
+  Future<bool> isEventRegistered(String eventId) async {
+    final db = await _database;
+    await _ensureEventLogTable(db: db);
+    final rows = await db.query(
+      _eventLogTable,
+      columns: ['event_id'],
+      where: 'event_id = ?',
+      whereArgs: [eventId],
+      limit: 1,
+    );
+    return rows.isNotEmpty;
+  }
+
+  @override
+  Future<void> pruneRegisteredEvents(DateTime before) async {
+    final db = await _database;
+    await _ensureEventLogTable(db: db);
+    await db.delete(
+      _eventLogTable,
+      where: 'created_at < ?',
+      whereArgs: [before.toUtc().millisecondsSinceEpoch],
+    );
   }
 
   String _sqlTypeFor(LocalFieldType type) {
@@ -435,6 +488,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     final row = <String, Object?>{
       'id': id,
       'data': jsonEncode(_normalizeJsonMap(item)),
+      '_event_id': item['_event_id'],
       '_sync_status': item['_sync_status'],
       '_sync_operation': item['_sync_operation'],
       '_sync_created_at': item['_sync_created_at'],

@@ -34,16 +34,19 @@ typedef LocalFirstEvents = List<LocalFirstEvent>;
 class LocalFirstEvent {
   LocalFirstEvent({
     required this.data,
+    String? eventId,
     SyncStatus syncStatus = SyncStatus.ok,
     SyncOperation syncOperation = SyncOperation.insert,
     DateTime? syncCreatedAt,
     String repositoryName = '',
-  }) : _syncStatus = syncStatus,
+  }) : eventId = eventId ?? _generateEventId(),
+       _syncStatus = syncStatus,
        _syncOperation = syncOperation,
        _syncCreatedAt = syncCreatedAt?.toUtc(),
        _repositoryName = repositoryName;
 
   final Object data;
+  final String eventId;
 
   bool isA<T>() => data is T;
   T dataAs<T extends Object>() => data as T;
@@ -88,6 +91,42 @@ class LocalFirstEvent {
 
   @visibleForTesting
   void debugSetRepositoryName(String name) => _setRepositoryName(name);
+
+  static String generateEventId() => _generateEventId();
+
+  static final Random _eventIdRandom = Random.secure();
+
+  static String _generateEventId() {
+    final bytes = List<int>.filled(16, 0);
+    final millis = DateTime.now().toUtc().millisecondsSinceEpoch;
+
+    bytes[0] = (millis >> 40) & 0xff;
+    bytes[1] = (millis >> 32) & 0xff;
+    bytes[2] = (millis >> 24) & 0xff;
+    bytes[3] = (millis >> 16) & 0xff;
+    bytes[4] = (millis >> 8) & 0xff;
+    bytes[5] = millis & 0xff;
+
+    final randA = _eventIdRandom.nextInt(1 << 12);
+    bytes[6] = 0x70 | ((randA >> 8) & 0x0f);
+    bytes[7] = randA & 0xff;
+
+    final randB =
+        List<int>.generate(8, (_) => _eventIdRandom.nextInt(256));
+    randB[0] = (randB[0] & 0x3f) | 0x80;
+    for (var i = 0; i < 8; i++) {
+      bytes[8 + i] = randB[i];
+    }
+
+    final hex = bytes
+        .map((b) => b.toRadixString(16).padLeft(2, '0'))
+        .join();
+    return '${hex.substring(0, 8)}-'
+        '${hex.substring(8, 12)}-'
+        '${hex.substring(12, 16)}-'
+        '${hex.substring(16, 20)}-'
+        '${hex.substring(20)}';
+  }
 }
 
 /// Extension methods for lists of events with sync metadata.
@@ -106,7 +145,8 @@ extension LocalFirstEventsX on List<LocalFirstEvent> {
     final deletes = <String>[];
 
     for (var event in this) {
-      final itemJson = serializer(event.dataAs<T>());
+      final itemJson = Map<String, dynamic>.from(serializer(event.dataAs<T>()));
+      itemJson['event_id'] = event.eventId;
 
       switch (event.syncOperation) {
         case SyncOperation.insert:
