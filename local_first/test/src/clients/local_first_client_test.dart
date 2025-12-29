@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_first/local_first.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _TestModel {
   _TestModel(this.id, {this.value});
@@ -62,6 +63,8 @@ class _InMemoryStorage implements LocalFirstStorage {
   bool opened = false;
   bool initialized = false;
   bool closed = false;
+  int initializeCalls = 0;
+  int closeCalls = 0;
   final Map<String, Map<String, Map<String, dynamic>>> tables = {};
   final Map<String, String> meta = {};
   final Map<String, DateTime> registeredEvents = {};
@@ -97,6 +100,7 @@ class _InMemoryStorage implements LocalFirstStorage {
   @override
   Future<void> initialize() async {
     initialized = true;
+    initializeCalls += 1;
   }
 
   @override
@@ -106,6 +110,7 @@ class _InMemoryStorage implements LocalFirstStorage {
     for (final c in _controllers.values) {
       await c.close();
     }
+    closeCalls += 1;
   }
 
   @override
@@ -215,6 +220,7 @@ class _InMemoryKeyValueStorage implements LocalFirstKeyValueStorage {
   final Map<String, Object?> _store = {};
   bool _opened = false;
   String _namespace = 'default';
+  int openCalls = 0;
 
   @override
   bool get isOpened => _opened;
@@ -229,6 +235,7 @@ class _InMemoryKeyValueStorage implements LocalFirstKeyValueStorage {
   Future<void> open({String namespace = 'default'}) async {
     _namespace = namespace;
     _opened = true;
+    openCalls += 1;
   }
 
   @override
@@ -302,6 +309,45 @@ void main() {
     test('initialize sets up storage', () async {
       await client.initialize();
       expect(storage.initialized, isTrue);
+    });
+
+    test('initialize can be called multiple times without reinitializing', () async {
+      await Future.wait([client.initialize(), client.initialize()]);
+      expect(storage.initialized, isTrue);
+      expect(storage.initializeCalls, 1);
+      expect(metaStorage.openCalls, 1);
+    });
+
+    test('constructor registers repositories and sync strategies', () async {
+      final repoA = buildRepo('repo_a');
+      final strategyA = _OkStrategy();
+      final strategyB = _OkStrategy();
+      final client = LocalFirstClient(
+        repositories: [repoA],
+        localStorage: _InMemoryStorage(),
+        metaStorage: _InMemoryKeyValueStorage(),
+        syncStrategies: [strategyA, strategyB],
+      );
+
+      expect(client.getRepositoryByName('repo_a'), same(repoA));
+      expect(client.syncStrategies.length, 2);
+    });
+
+    test('constructor defaults metaStorage to SharedPreferences', () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final repoA = buildRepo('repo_meta');
+      final client = LocalFirstClient(
+        repositories: [repoA],
+        localStorage: _InMemoryStorage(),
+        syncStrategies: [_OkStrategy()],
+      );
+
+      await client.initialize();
+      await client.setKeyValue('k', 'v');
+      expect(await client.getMeta('k'), 'v');
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('default__k'), 'v');
     });
 
     test('initialize asserts when no repositories registered', () {
@@ -485,6 +531,16 @@ void main() {
       await client.initialize();
       await client.dispose();
       expect(storage.closed, isTrue);
+    });
+
+    test('closeStorage closes local storage connection', () async {
+      await client.initialize();
+      await client.openStorage();
+
+      await client.closeStorage();
+
+      expect(storage.closed, isTrue);
+      expect(storage.closeCalls, 1);
     });
 
     test('awaitInitialization completes only after openStorage runs', () async {

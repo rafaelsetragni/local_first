@@ -163,18 +163,14 @@ mixin LocalFirstRepository<T extends Object> {
       final merged = _copyModel(existing.dataAs<T>(), item);
       final wasPendingInsert =
           existing.needSync && existing.syncOperation == SyncOperation.insert;
-      final now = DateTime.now().toUtc();
       final eventId = wasPendingInsert
           ? existing.eventId
           : LocalFirstEvent.generateEventId();
-      final syncCreatedAt =
-          wasPendingInsert ? (existing.syncCreatedAt ?? now) : now;
       await _update(
         _prepareForUpdate(
           existing,
           merged,
           eventId: eventId,
-          syncCreatedAt: syncCreatedAt,
         ),
         wasPendingInsert: wasPendingInsert,
       );
@@ -290,14 +286,13 @@ mixin LocalFirstRepository<T extends Object> {
     LocalFirstEvent existing,
     T model, {
     required String eventId,
-    required DateTime syncCreatedAt,
   }) {
     return LocalFirstEvent(
       data: model,
       eventId: eventId,
       syncStatus: existing.syncStatus,
       syncOperation: existing.syncOperation,
-      syncCreatedAt: syncCreatedAt,
+      syncCreatedAt: existing.syncCreatedAt,
       repositoryName: name,
     );
   }

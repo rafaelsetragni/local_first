@@ -26,6 +26,18 @@ class _OtherModel {
   Map<String, dynamic> toJson() => {'id': id};
 }
 
+class _ConfigurableRepo with LocalFirstRepository<_TestModel> {
+  void configure({String name = 'tests'}) {
+    initLocalFirstRepository(
+      name: name,
+      getId: (model) => model.id,
+      toJson: (model) => model.toJson(),
+      fromJson: _TestModel.fromJson,
+      onConflict: (local, remote) => local,
+    );
+  }
+}
+
 class _InMemoryStorage implements LocalFirstStorage {
   final Map<String, Map<String, Map<String, dynamic>>> tables = {};
   final Map<String, String> meta = {};
@@ -301,6 +313,15 @@ void main() {
         syncStrategies: [_NoopStrategy()],
       );
       await client.initialize();
+    });
+
+    test('initLocalFirstRepository throws when already configured', () {
+      final repo = _ConfigurableRepo();
+      repo.configure(name: 'first');
+      expect(
+        () => repo.configure(name: 'second'),
+        throwsA(isA<StateError>()),
+      );
     });
 
     test('initialize can be re-run after reset without errors', () async {
@@ -643,12 +664,13 @@ void main() {
 
     test('pullChangesToLocal inserts remote objects', () async {
       final strategy = client.syncStrategies.first;
+      final eventId = LocalFirstEvent.generateEventId();
       final payload = {
         'timestamp': DateTime.now().toUtc().toIso8601String(),
         'changes': {
           'tests': {
             'insert': [
-              {'id': 'r1', 'value': 'remote'},
+              {'id': 'r1', 'value': 'remote', 'event_id': eventId},
             ],
           },
         },
@@ -660,6 +682,59 @@ void main() {
       expect(stored?['value'], 'remote');
       expect(stored?['_sync_status'], SyncStatus.ok.index);
       expect(stored?['_sync_operation'], SyncOperation.insert.index);
+      expect(stored?['_event_id'], eventId);
+      expect(await storage.isEventRegistered(eventId), isTrue);
+    });
+
+    test('pullChangesToLocal generates event_id when missing', () async {
+      final strategy = client.syncStrategies.first;
+      final payload = {
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+        'changes': {
+          'tests': {
+            'insert': [
+              {'id': 'r2', 'value': 'remote'},
+            ],
+          },
+        },
+      };
+
+      await strategy.pullChangesToLocal(payload);
+
+      final stored = await storage.getById('tests', 'r2');
+      final storedEventId = stored?['_event_id'];
+      expect(storedEventId, isA<String>());
+      expect((storedEventId as String).isNotEmpty, isTrue);
+      expect(await storage.isEventRegistered(storedEventId), isTrue);
+    });
+
+    test('pullChangesToLocal sets sync_created_at when missing', () async {
+      final strategy = client.syncStrategies.first;
+      final payload = {
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+        'changes': {
+          'tests': {
+            'insert': [
+              {'id': 'r3', 'value': 'remote'},
+            ],
+          },
+        },
+      };
+
+      await strategy.pullChangesToLocal(payload);
+
+      final stored = await storage.getById('tests', 'r3');
+      expect(stored?['_sync_created_at'], isNotNull);
+      final createdAt = DateTime.fromMillisecondsSinceEpoch(
+        stored?['_sync_created_at'] as int,
+        isUtc: true,
+      );
+      expect(
+        createdAt.isAfter(
+          DateTime.now().toUtc().subtract(const Duration(seconds: 2)),
+        ),
+        isTrue,
+      );
     });
 
     test('pullChangesToLocal updates existing object via resolver', () async {
@@ -672,12 +747,13 @@ void main() {
       }, 'id');
 
       final strategy = client.syncStrategies.first;
+      final eventId = LocalFirstEvent.generateEventId();
       final payload = {
         'timestamp': DateTime.now().toUtc().toIso8601String(),
         'changes': {
           'tests': {
             'update': [
-              {'id': 'u1', 'value': 'remote'},
+              {'id': 'u1', 'value': 'remote', 'event_id': eventId},
             ],
           },
         },
@@ -689,7 +765,104 @@ void main() {
       expect(stored?['value'], 'local'); // resolver keeps local
       expect(stored?['_sync_status'], SyncStatus.ok.index);
       expect(stored?['_sync_operation'], SyncOperation.update.index);
+      expect(stored?['_event_id'], eventId);
+      expect(await storage.isEventRegistered(eventId), isTrue);
     });
+
+    test(
+      'pullChangesToLocal ignores event already registered when local is synced',
+      () async {
+        await storage.insert('tests', {
+          'id': 'dupe-synced',
+          'value': 'local',
+          '_sync_status': SyncStatus.ok.index,
+          '_sync_operation': SyncOperation.insert.index,
+          '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
+        }, 'id');
+
+        final eventId = LocalFirstEvent.generateEventId();
+        await storage.registerEvent(eventId, DateTime.now().toUtc());
+
+        final strategy = client.syncStrategies.first;
+        final payload = {
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+          'changes': {
+            'tests': {
+              'update': [
+                {'id': 'dupe-synced', 'value': 'remote', 'event_id': eventId},
+              ],
+            },
+          },
+        };
+
+        await strategy.pullChangesToLocal(payload);
+
+        final stored = await storage.getById('tests', 'dupe-synced');
+        expect(stored?['value'], 'local');
+        expect(stored?['_sync_status'], SyncStatus.ok.index);
+        expect(stored?['_sync_operation'], SyncOperation.insert.index);
+      },
+    );
+
+    test(
+      'pullChangesToLocal ignores event already registered when local is pending',
+      () async {
+        await storage.insert('tests', {
+          'id': 'dupe-pending',
+          'value': 'pending',
+          '_sync_status': SyncStatus.pending.index,
+          '_sync_operation': SyncOperation.insert.index,
+          '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
+        }, 'id');
+
+        final eventId = LocalFirstEvent.generateEventId();
+        await storage.registerEvent(eventId, DateTime.now().toUtc());
+
+        final strategy = client.syncStrategies.first;
+        final payload = {
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+          'changes': {
+            'tests': {
+              'update': [
+                {'id': 'dupe-pending', 'value': 'remote', 'event_id': eventId},
+              ],
+            },
+          },
+        };
+
+        await strategy.pullChangesToLocal(payload);
+
+        final stored = await storage.getById('tests', 'dupe-pending');
+        expect(stored?['value'], 'pending');
+        expect(stored?['_sync_status'], SyncStatus.pending.index);
+        expect(stored?['_sync_operation'], SyncOperation.insert.index);
+      },
+    );
+
+    test(
+      'pullChangesToLocal ignores event already registered when item missing',
+      () async {
+        final eventId = LocalFirstEvent.generateEventId();
+        await storage.registerEvent(eventId, DateTime.now().toUtc());
+
+        final strategy = client.syncStrategies.first;
+        final payload = {
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+          'changes': {
+            'tests': {
+              'insert': [
+                {'id': 'dupe-missing', 'value': 'remote', 'event_id': eventId},
+              ],
+            },
+          },
+        };
+
+        await strategy.pullChangesToLocal(payload);
+
+        final stored = await storage.getById('tests', 'dupe-missing');
+        expect(stored, isNull);
+      },
+    );
 
     test(
       'pullChangesToLocal deletes when remote marks deleted and local clean',

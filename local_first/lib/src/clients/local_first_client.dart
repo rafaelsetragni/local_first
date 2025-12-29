@@ -102,13 +102,7 @@ class LocalFirstClient {
   ///
   /// This must be called before using any LocalFirstClient functionality.
   /// It initializes the local database and all registered repositories.
-  Future<void> initialize() async {
-    if (_initializeFuture != null) {
-      return _initializeFuture!;
-    }
-    _initializeFuture = _runInitialize();
-    return _initializeFuture!;
-  }
+  Future<void> initialize() async => _initializeFuture ??= _runInitialize();
 
   Future<void> _runInitialize() async {
     try {

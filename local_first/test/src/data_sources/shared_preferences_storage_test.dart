@@ -34,6 +34,35 @@ void main() {
       expect(await storage.get<List<String>>('l'), ['a', 'b']);
     });
 
+    test('set throws for unsupported value types', () async {
+      final storage = SharedPreferencesKeyValueStorage();
+      await storage.open();
+
+      expect(
+        () => storage.set('k', <String, String>{'a': 'b'}),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('get returns null when type does not match', () async {
+      final storage = SharedPreferencesKeyValueStorage();
+      await storage.open();
+
+      await storage.set('i', 1);
+      expect(await storage.get<String>('i'), isNull);
+    });
+
+    test('contains/delete reflect key lifecycle', () async {
+      final storage = SharedPreferencesKeyValueStorage();
+      await storage.open();
+
+      expect(await storage.contains('k'), isFalse);
+      await storage.set('k', 'v');
+      expect(await storage.contains('k'), isTrue);
+      await storage.delete('k');
+      expect(await storage.contains('k'), isFalse);
+    });
+
     test('contains/delete work per namespace', () async {
       final storage = SharedPreferencesKeyValueStorage();
       await storage.open(namespace: 'ns1');
@@ -57,6 +86,24 @@ void main() {
 
       await storage.open(namespace: 'ns1');
       expect(await storage.get<String>('k'), 'v1');
+    });
+
+    test('open/close toggles state and preserves namespace', () async {
+      final storage = SharedPreferencesKeyValueStorage();
+
+      expect(storage.isOpened, isFalse);
+      expect(storage.isClosed, isTrue);
+      expect(storage.currentNamespace, 'default');
+
+      await storage.open(namespace: 'ns1');
+      expect(storage.isOpened, isTrue);
+      expect(storage.isClosed, isFalse);
+      expect(storage.currentNamespace, 'ns1');
+
+      await storage.close();
+      expect(storage.isOpened, isFalse);
+      expect(storage.isClosed, isTrue);
+      expect(storage.currentNamespace, 'ns1');
     });
   });
 }
