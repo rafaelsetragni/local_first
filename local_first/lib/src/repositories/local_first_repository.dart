@@ -114,6 +114,57 @@ mixin LocalFirstRepository<T extends Object> {
 
   bool _isInitialized = false;
 
+  /// Returns true if this repository's storage has been initialized.
+  bool get isInitialized => _isInitialized;
+
+  /// Returns the delegate used by this repository.
+  LocalFirstStorage get delegate => _client.localStorage;
+
+  /// Saves a remote snapshot without scheduling a push.
+  ///
+  /// If the local record has pending changes, it is left untouched.
+  Future<void> saveRemoteSnapshot(T item) async {
+    final existingJson =
+        await _client.localStorage.getById(name, getId(item));
+    if (existingJson != null) {
+      final existing = _eventFromJson(existingJson);
+      if (existing.needSync) return;
+      final merged = _copyModel(existing.dataAs<T>(), item);
+      final operation = existing.syncOperation == SyncOperation.insert
+          ? SyncOperation.update
+          : existing.syncOperation;
+      final updated = LocalFirstEvent(
+        data: merged,
+        eventId: existing.eventId,
+        syncStatus: SyncStatus.ok,
+        syncOperation: operation,
+        syncCreatedAt: existing.syncCreatedAt,
+        syncCreatedAtServer: existing.syncCreatedAtServer,
+        serverSequence: existing.serverSequence,
+        repositoryName: name,
+      );
+      await _client.localStorage.update(
+        name,
+        getId(item),
+        _toStorageJson(updated),
+      );
+      return;
+    }
+
+    final snapshot = LocalFirstEvent(
+      data: item,
+      syncStatus: SyncStatus.ok,
+      syncOperation: SyncOperation.insert,
+      syncCreatedAt: DateTime.now().toUtc(),
+      repositoryName: name,
+    );
+    await _client.localStorage.insert(
+      name,
+      _toStorageJson(snapshot),
+      idFieldName,
+    );
+  }
+
   /// Initializes the repository.
   ///
   /// This is called automatically by [LocalFirstClient.initialize].
@@ -135,19 +186,30 @@ mixin LocalFirstRepository<T extends Object> {
   }
 
   Future<void> _pushLocalEvent(LocalFirstEvent event) async {
+    var attempted = false;
     for (var strategy in _syncStrategies) {
       if (!strategy.supportsEvent(event)) {
         continue;
       }
+      attempted = true;
+      final attemptEvent = event.copyWith(
+        syncCreatedAtServer: DateTime.now().toUtc(),
+      );
       try {
-        final syncResult = await strategy.onPushToRemote(event);
-        event._setSyncStatus(syncResult);
+        final syncResult = await strategy.onPushToRemote(attemptEvent);
+        final updatedEvent = syncResult == SyncStatus.ok
+            ? attemptEvent.copyWith(syncStatus: SyncStatus.ok)
+            : attemptEvent.copyWith(syncStatus: syncResult);
+        await _updateEventStatus(updatedEvent);
         if (syncResult == SyncStatus.ok) return;
       } catch (e) {
-        event._setSyncStatus(SyncStatus.failed);
+        final failedEvent = attemptEvent.copyWith(syncStatus: SyncStatus.failed);
+        await _updateEventStatus(failedEvent);
       }
     }
-    await _updateEventStatus(event);
+    if (!attempted) {
+      await _updateEventStatus(event);
+    }
   }
 
   /// Inserts or updates an item (upsert operation).
@@ -156,16 +218,23 @@ mixin LocalFirstRepository<T extends Object> {
   /// Otherwise, a new item will be inserted.
   ///
   /// The operation is marked as pending and will be synced on next [LocalFirstClient.sync].
-  Future<void> upsert(T item) async {
+  Future<void> upsert(T item, {bool fromRemote = false}) async {
+    if (fromRemote) {
+      await saveRemoteSnapshot(item);
+      return;
+    }
     final json = await _client.localStorage.getById(name, getId(item));
     if (json != null) {
       final existing = _eventFromJson(json);
       final merged = _copyModel(existing.dataAs<T>(), item);
+      if (_jsonEquals(_toJson(existing.dataAs<T>()), _toJson(merged))) {
+        return;
+      }
       final wasPendingInsert =
           existing.needSync && existing.syncOperation == SyncOperation.insert;
       final eventId = wasPendingInsert
           ? existing.eventId
-          : LocalFirstEvent.generateEventId();
+          : UuidUtil.generateUuidV7();
       await _update(
         _prepareForUpdate(
           existing,
@@ -177,6 +246,27 @@ mixin LocalFirstRepository<T extends Object> {
     } else {
       await _insert(item);
     }
+  }
+
+  bool _jsonEquals(Object? left, Object? right) {
+    if (identical(left, right)) return true;
+    if (left == null || right == null) return left == right;
+    if (left is Map && right is Map) {
+      if (left.length != right.length) return false;
+      for (final entry in left.entries) {
+        if (!right.containsKey(entry.key)) return false;
+        if (!_jsonEquals(entry.value, right[entry.key])) return false;
+      }
+      return true;
+    }
+    if (left is List && right is List) {
+      if (left.length != right.length) return false;
+      for (var i = 0; i < left.length; i++) {
+        if (!_jsonEquals(left[i], right[i])) return false;
+      }
+      return true;
+    }
+    return left == right;
   }
 
   Future<void> _insert(T item) async {
@@ -200,23 +290,28 @@ mixin LocalFirstRepository<T extends Object> {
     LocalFirstEvent event, {
     required bool wasPendingInsert,
   }) async {
-    final operation = wasPendingInsert
-        ? SyncOperation.insert
-        : SyncOperation.update;
-    event._setSyncStatus(SyncStatus.pending);
-    event._setSyncOperation(operation);
+    final eventForUpdate = wasPendingInsert
+        ? event
+        : event.copyWith(syncOperation: SyncOperation.update);
+    final updatedEvent = eventForUpdate.copyWith(
+      syncStatus: SyncStatus.pending,
+    );
 
     await _client.localStorage.update(
       name,
-      getId(event.dataAs<T>()),
-      _toStorageJson(event),
+      getId(updatedEvent.dataAs<T>()),
+      _toStorageJson(updatedEvent),
     );
 
     await _client.localStorage.registerEvent(
-      event.eventId,
-      event.syncCreatedAt ?? DateTime.now().toUtc(),
+      updatedEvent.eventId,
+      updatedEvent.syncCreatedAt ?? DateTime.now().toUtc(),
     );
-    await _pushLocalEvent(event);
+    await _pushLocalEvent(updatedEvent);
+    if (wasPendingInsert) {
+      final synced = updatedEvent.copyWith(syncStatus: SyncStatus.ok);
+      await _updateEventStatus(synced);
+    }
   }
 
   /// Deletes an item by its ID (soft delete).
@@ -242,7 +337,7 @@ mixin LocalFirstRepository<T extends Object> {
 
     final deleteEvent = LocalFirstEvent(
       data: event.data,
-      eventId: LocalFirstEvent.generateEventId(),
+      eventId: UuidUtil.generateUuidV7(),
       syncStatus: SyncStatus.pending,
       syncOperation: SyncOperation.delete,
       syncCreatedAt: DateTime.now().toUtc(),
@@ -269,6 +364,9 @@ mixin LocalFirstRepository<T extends Object> {
       '_sync_created_at':
           event.syncCreatedAt?.millisecondsSinceEpoch ??
           DateTime.now().toUtc().millisecondsSinceEpoch,
+      '_sync_created_at_server':
+          event.syncCreatedAtServer?.millisecondsSinceEpoch,
+      '_server_sequence': event.syncServerSequence,
     };
   }
 
@@ -323,21 +421,27 @@ mixin LocalFirstRepository<T extends Object> {
     };
 
     for (final remoteEvent in remoteEvents) {
-      final remoteEventId = remoteEvent.eventId;
-      if (remoteEventId.isNotEmpty &&
-          await _client.localStorage.isEventRegistered(remoteEventId)) {
-        continue;
-      }
       final remoteObj = remoteEvent.data;
       if (remoteObj is! T) {
         continue;
       }
       final remoteId = getId(remoteObj);
       final localEvent = localMap[remoteId];
+      final remoteEventId = remoteEvent.eventId;
+      if (remoteEventId.isNotEmpty &&
+          await _client.localStorage.isEventRegistered(remoteEventId)) {
+        if (localEvent != null &&
+            localEvent.eventId == remoteEventId &&
+            localEvent.syncCreatedAtServer == null) {
+          await _updateEventServerTimestamp(localEvent);
+        }
+        continue;
+      }
 
       if (remoteEvent.isDeleted) {
         if (localEvent != null && !localEvent.needSync) {
           await _client.localStorage.delete(name, remoteId);
+          continue;
         }
         if (remoteEventId.isNotEmpty) {
           await _client.localStorage.registerEvent(
@@ -349,12 +453,16 @@ mixin LocalFirstRepository<T extends Object> {
       }
 
       if (localEvent == null) {
+        final createdAtServer =
+            remoteEvent.syncCreatedAtServer ?? DateTime.now().toUtc();
         final insertEvent = LocalFirstEvent(
           data: remoteObj,
           eventId: remoteEvent.eventId,
           syncStatus: SyncStatus.ok,
           syncOperation: remoteEvent.syncOperation,
           syncCreatedAt: remoteEvent.syncCreatedAt ?? DateTime.now().toUtc(),
+          syncCreatedAtServer: createdAtServer,
+          serverSequence: remoteEvent.syncServerSequence,
           repositoryName: name,
         );
         await _client.localStorage.insert(
@@ -372,12 +480,17 @@ mixin LocalFirstRepository<T extends Object> {
       }
 
       final resolved = resolveConflict(localEvent.dataAs<T>(), remoteObj);
+      final createdAtServer = localEvent.syncCreatedAtServer ??
+          remoteEvent.syncCreatedAtServer ??
+          DateTime.now().toUtc();
       final updatedEvent = LocalFirstEvent(
         data: resolved,
         eventId: remoteEvent.eventId,
         syncStatus: SyncStatus.ok,
         syncOperation: SyncOperation.update,
         syncCreatedAt: remoteEvent.syncCreatedAt ?? DateTime.now().toUtc(),
+        syncCreatedAtServer: createdAtServer,
+        serverSequence: remoteEvent.syncServerSequence,
         repositoryName: name,
       );
       await _client.localStorage.update(
@@ -423,6 +536,9 @@ mixin LocalFirstRepository<T extends Object> {
     final statusIndex = itemJson.remove('_sync_status') as int?;
     final opIndex = itemJson.remove('_sync_operation') as int?;
     final createdAtMs = itemJson.remove('_sync_created_at') as int?;
+    final createdAtServerMs =
+        itemJson.remove('_sync_created_at_server') as int?;
+    final serverSequence = itemJson.remove('_server_sequence') as int?;
 
     final model = fromJson(itemJson);
     return LocalFirstEvent(
@@ -437,6 +553,13 @@ mixin LocalFirstRepository<T extends Object> {
       syncCreatedAt: createdAtMs != null
           ? DateTime.fromMillisecondsSinceEpoch(createdAtMs, isUtc: true)
           : null,
+      syncCreatedAtServer: createdAtServerMs != null
+          ? DateTime.fromMillisecondsSinceEpoch(
+              createdAtServerMs,
+              isUtc: true,
+            )
+          : null,
+      serverSequence: serverSequence,
       repositoryName: name,
     );
   }
@@ -452,13 +575,53 @@ mixin LocalFirstRepository<T extends Object> {
   }) {
     final itemJson = Map<String, dynamic>.from(json);
     final eventId = itemJson.remove('event_id')?.toString();
+    final serverSequence = _parseRemoteInt(itemJson.remove('server_sequence'));
+    final createdAtClient = _parseRemoteDate(itemJson['created_at_client']);
+    final createdAtServer = _parseRemoteDate(itemJson['created_at_server']);
+    itemJson.remove('created_at_client');
+    itemJson.remove('created_at_server');
+    final now = DateTime.now().toUtc();
+    final resolvedCreatedAtClient = createdAtClient ?? now;
+    final resolvedCreatedAtServer = createdAtServer;
     return LocalFirstEvent(
       data: _fromJson(itemJson),
       eventId: eventId,
       syncStatus: SyncStatus.ok,
       syncOperation: operation,
-      syncCreatedAt: DateTime.now().toUtc(),
+      syncCreatedAt: resolvedCreatedAtClient,
+      syncCreatedAtServer: resolvedCreatedAtServer,
+      serverSequence: serverSequence,
       repositoryName: name,
+    );
+  }
+
+  DateTime? _parseRemoteDate(Object? value) {
+    if (value == null) return null;
+    if (value is DateTime) return value.toUtc();
+    if (value is int) {
+      return DateTime.fromMillisecondsSinceEpoch(value, isUtc: true);
+    }
+    if (value is String) {
+      return DateTime.tryParse(value)?.toUtc();
+    }
+    return null;
+  }
+
+  int? _parseRemoteInt(Object? value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    return int.tryParse(value.toString());
+  }
+
+  Future<void> _updateEventServerTimestamp(LocalFirstEvent event) async {
+    final updated =
+        event.copyWith(syncCreatedAtServer: DateTime.now().toUtc());
+    await _client.localStorage.update(
+      name,
+      getId(updated.dataAs<T>()),
+      _toStorageJson(updated),
     );
   }
 

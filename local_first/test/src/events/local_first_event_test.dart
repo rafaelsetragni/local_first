@@ -31,32 +31,41 @@ void main() {
     });
 
     test('needSync reflects pending or failed states', () {
-      final pending = LocalFirstEvent(data: _DummyModel(id: '1', value: 'a'))
-        ..debugSetSyncStatus(SyncStatus.pending);
-      final failed = LocalFirstEvent(data: _DummyModel(id: '2', value: 'b'))
-        ..debugSetSyncStatus(SyncStatus.failed);
+      final pending = LocalFirstEvent(
+        data: _DummyModel(id: '1', value: 'a'),
+        syncStatus: SyncStatus.pending,
+      );
+      final failed = LocalFirstEvent(
+        data: _DummyModel(id: '2', value: 'b'),
+        syncStatus: SyncStatus.failed,
+      );
 
       expect(pending.needSync, isTrue);
       expect(failed.needSync, isTrue);
     });
 
     test('isDeleted reflects delete operation', () {
-      final event = LocalFirstEvent(data: _DummyModel(id: '1', value: 'a'))
-        ..debugSetSyncOperation(SyncOperation.delete);
+      final event = LocalFirstEvent(
+        data: _DummyModel(id: '1', value: 'a'),
+        syncOperation: SyncOperation.delete,
+      );
 
       expect(event.isDeleted, isTrue);
     });
 
     test('LocalFirstEventsX.toJson groups by operation', () {
-      final insert =
-          LocalFirstEvent(data: _DummyModel(id: '1', value: 'one'))
-            ..debugSetSyncOperation(SyncOperation.insert);
-      final update =
-          LocalFirstEvent(data: _DummyModel(id: '2', value: 'two'))
-            ..debugSetSyncOperation(SyncOperation.update);
-      final delete =
-          LocalFirstEvent(data: _DummyModel(id: '3', value: 'three'))
-            ..debugSetSyncOperation(SyncOperation.delete);
+      final insert = LocalFirstEvent(
+        data: _DummyModel(id: '1', value: 'one'),
+        syncOperation: SyncOperation.insert,
+      );
+      final update = LocalFirstEvent(
+        data: _DummyModel(id: '2', value: 'two'),
+        syncOperation: SyncOperation.update,
+      );
+      final delete = LocalFirstEvent(
+        data: _DummyModel(id: '3', value: 'three'),
+        syncOperation: SyncOperation.delete,
+      );
 
       final payload = [insert, update, delete].toJson<_DummyModel>(
         serializer: (model) => model.toJson(),
@@ -86,9 +95,10 @@ void main() {
     });
 
     test('LocalFirstEventsX.toJson uses default id field for deletes', () {
-      final delete =
-          LocalFirstEvent(data: _DummyModel(id: '9', value: 'nine'))
-            ..debugSetSyncOperation(SyncOperation.delete);
+      final delete = LocalFirstEvent(
+        data: _DummyModel(id: '9', value: 'nine'),
+        syncOperation: SyncOperation.delete,
+      );
 
       final payload = [delete].toJson<_DummyModel>(
         serializer: (model) => model.toJson(),
@@ -100,8 +110,10 @@ void main() {
     });
 
     test('LocalFirstEventsX.toJson uses custom id field for deletes', () {
-      final delete = LocalFirstEvent(data: _UuidModel(uuid: '3'))
-        ..debugSetSyncOperation(SyncOperation.delete);
+      final delete = LocalFirstEvent(
+        data: _UuidModel(uuid: '3'),
+        syncOperation: SyncOperation.delete,
+      );
 
       final payload = [delete].toJson<_UuidModel>(
         serializer: (model) => model.toJson(),
@@ -113,18 +125,48 @@ void main() {
       expect(payload['update'], isEmpty);
     });
 
-    test('debug setters update sync metadata internally', () {
-      final event = LocalFirstEvent(data: _DummyModel(id: '1', value: 'x'))
-        ..debugSetSyncStatus(SyncStatus.failed)
-        ..debugSetSyncOperation(SyncOperation.update)
-        ..debugSetSyncCreatedAt(DateTime.utc(2020, 1, 1))
-        ..debugSetRepositoryName('repo');
+    test('constructor sets sync metadata', () {
+      final event = LocalFirstEvent(
+        data: _DummyModel(id: '1', value: 'x'),
+        syncStatus: SyncStatus.failed,
+        syncOperation: SyncOperation.update,
+        syncCreatedAt: DateTime.utc(2020, 1, 1),
+        syncCreatedAtServer: DateTime.utc(2020, 1, 2),
+        repositoryName: 'repo',
+      );
 
       expect(event.syncStatus, SyncStatus.failed);
       expect(event.syncOperation, SyncOperation.update);
       expect(event.syncCreatedAt, DateTime.utc(2020, 1, 1));
+      expect(event.syncCreatedAtServer, DateTime.utc(2020, 1, 2));
       expect(event.repositoryName, 'repo');
       expect(event.needSync, isTrue);
+    });
+
+    test('copyWith updates fields while keeping original intact', () {
+      final original = LocalFirstEvent(
+        data: _DummyModel(id: '1', value: 'x'),
+        syncStatus: SyncStatus.pending,
+        syncOperation: SyncOperation.insert,
+        syncCreatedAt: DateTime.utc(2020, 1, 1),
+        repositoryName: 'repo',
+      );
+
+      final updated = original.copyWith(
+        syncStatus: SyncStatus.ok,
+        syncOperation: SyncOperation.update,
+        syncCreatedAtServer: DateTime.utc(2020, 1, 2),
+      );
+
+      expect(original.syncStatus, SyncStatus.pending);
+      expect(original.syncOperation, SyncOperation.insert);
+      expect(original.syncCreatedAtServer, isNull);
+
+      expect(updated.syncStatus, SyncStatus.ok);
+      expect(updated.syncOperation, SyncOperation.update);
+      expect(updated.syncCreatedAt, DateTime.utc(2020, 1, 1));
+      expect(updated.syncCreatedAtServer, DateTime.utc(2020, 1, 2));
+      expect(updated.repositoryName, 'repo');
     });
   });
 }

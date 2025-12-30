@@ -721,7 +721,7 @@ class RepositoryService {
     for (final data in remote) {
       try {
         final user = userRepository.fromJson(data);
-        await userRepository.upsert(user);
+        await userRepository.saveRemoteSnapshot(user);
       } catch (_) {
         // ignore malformed user entries
       }
@@ -812,7 +812,7 @@ class RepositoryService {
       username: user.username,
       avatarUrl: avatarUrl.isEmpty ? null : avatarUrl,
       createdAt: user.createdAt,
-      updatedAt: DateTime.now(),
+      updatedAt: DateTime.now().toUtc(),
     );
 
     await userRepository.upsert(updated);
@@ -952,7 +952,7 @@ class UserModel {
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
-    final now = DateTime.now();
+    final now = DateTime.now().toUtc();
     return UserModel._(
       id: id ?? username,
       username: username,
@@ -973,14 +973,29 @@ class UserModel {
   }
 
   factory UserModel.fromJson(JsonMap<dynamic> json) {
-    final username = json['username'] ?? json['id'];
+    final username = (json['username'] ?? json['id'] ?? 'unknown').toString();
+    final createdAt =
+        _parseDate(json['created_at']) ?? DateTime.now().toUtc();
+    final updatedAt = _parseDate(json['updated_at']) ?? createdAt;
     return UserModel(
-      id: json['id'] ?? username,
+      id: (json['id'] ?? username).toString(),
       username: username,
       avatarUrl: json['avatar_url'],
-      createdAt: DateTime.parse(json['created_at']),
-      updatedAt: DateTime.parse(json['updated_at']),
+      createdAt: createdAt,
+      updatedAt: updatedAt,
     );
+  }
+
+  static DateTime? _parseDate(Object? value) {
+    if (value == null) return null;
+    if (value is DateTime) return value.toUtc();
+    if (value is int) {
+      return DateTime.fromMillisecondsSinceEpoch(value, isUtc: true);
+    }
+    if (value is String) {
+      return DateTime.tryParse(value)?.toUtc();
+    }
+    return null;
   }
 
   static UserModel resolveConflict(UserModel local, UserModel remote) {
@@ -1023,7 +1038,7 @@ class CounterLogModel {
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
-    final now = DateTime.now();
+    final now = DateTime.now().toUtc();
     return CounterLogModel._(
       id: id ?? '${username}_${generateLuid()}',
       username: username,
@@ -1048,8 +1063,9 @@ class CounterLogModel {
       id: json['id'],
       username: json['username'],
       increment: json['increment'],
-      createdAt: DateTime.parse(json['created_at']),
-      updatedAt: DateTime.parse(json['updated_at']),
+      createdAt: _parseDate(json['created_at']) ?? DateTime.now().toUtc(),
+      updatedAt:
+          _parseDate(json['updated_at']) ?? _parseDate(json['created_at']) ?? DateTime.now().toUtc(),
     );
   }
 
@@ -1095,7 +1111,7 @@ class CounterDeviceModel {
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
-    final now = DateTime.now();
+    final now = DateTime.now().toUtc();
     return CounterDeviceModel._(
       id: id ?? composeId(username, deviceId),
       username: username,
@@ -1121,14 +1137,31 @@ class CounterDeviceModel {
   }
 
   factory CounterDeviceModel.fromJson(JsonMap<dynamic> json) {
+    final username = (json['username'] ?? 'unknown').toString();
+    final deviceId = (json['device_id'] ?? 'unknown').toString();
+    final createdAt =
+        _parseDate(json['created_at']) ?? DateTime.now().toUtc();
+    final updatedAt = _parseDate(json['updated_at']) ?? createdAt;
     return CounterDeviceModel(
-      id: json['id'],
-      username: json['username'],
-      deviceId: json['device_id'],
-      count: json['count'],
-      createdAt: DateTime.parse(json['created_at']),
-      updatedAt: DateTime.parse(json['updated_at']),
+      id: (json['id'] ?? composeId(username, deviceId)).toString(),
+      username: username,
+      deviceId: deviceId,
+      count: (json['count'] as int?) ?? 0,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
     );
+  }
+
+  static DateTime? _parseDate(Object? value) {
+    if (value == null) return null;
+    if (value is DateTime) return value.toUtc();
+    if (value is int) {
+      return DateTime.fromMillisecondsSinceEpoch(value, isUtc: true);
+    }
+    if (value is String) {
+      return DateTime.tryParse(value)?.toUtc();
+    }
+    return null;
   }
 
   static CounterDeviceModel resolveConflict(
@@ -1331,7 +1364,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
 
   JsonMap<dynamic> buildUploadPayload(JsonMap<List<LocalFirstEvent>> changes) {
     return {
-      'lastSyncedAt': DateTime.now().toIso8601String(),
+      'lastSyncedAt': DateTime.now().toUtc().toIso8601String(),
       'changes': {
         for (final entry in changes.entries)
           entry.key: (() {
@@ -1402,7 +1435,7 @@ class MongoApi {
     final operationsByNode = payload['changes'];
     if (operationsByNode is! JsonMap<dynamic>) return;
 
-    final now = DateTime.now();
+    final now = DateTime.now().toUtc();
     final hasChanges = operationsByNode.values.any((op) {
       if (op is! JsonMap) return false;
       return (op['insert'] as List?)?.isNotEmpty == true ||
@@ -1469,7 +1502,7 @@ class MongoApi {
   }
 
   Future<JsonMap<dynamic>> pull(JsonMap<DateTime?> lastSyncByNode) async {
-    final timestamp = DateTime.now();
+    final timestamp = DateTime.now().toUtc();
 
     final changes = <String, JsonMap<List<dynamic>>>{};
 

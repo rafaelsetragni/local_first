@@ -348,6 +348,8 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       '_sync_status',
       '_sync_operation',
       '_sync_created_at',
+      '_sync_created_at_server',
+      '_server_sequence',
     };
 
     final columnDefinitions = StringBuffer(
@@ -356,7 +358,9 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       '_event_id TEXT, '
       '_sync_status INTEGER, '
       '_sync_operation INTEGER, '
-      '_sync_created_at INTEGER',
+      '_sync_created_at INTEGER, '
+      '_sync_created_at_server INTEGER, '
+      '_server_sequence INTEGER',
     );
 
     for (final entry in schema.entries) {
@@ -492,6 +496,8 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       '_sync_status': item['_sync_status'],
       '_sync_operation': item['_sync_operation'],
       '_sync_created_at': item['_sync_created_at'],
+      '_sync_created_at_server': item['_sync_created_at_server'],
+      '_server_sequence': item['_server_sequence'],
     };
 
     for (final entry in schema.entries) {
@@ -507,7 +513,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
   dynamic _normalizeJsonValue(dynamic value) {
     if (value is DateTime) {
-      return value.toIso8601String();
+      return value.toUtc().toIso8601String();
     }
     if (value is List) {
       return value.map(_normalizeJsonValue).toList();

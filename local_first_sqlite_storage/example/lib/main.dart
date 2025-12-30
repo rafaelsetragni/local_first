@@ -633,10 +633,11 @@ class NavigatorService {
   Future<T?> pushReplacement<T extends Object?, TO extends Object?>(
     Widget page, {
     TO? result,
-  }) async => navigatorKey.currentState?.pushReplacement<T, TO>(
-    MaterialPageRoute(builder: (_) => page),
-    result: result,
-  );
+  }) async =>
+      navigatorKey.currentState?.pushReplacement<T, TO>(
+        MaterialPageRoute(builder: (_) => page),
+        result: result,
+      );
 
   void pop<T extends Object?>([T? result]) =>
       navigatorKey.currentState?.pop<T>(result);
@@ -646,6 +647,7 @@ class NavigatorService {
 
   void navigateToHome() => pushReplacement(const MyHomePage());
   void navigateToSignIn() => pushReplacement(const SignInPage());
+
 }
 
 /// Central orchestrator for auth, persistence, and sync.
@@ -663,7 +665,7 @@ class RepositoryService {
   final StreamController<int> counterTotalController = StreamController<int>();
   int counterTotal = 0;
   final StreamController<bool> remoteConnectionController =
-      StreamController<bool>();
+      StreamController<bool>.broadcast();
   bool isRemoteConnected = true;
 
   final LocalFirstRepository<UserModel> userRepository;
@@ -720,7 +722,7 @@ class RepositoryService {
     for (final data in remote) {
       try {
         final user = userRepository.fromJson(data);
-        await userRepository.upsert(user);
+        await userRepository.saveRemoteSnapshot(user);
       } catch (_) {
         // ignore malformed user entries
       }
@@ -809,8 +811,6 @@ class RepositoryService {
     final updated = UserModel(
       username: user.username,
       avatarUrl: avatarUrl.isEmpty ? null : avatarUrl,
-      createdAt: user.createdAt,
-      updatedAt: DateTime.now(),
     );
 
     await userRepository.upsert(updated);
@@ -921,7 +921,6 @@ class RepositoryService {
       username: username,
       deviceId: currentDeviceId,
       count: (current?.count ?? 0) + delta,
-      createdAt: current?.createdAt,
     );
     await counterDeviceRepository.upsert(updated);
   }
@@ -932,70 +931,41 @@ class UserModel {
   final String id;
   final String username;
   final String? avatarUrl;
-  final DateTime createdAt;
-  final DateTime updatedAt;
 
   UserModel._({
     required this.id,
     required this.username,
     required this.avatarUrl,
-    required this.createdAt,
-    required this.updatedAt,
   });
 
   factory UserModel({
     String? id,
     required String username,
     required String? avatarUrl,
-    DateTime? createdAt,
-    DateTime? updatedAt,
   }) {
-    final now = DateTime.now();
     return UserModel._(
       id: id ?? username,
       username: username,
       avatarUrl: avatarUrl,
-      createdAt: createdAt ?? now,
-      updatedAt: updatedAt ?? now,
     );
   }
 
   JsonMap<dynamic> toJson() {
-    return {
-      'id': id,
-      'username': username,
-      'avatar_url': avatarUrl,
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
-    };
+    return {'id': id, 'username': username, 'avatar_url': avatarUrl};
   }
 
   factory UserModel.fromJson(JsonMap<dynamic> json) {
-    final username = json['username'] ?? json['id'];
+    final username = (json['username'] ?? json['id'] ?? 'unknown').toString();
     return UserModel(
-      id: json['id'] ?? username,
+      id: (json['id'] ?? username).toString(),
       username: username,
       avatarUrl: json['avatar_url'],
-      createdAt: DateTime.parse(json['created_at']),
-      updatedAt: DateTime.parse(json['updated_at']),
     );
   }
 
   static UserModel resolveConflict(UserModel local, UserModel remote) {
-    // Last write wins, but avatar value is preserved
-    if (local.updatedAt == remote.updatedAt) return remote;
-    final preferred = local.updatedAt.isAfter(remote.updatedAt)
-        ? local
-        : remote;
-    final fallback = identical(preferred, local) ? remote : local;
-    final avatar = preferred.avatarUrl ?? fallback.avatarUrl;
-    return UserModel(
-      id: preferred.id,
-      username: preferred.username,
-      avatarUrl: avatar,
-      createdAt: preferred.createdAt,
-      updatedAt: preferred.updatedAt,
-    );
+    final avatar = local.avatarUrl ?? remote.avatarUrl;
+    return UserModel(id: local.id, username: local.username, avatarUrl: avatar);
   }
 }
 
@@ -1004,14 +974,12 @@ class CounterLogModel {
   final String username;
   final int increment;
   final DateTime createdAt;
-  final DateTime updatedAt;
 
   CounterLogModel._({
     required this.id,
     required this.username,
     required this.increment,
     required this.createdAt,
-    required this.updatedAt,
   });
 
   factory CounterLogModel({
@@ -1019,15 +987,13 @@ class CounterLogModel {
     required String username,
     required int increment,
     DateTime? createdAt,
-    DateTime? updatedAt,
   }) {
-    final now = DateTime.now();
+    final now = DateTime.now().toUtc();
     return CounterLogModel._(
       id: id ?? '${username}_${generateLuid()}',
       username: username,
       increment: increment,
       createdAt: createdAt ?? now,
-      updatedAt: updatedAt ?? now,
     );
   }
 
@@ -1037,24 +1003,24 @@ class CounterLogModel {
       'username': username,
       'increment': increment,
       'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
     };
   }
 
   factory CounterLogModel.fromJson(JsonMap<dynamic> json) {
+    final username = (json['username'] ?? 'unknown').toString();
+    final createdAt = _parseDate(json['created_at']) ?? DateTime.now().toUtc();
     return CounterLogModel(
-      id: json['id'],
-      username: json['username'],
-      increment: json['increment'],
-      createdAt: DateTime.parse(json['created_at']),
-      updatedAt: DateTime.parse(json['updated_at']),
+      id: (json['id'] ?? '${username}_${generateLuid()}').toString(),
+      username: username,
+      increment: (json['increment'] as int?) ?? 0,
+      createdAt: createdAt,
     );
   }
 
   static CounterLogModel resolveConflict(
     CounterLogModel local,
     CounterLogModel remote,
-  ) => local.updatedAt.isAfter(remote.updatedAt) ? local : remote;
+  ) => local;
 
   @override
   String toString() {
@@ -1066,6 +1032,18 @@ class CounterLogModel {
   String toFormattedDate() =>
       '${createdAt.day.toString().padLeft(2, '0')}/${createdAt.month.toString().padLeft(2, '0')}/${createdAt.year} '
       '${createdAt.hour.toString().padLeft(2, '0')}:${createdAt.minute.toString().padLeft(2, '0')}';
+
+  static DateTime? _parseDate(Object? value) {
+    if (value == null) return null;
+    if (value is DateTime) return value.toUtc();
+    if (value is int) {
+      return DateTime.fromMillisecondsSinceEpoch(value, isUtc: true);
+    }
+    if (value is String) {
+      return DateTime.tryParse(value)?.toUtc();
+    }
+    return null;
+  }
 }
 
 class CounterDeviceModel {
@@ -1073,16 +1051,12 @@ class CounterDeviceModel {
   final String username;
   final String deviceId;
   final int count;
-  final DateTime createdAt;
-  final DateTime updatedAt;
 
   CounterDeviceModel._({
     required this.id,
     required this.username,
     required this.deviceId,
     required this.count,
-    required this.createdAt,
-    required this.updatedAt,
   });
 
   factory CounterDeviceModel({
@@ -1090,17 +1064,12 @@ class CounterDeviceModel {
     required String username,
     required String deviceId,
     required int count,
-    DateTime? createdAt,
-    DateTime? updatedAt,
   }) {
-    final now = DateTime.now();
     return CounterDeviceModel._(
       id: id ?? composeId(username, deviceId),
       username: username,
       deviceId: deviceId,
       count: count,
-      createdAt: createdAt ?? now,
-      updatedAt: updatedAt ?? now,
     );
   }
 
@@ -1113,26 +1082,24 @@ class CounterDeviceModel {
       'username': username,
       'device_id': deviceId,
       'count': count,
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
     };
   }
 
   factory CounterDeviceModel.fromJson(JsonMap<dynamic> json) {
+    final username = (json['username'] ?? 'unknown').toString();
+    final deviceId = (json['device_id'] ?? 'unknown').toString();
     return CounterDeviceModel(
-      id: json['id'],
-      username: json['username'],
-      deviceId: json['device_id'],
-      count: json['count'],
-      createdAt: DateTime.parse(json['created_at']),
-      updatedAt: DateTime.parse(json['updated_at']),
+      id: (json['id'] ?? composeId(username, deviceId)).toString(),
+      username: username,
+      deviceId: deviceId,
+      count: (json['count'] as int?) ?? 0,
     );
   }
 
   static CounterDeviceModel resolveConflict(
     CounterDeviceModel local,
     CounterDeviceModel remote,
-  ) => local.updatedAt.isAfter(remote.updatedAt) ? local : remote;
+  ) => local;
 }
 
 LocalFirstRepository<UserModel> buildUserRepository() {
@@ -1145,8 +1112,6 @@ LocalFirstRepository<UserModel> buildUserRepository() {
     schema: const {
       'username': LocalFieldType.text,
       'avatar_url': LocalFieldType.text,
-      'created_at': LocalFieldType.datetime,
-      'updated_at': LocalFieldType.datetime,
     },
   );
 }
@@ -1162,7 +1127,6 @@ LocalFirstRepository<CounterLogModel> buildCounterLogRepository() {
       'username': LocalFieldType.text,
       'increment': LocalFieldType.integer,
       'created_at': LocalFieldType.datetime,
-      'updated_at': LocalFieldType.datetime,
     },
   );
 }
@@ -1178,8 +1142,6 @@ LocalFirstRepository<CounterDeviceModel> buildCounterDeviceRepository() {
       'username': LocalFieldType.text,
       'device_id': LocalFieldType.text,
       'count': LocalFieldType.integer,
-      'created_at': LocalFieldType.datetime,
-      'updated_at': LocalFieldType.datetime,
     },
   );
 }
@@ -1195,11 +1157,12 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
 
   Timer? timer;
   String namespace = 'default';
-  final JsonMap<DateTime?> lastSyncedAt = {};
+  final JsonMap<int?> lastServerSequence = {};
   final JsonMap<List<LocalFirstEvent>> pendingChanges = {};
   Future<void> Function(int delta)? onCounterDelta;
   void Function(bool connected)? onConnectionStatus;
   bool isConnected = true;
+  bool isActive = false;
 
   void setNamespace(String namespaceValue) {
     namespace = namespaceValue;
@@ -1212,6 +1175,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   void start() {
     stop();
     client.awaitInitialization.then((_) async {
+      isActive = true;
       dev.log('Starting periodic sync', name: logTag);
       final pendingObjects = await getPendingObjects();
       for (final object in pendingObjects) {
@@ -1219,8 +1183,8 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
       }
       for (final repository in mongoApi.repositoryNames) {
         final value = await client.getMeta(lastSyncKey(repository));
-        lastSyncedAt[repository] = value != null
-            ? DateTime.tryParse(value)
+        lastServerSequence[repository] = value != null
+            ? int.tryParse(value)
             : null;
       }
       timer = Timer.periodic(period, onTimerTick);
@@ -1228,19 +1192,20 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   }
 
   void stop() {
+    isActive = false;
     timer?.cancel();
     timer = null;
     pendingChanges.clear();
-    lastSyncedAt.clear();
+    lastServerSequence.clear();
   }
 
   Future<void> syncNow() async {
     await client.awaitInitialization;
-    if (lastSyncedAt.isEmpty) {
+    if (lastServerSequence.isEmpty) {
       for (final repository in mongoApi.repositoryNames) {
         final value = await client.getMeta(lastSyncKey(repository));
-        lastSyncedAt[repository] = value != null
-            ? DateTime.tryParse(value)
+        lastServerSequence[repository] = value != null
+            ? int.tryParse(value)
             : null;
       }
     }
@@ -1263,6 +1228,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
 
   Future<void> onTimerTick(_) async {
     try {
+      if (!isActive || client.localStorage.isClosed) return;
       if (pendingChanges.isNotEmpty) {
         final changes = JsonMap<List<LocalFirstEvent>>.from(pendingChanges);
         pendingChanges.clear();
@@ -1275,7 +1241,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
       }
       JsonMap<dynamic> remoteChanges;
       try {
-        remoteChanges = await mongoApi.pull(lastSyncedAt);
+        remoteChanges = await mongoApi.pull(lastServerSequence);
       } catch (e) {
         setConnectionStatus(false);
         dev.log('Pull failed, keeping local state', name: logTag, error: e);
@@ -1289,15 +1255,12 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
           await onCounterDelta?.call(0);
         }
 
-        // Use the latest updated_at seen in this pull as the new lastSyncedAt
-        final latest = mongoApi.latestUpdatedAt(remoteChanges);
+        // Use the latest server_sequence seen in this pull as the new lastServerSequence
+        final latest = mongoApi.latestServerSequence(remoteChanges);
         if (latest != null) {
           for (final repo in mongoApi.repositoryNames) {
-            lastSyncedAt[repo] = latest;
-            await client.setKeyValue(
-              lastSyncKey(repo),
-              latest.toIso8601String(),
-            );
+            lastServerSequence[repo] = latest;
+            await client.setKeyValue(lastSyncKey(repo), latest.toString());
           }
         }
       }
@@ -1347,8 +1310,14 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   }
 
   JsonMap<dynamic> buildUploadPayload(JsonMap<List<LocalFirstEvent>> changes) {
+    final latestServerSequence = lastServerSequence.values
+        .whereType<int>()
+        .fold<int?>(null, (prev, value) {
+          if (prev == null) return value;
+          return value > prev ? value : prev;
+        });
     return {
-      'lastSyncedAt': DateTime.now().toIso8601String(),
+      'lastServerSequence': latestServerSequence,
       'changes': {
         for (final entry in changes.entries)
           entry.key: (() {
@@ -1419,7 +1388,6 @@ class MongoApi {
     final operationsByNode = payload['changes'];
     if (operationsByNode is! JsonMap<dynamic>) return;
 
-    final now = DateTime.now();
     final hasChanges = operationsByNode.values.any((op) {
       if (op is! JsonMap) return false;
       return (op['insert'] as List?)?.isNotEmpty == true ||
@@ -1441,8 +1409,14 @@ class MongoApi {
           if (item is! JsonMap<dynamic>) continue;
           final id = item['id']?.toString();
           if (id == null) continue;
+          final now = DateTime.now().toUtc();
+          final baseDoc = toMongoDateFields(item);
+          final createdAtServer = now;
+          final serverSequence = now.millisecondsSinceEpoch;
           final doc = {
-            ...toMongoDateFields(item),
+            ...baseDoc,
+            'created_at_server': createdAtServer,
+            'server_sequence': serverSequence,
             'operation': 'insert',
             'updated_at': now,
           };
@@ -1458,8 +1432,14 @@ class MongoApi {
           if (item is! JsonMap<dynamic>) continue;
           final id = item['id']?.toString();
           if (id == null) continue;
+          final now = DateTime.now().toUtc();
+          final baseDoc = toMongoDateFields(item);
+          final createdAtServer = now;
+          final serverSequence = now.millisecondsSinceEpoch;
           final doc = {
-            ...toMongoDateFields(item),
+            ...baseDoc,
+            'created_at_server': createdAtServer,
+            'server_sequence': serverSequence,
             'operation': 'update',
             'updated_at': now,
           };
@@ -1473,9 +1453,13 @@ class MongoApi {
       if (deleteItems is List) {
         for (final id in deleteItems) {
           if (id == null) continue;
+          final now = DateTime.now().toUtc();
+          final serverSequence = now.millisecondsSinceEpoch;
           await withTimeout(
             collectionRef.replaceOne(where.eq('id', id.toString()), {
               'id': id.toString(),
+              'created_at_server': now,
+              'server_sequence': serverSequence,
               'operation': 'delete',
               'updated_at': now,
             }, upsert: true),
@@ -1485,8 +1469,8 @@ class MongoApi {
     }
   }
 
-  Future<JsonMap<dynamic>> pull(JsonMap<DateTime?> lastSyncByNode) async {
-    final timestamp = DateTime.now();
+  Future<JsonMap<dynamic>> pull(JsonMap<int?> lastSyncByNode) async {
+    final timestamp = DateTime.now().toUtc();
 
     final changes = <String, JsonMap<List<dynamic>>>{};
 
@@ -1496,11 +1480,11 @@ class MongoApi {
       final cursor = cutoff == null
           ? (repositoryName == 'counter_log'
                 ? collectionRef.find(
-                    where.sortBy('updated_at', descending: true).limit(5),
+                    where.sortBy('server_sequence', descending: true).limit(5),
                   )
-                : collectionRef.find(where.sortBy('updated_at')))
+                : collectionRef.find(where.sortBy('server_sequence')))
           : collectionRef.find(
-              where.gt('updated_at', cutoff).sortBy('updated_at'),
+              where.gt('server_sequence', cutoff).sortBy('server_sequence'),
             );
 
       final inserts = <dynamic>[];
@@ -1563,10 +1547,10 @@ class MongoApi {
     return users.values.toList();
   }
 
-  DateTime? latestUpdatedAt(JsonMap<dynamic> pullResult) {
+  int? latestServerSequence(JsonMap<dynamic> pullResult) {
     final changes = pullResult['changes'];
     if (changes is! JsonMap) return null;
-    DateTime? latest;
+    int? latest;
 
     for (final repositoryEntry in changes.entries) {
       final repositoryChanges = repositoryEntry.value;
@@ -1577,16 +1561,10 @@ class MongoApi {
         if (list is! List) continue;
         for (final item in list) {
           if (item is! Map<String, dynamic>) continue;
-          final updatedValue = item['updated_at'];
-          DateTime? candidate;
-          if (updatedValue is DateTime) {
-            candidate = updatedValue;
-          } else if (updatedValue is String) {
-            candidate = DateTime.tryParse(updatedValue);
-          }
-          if (candidate != null &&
-              (latest == null || candidate.isAfter(latest))) {
-            latest = candidate;
+          final serverSequence = item['server_sequence'];
+          if (serverSequence is int &&
+              (latest == null || serverSequence > latest)) {
+            latest = serverSequence;
           }
         }
       }
@@ -1596,10 +1574,15 @@ class MongoApi {
 
   JsonMap<dynamic> toMongoDateFields(JsonMap<dynamic> item) {
     final map = Map<String, dynamic>.from(item);
-    for (final key in ['created_at', 'updated_at']) {
+    for (final key in [
+      'created_at',
+      'updated_at',
+      'created_at_client',
+      'created_at_server',
+    ]) {
       final value = map[key];
       if (value is String) {
-        final parsed = DateTime.tryParse(value);
+        final parsed = DateTime.tryParse(value)?.toUtc();
         if (parsed != null) {
           map[key] = parsed;
         }
@@ -1610,10 +1593,15 @@ class MongoApi {
 
   JsonMap<dynamic> fromMongoDateFields(JsonMap<dynamic> item) {
     final map = Map<String, dynamic>.from(item);
-    for (final key in ['created_at', 'updated_at']) {
+    for (final key in [
+      'created_at',
+      'updated_at',
+      'created_at_client',
+      'created_at_server',
+    ]) {
       final value = map[key];
       if (value is DateTime) {
-        map[key] = value.toIso8601String();
+        map[key] = value.toUtc().toIso8601String();
       }
     }
     return map;

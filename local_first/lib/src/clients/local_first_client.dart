@@ -222,8 +222,13 @@ class LocalFirstClient {
       if (repositoryChangeJson.containsKey('insert')) {
         final inserts = (repositoryChangeJson['insert'] as List);
         for (var element in inserts) {
+          final item = Map<String, dynamic>.from(element);
+          final idValue = item[repository.idFieldName];
+          if (idValue is! String) {
+            continue;
+          }
           final object = repository._buildRemoteEvent(
-            Map<String, dynamic>.from(element),
+            item,
             operation: SyncOperation.insert,
           );
           objects.add(object);
@@ -232,21 +237,32 @@ class LocalFirstClient {
       if (repositoryChangeJson.containsKey('update')) {
         final updates = (repositoryChangeJson['update'] as List);
         for (var element in updates) {
+          final item = Map<String, dynamic>.from(element);
+          final idValue = item[repository.idFieldName];
+          if (idValue is! String) {
+            continue;
+          }
           final object = repository._buildRemoteEvent(
-            Map<String, dynamic>.from(element),
+            item,
             operation: SyncOperation.update,
           );
           objects.add(object);
         }
       }
       if (repositoryChangeJson.containsKey('delete')) {
-        final deleteIds = (repositoryChangeJson['delete'] as List<String>);
+        final deleteIds = (repositoryChangeJson['delete'] as List);
         for (var id in deleteIds) {
+          if (id is! String) {
+            continue;
+          }
           final object = await repository._getById(id);
           if (object != null) {
-            object._setSyncStatus(SyncStatus.ok);
-            object._setSyncOperation(SyncOperation.delete);
-            objects.add(object);
+            objects.add(
+              object.copyWith(
+                syncStatus: SyncStatus.ok,
+                syncOperation: SyncOperation.delete,
+              ),
+            );
           }
         }
       }

@@ -35,15 +35,15 @@ class LocalFirstEvent {
   LocalFirstEvent({
     required this.data,
     String? eventId,
-    SyncStatus syncStatus = SyncStatus.ok,
-    SyncOperation syncOperation = SyncOperation.insert,
+    this.syncStatus = SyncStatus.ok,
+    this.syncOperation = SyncOperation.insert,
     DateTime? syncCreatedAt,
-    String repositoryName = '',
-  }) : eventId = eventId ?? _generateEventId(),
-       _syncStatus = syncStatus,
-       _syncOperation = syncOperation,
-       _syncCreatedAt = syncCreatedAt?.toUtc(),
-       _repositoryName = repositoryName;
+    DateTime? syncCreatedAtServer,
+    this.serverSequence,
+    this.repositoryName = '',
+  }) : eventId = eventId ?? UuidUtil.generateUuidV7(),
+       syncCreatedAt = syncCreatedAt?.toUtc(),
+       syncCreatedAtServer = syncCreatedAtServer?.toUtc();
 
   final Object data;
   final String eventId;
@@ -51,15 +51,14 @@ class LocalFirstEvent {
   bool isA<T>() => data is T;
   T dataAs<T extends Object>() => data as T;
 
-  SyncStatus _syncStatus;
-  SyncOperation _syncOperation;
-  DateTime? _syncCreatedAt;
-  String _repositoryName;
+  final SyncStatus syncStatus;
+  final SyncOperation syncOperation;
+  final DateTime? syncCreatedAt;
+  final DateTime? syncCreatedAtServer;
+  final int? serverSequence;
+  final String repositoryName;
 
-  SyncStatus get syncStatus => _syncStatus;
-  SyncOperation get syncOperation => _syncOperation;
-  DateTime? get syncCreatedAt => _syncCreatedAt;
-  String get repositoryName => _repositoryName;
+  int? get syncServerSequence => serverSequence;
 
   /// Returns true if this object has pending changes that need sync.
   bool get needSync => syncStatus != SyncStatus.ok;
@@ -67,65 +66,26 @@ class LocalFirstEvent {
   /// Returns true if this object is marked as deleted.
   bool get isDeleted => syncOperation == SyncOperation.delete;
 
-  // Internal setters used by the package.
-  void _setSyncStatus(SyncStatus status) => _syncStatus = status;
-
-  void _setSyncOperation(SyncOperation operation) => _syncOperation = operation;
-
-  void _setSyncCreatedAt(DateTime? createdAt) =>
-      _syncCreatedAt = createdAt?.toUtc();
-
-  void _setRepositoryName(String name) => _repositoryName = name;
-
-  /// Test-only hooks to modify sync metadata without exposing public setters.
-  @visibleForTesting
-  void debugSetSyncStatus(SyncStatus status) => _setSyncStatus(status);
-
-  @visibleForTesting
-  void debugSetSyncOperation(SyncOperation operation) =>
-      _setSyncOperation(operation);
-
-  @visibleForTesting
-  void debugSetSyncCreatedAt(DateTime? createdAt) =>
-      _setSyncCreatedAt(createdAt);
-
-  @visibleForTesting
-  void debugSetRepositoryName(String name) => _setRepositoryName(name);
-
-  static String generateEventId() => _generateEventId();
-
-  static final Random _eventIdRandom = Random.secure();
-
-  static String _generateEventId() {
-    final bytes = List<int>.filled(16, 0);
-    final millis = DateTime.now().toUtc().millisecondsSinceEpoch;
-
-    bytes[0] = (millis >> 40) & 0xff;
-    bytes[1] = (millis >> 32) & 0xff;
-    bytes[2] = (millis >> 24) & 0xff;
-    bytes[3] = (millis >> 16) & 0xff;
-    bytes[4] = (millis >> 8) & 0xff;
-    bytes[5] = millis & 0xff;
-
-    final randA = _eventIdRandom.nextInt(1 << 12);
-    bytes[6] = 0x70 | ((randA >> 8) & 0x0f);
-    bytes[7] = randA & 0xff;
-
-    final randB =
-        List<int>.generate(8, (_) => _eventIdRandom.nextInt(256));
-    randB[0] = (randB[0] & 0x3f) | 0x80;
-    for (var i = 0; i < 8; i++) {
-      bytes[8 + i] = randB[i];
-    }
-
-    final hex = bytes
-        .map((b) => b.toRadixString(16).padLeft(2, '0'))
-        .join();
-    return '${hex.substring(0, 8)}-'
-        '${hex.substring(8, 12)}-'
-        '${hex.substring(12, 16)}-'
-        '${hex.substring(16, 20)}-'
-        '${hex.substring(20)}';
+  LocalFirstEvent copyWith({
+    Object? data,
+    String? eventId,
+    SyncStatus? syncStatus,
+    SyncOperation? syncOperation,
+    DateTime? syncCreatedAt,
+    DateTime? syncCreatedAtServer,
+    int? serverSequence,
+    String? repositoryName,
+  }) {
+    return LocalFirstEvent(
+      data: data ?? this.data,
+      eventId: eventId ?? this.eventId,
+      syncStatus: syncStatus ?? this.syncStatus,
+      syncOperation: syncOperation ?? this.syncOperation,
+      syncCreatedAt: syncCreatedAt ?? this.syncCreatedAt,
+      syncCreatedAtServer: syncCreatedAtServer ?? this.syncCreatedAtServer,
+      serverSequence: serverSequence ?? this.serverSequence,
+      repositoryName: repositoryName ?? this.repositoryName,
+    );
   }
 }
 
@@ -147,6 +107,13 @@ extension LocalFirstEventsX on List<LocalFirstEvent> {
     for (var event in this) {
       final itemJson = Map<String, dynamic>.from(serializer(event.dataAs<T>()));
       itemJson['event_id'] = event.eventId;
+      if (event.syncCreatedAt != null) {
+        itemJson['created_at_client'] = event.syncCreatedAt!.toIso8601String();
+      }
+      if (event.syncCreatedAtServer != null) {
+        itemJson['created_at_server'] = event.syncCreatedAtServer!
+            .toIso8601String();
+      }
 
       switch (event.syncOperation) {
         case SyncOperation.insert:
