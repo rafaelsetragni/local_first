@@ -1,5 +1,7 @@
 part of '../../local_first.dart';
 
+enum StorageMode { onlineOnly, offlineOnly, fullSynced }
+
 /// Abstract interface for local database operations.
 ///
 /// Implement this interface to support different local storage backends
@@ -53,22 +55,18 @@ abstract class LocalFirstStorage {
   Future<void> clearAllData();
 
   /// Gets all items from a table/collection.
-  Future<List<Map<String, dynamic>>> getAll(String tableName);
+  Future<List<JsonMap>> getAll(String tableName);
 
   /// Gets a single item by its ID.
   ///
   /// Returns null if the item doesn't exist.
-  Future<Map<String, dynamic>?> getById(String tableName, String id);
+  Future<JsonMap?> getById(String tableName, String id);
 
   /// Inserts a new item into a table/collection.
-  Future<void> insert(
-    String tableName,
-    Map<String, dynamic> item,
-    String idField,
-  );
+  Future<void> insert(String tableName, JsonMap item, String idField);
 
   /// Updates an existing item in a table/collection.
-  Future<void> update(String tableName, String id, Map<String, dynamic> item);
+  Future<void> update(String tableName, String id, JsonMap item);
 
   /// Deletes an item by its ID.
   Future<void> delete(String repositoryName, String id);
@@ -115,7 +113,7 @@ abstract class LocalFirstStorage {
   /// Delegates that support native queries (like Isar, Drift) can
   /// override this for optimization. Simple delegates (like Hive) use
   /// the default implementation which filters efficiently in-memory.
-  Future<List<Map<String, dynamic>>> query(LocalFirstQuery query) async {
+  Future<List<JsonMap>> query(LocalFirstQuery query) async {
     // Default implementation: fetch all and filter efficiently in memory
     var items = await getAll(query.repositoryName);
 
@@ -169,7 +167,7 @@ abstract class LocalFirstStorage {
   /// Delegates that support native streams (like Isar) can override this.
   /// The default implementation emits the initial query result only.
   /// More sophisticated delegates can provide automatic updates when data changes.
-  Stream<List<Map<String, dynamic>>> watchQuery(LocalFirstQuery query) async* {
+  Stream<List<JsonMap>> watchQuery(LocalFirstQuery query) async* {
     // Default implementation: emit initial result
     yield await this.query(query);
 

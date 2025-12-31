@@ -57,16 +57,12 @@ class MockQueryBehavior extends _i1.Mock implements _i4.QueryBehavior {
   }
 
   @override
-  _i3.Future<List<Map<String, dynamic>>> call(
-    _i5.LocalFirstQuery? query,
-  ) =>
+  _i3.Future<List<JsonMap>> call(_i5.LocalFirstQuery? query) =>
       (super.noSuchMethod(
             Invocation.method(#call, [query]),
-            returnValue: _i3.Future<List<Map<String, dynamic>>>.value(
-              <Map<String, dynamic>>[],
-            ),
+            returnValue: _i3.Future<List<JsonMap>>.value(<JsonMap>[]),
           )
-          as _i3.Future<List<Map<String, dynamic>>>);
+          as _i3.Future<List<JsonMap>>);
 }
 
 /// A class which mocks [DatabaseFactory].

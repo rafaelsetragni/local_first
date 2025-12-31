@@ -139,7 +139,7 @@ class LocalFirstQuery<T extends Object> {
     return _delegate.watchQuery(this).map(_mapResults).asBroadcastStream();
   }
 
-  List<T> _mapResults(List<Map<String, dynamic>> results) {
+  List<T> _mapResults(List<JsonMap> results) {
     return results
         .map((json) {
           final event = _repository._eventFromJson(json);
@@ -179,7 +179,7 @@ class QueryFilter {
   });
 
   /// Checks if an item matches this filter (fallback for DBs without native query support).
-  bool matches(Map<String, dynamic> item) {
+  bool matches(JsonMap item) {
     final value = item[field];
 
     if (isNull != null) {

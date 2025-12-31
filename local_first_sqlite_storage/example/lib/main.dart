@@ -633,11 +633,10 @@ class NavigatorService {
   Future<T?> pushReplacement<T extends Object?, TO extends Object?>(
     Widget page, {
     TO? result,
-  }) async =>
-      navigatorKey.currentState?.pushReplacement<T, TO>(
-        MaterialPageRoute(builder: (_) => page),
-        result: result,
-      );
+  }) async => navigatorKey.currentState?.pushReplacement<T, TO>(
+    MaterialPageRoute(builder: (_) => page),
+    result: result,
+  );
 
   void pop<T extends Object?>([T? result]) =>
       navigatorKey.currentState?.pop<T>(result);
@@ -647,7 +646,6 @@ class NavigatorService {
 
   void navigateToHome() => pushReplacement(const MyHomePage());
   void navigateToSignIn() => pushReplacement(const SignInPage());
-
 }
 
 /// Central orchestrator for auth, persistence, and sync.
@@ -1498,7 +1496,7 @@ class MongoApi {
             if (doc['id'] != null) deletes.add(doc['id']);
             return;
           }
-          final item = Map<String, dynamic>.from(doc)
+          final item = JsonMap.from(doc)
             ..remove('operation')
             ..remove('_id');
           if (op == 'insert') {
@@ -1537,7 +1535,7 @@ class MongoApi {
       cursor.forEach((doc) {
         final id = doc['id'];
         if (id is! String) return;
-        final data = Map<String, dynamic>.from(doc)
+        final data = JsonMap.from(doc)
           ..remove('_id')
           ..remove('operation');
         users[id] = fromMongoDateFields(data);
@@ -1560,7 +1558,7 @@ class MongoApi {
         final list = repositoryChanges[key];
         if (list is! List) continue;
         for (final item in list) {
-          if (item is! Map<String, dynamic>) continue;
+          if (item is! JsonMap) continue;
           final serverSequence = item['server_sequence'];
           if (serverSequence is int &&
               (latest == null || serverSequence > latest)) {
@@ -1573,7 +1571,7 @@ class MongoApi {
   }
 
   JsonMap<dynamic> toMongoDateFields(JsonMap<dynamic> item) {
-    final map = Map<String, dynamic>.from(item);
+    final map = JsonMap.from(item);
     for (final key in [
       'created_at',
       'updated_at',
@@ -1592,7 +1590,7 @@ class MongoApi {
   }
 
   JsonMap<dynamic> fromMongoDateFields(JsonMap<dynamic> item) {
-    final map = Map<String, dynamic>.from(item);
+    final map = JsonMap.from(item);
     for (final key in [
       'created_at',
       'updated_at',

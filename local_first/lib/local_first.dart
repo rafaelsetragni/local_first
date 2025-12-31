@@ -2,7 +2,6 @@ library;
 
 import 'dart:async';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -16,3 +15,4 @@ part 'src/events/local_first_event.dart';
 part 'src/repositories/local_first_repository.dart';
 part 'src/sync_strategies/data_sync_strategy.dart';
 part 'src/utils/event_id.dart';
+part 'src/types/types.dart';

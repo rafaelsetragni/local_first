@@ -30,25 +30,16 @@ class _FakeStorage extends LocalFirstStorage {
   Future<void> clearAllData() async {}
 
   @override
-  Future<List<Map<String, dynamic>>> getAll(String tableName) async => const [];
+  Future<List<JsonMap>> getAll(String tableName) async => const [];
 
   @override
-  Future<Map<String, dynamic>?> getById(String tableName, String id) async =>
-      null;
+  Future<JsonMap?> getById(String tableName, String id) async => null;
 
   @override
-  Future<void> insert(
-    String tableName,
-    Map<String, dynamic> item,
-    String idField,
-  ) async {}
+  Future<void> insert(String tableName, JsonMap item, String idField) async {}
 
   @override
-  Future<void> update(
-    String tableName,
-    String id,
-    Map<String, dynamic> item,
-  ) async {}
+  Future<void> update(String tableName, String id, JsonMap item) async {}
 
   @override
   Future<void> delete(String repositoryName, String id) async {}
@@ -91,30 +82,36 @@ void main() {
     expect(storage.lastIdField, 'id');
   });
 
-  test('registerEvent stores event id and isEventRegistered reflects it', () async {
-    final storage = _FakeStorage();
-    final eventId = 'event-1';
-    final createdAt = DateTime.utc(2024, 1, 1);
+  test(
+    'registerEvent stores event id and isEventRegistered reflects it',
+    () async {
+      final storage = _FakeStorage();
+      final eventId = 'event-1';
+      final createdAt = DateTime.utc(2024, 1, 1);
 
-    expect(await storage.isEventRegistered(eventId), isFalse);
+      expect(await storage.isEventRegistered(eventId), isFalse);
 
-    await storage.registerEvent(eventId, createdAt);
+      await storage.registerEvent(eventId, createdAt);
 
-    expect(await storage.isEventRegistered(eventId), isTrue);
-    expect(
-      storage.meta['__event_id__$eventId'],
-      createdAt.millisecondsSinceEpoch.toString(),
-    );
-  });
+      expect(await storage.isEventRegistered(eventId), isTrue);
+      expect(
+        storage.meta['__event_id__$eventId'],
+        createdAt.millisecondsSinceEpoch.toString(),
+      );
+    },
+  );
 
-  test('pruneRegisteredEvents default implementation does not remove events', () async {
-    final storage = _FakeStorage();
-    final eventId = 'event-2';
-    final createdAt = DateTime.utc(2023, 1, 1);
+  test(
+    'pruneRegisteredEvents default implementation does not remove events',
+    () async {
+      final storage = _FakeStorage();
+      final eventId = 'event-2';
+      final createdAt = DateTime.utc(2023, 1, 1);
 
-    await storage.registerEvent(eventId, createdAt);
-    await storage.pruneRegisteredEvents(DateTime.utc(2025, 1, 1));
+      await storage.registerEvent(eventId, createdAt);
+      await storage.pruneRegisteredEvents(DateTime.utc(2025, 1, 1));
 
-    expect(await storage.isEventRegistered(eventId), isTrue);
-  });
+      expect(await storage.isEventRegistered(eventId), isTrue);
+    },
+  );
 }

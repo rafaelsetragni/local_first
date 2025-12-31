@@ -9,12 +9,9 @@ class _TestModel {
   final String id;
   final String? value;
 
-  Map<String, dynamic> toJson() => {
-    'id': id,
-    if (value != null) 'value': value,
-  };
+  JsonMap toJson() => {'id': id, if (value != null) 'value': value};
 
-  factory _TestModel.fromJson(Map<String, dynamic> json) =>
+  factory _TestModel.fromJson(JsonMap json) =>
       _TestModel(json['id'] as String, value: json['value'] as String?);
 }
 
@@ -29,9 +26,10 @@ class _InitProbeRepo with LocalFirstRepository<_TestModel> {
   _InitProbeRepo({
     required String name,
     required String Function(_TestModel item) getId,
-    required Map<String, dynamic> Function(_TestModel item) toJson,
-    required _TestModel Function(Map<String, dynamic>) fromJson,
-    required _TestModel Function(_TestModel local, _TestModel remote) onConflict,
+    required JsonMap Function(_TestModel item) toJson,
+    required _TestModel Function(JsonMap) fromJson,
+    required _TestModel Function(_TestModel local, _TestModel remote)
+    onConflict,
   }) {
     initLocalFirstRepository(
       name: name,
@@ -65,16 +63,15 @@ class _InMemoryStorage implements LocalFirstStorage {
   bool closed = false;
   int initializeCalls = 0;
   int closeCalls = 0;
-  final Map<String, Map<String, Map<String, dynamic>>> tables = {};
+  final Map<String, Map<String, JsonMap>> tables = {};
   final Map<String, String> meta = {};
   final Map<String, DateTime> registeredEvents = {};
-  final Map<String, StreamController<List<Map<String, dynamic>>>> _controllers =
-      {};
+  final Map<String, StreamController<List<JsonMap>>> _controllers = {};
 
-  StreamController<List<Map<String, dynamic>>> _controller(String name) {
+  StreamController<List<JsonMap>> _controller(String name) {
     return _controllers.putIfAbsent(
       name,
-      () => StreamController<List<Map<String, dynamic>>>.broadcast(),
+      () => StreamController<List<JsonMap>>.broadcast(),
     );
   }
 
@@ -135,12 +132,12 @@ class _InMemoryStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> getAll(String tableName) async {
+  Future<List<JsonMap>> getAll(String tableName) async {
     return tables[tableName]?.values.map((e) => Map.of(e)).toList() ?? [];
   }
 
   @override
-  Future<Map<String, dynamic>?> getById(String tableName, String id) async {
+  Future<JsonMap?> getById(String tableName, String id) async {
     return tables[tableName]?[id];
   }
 
@@ -150,11 +147,7 @@ class _InMemoryStorage implements LocalFirstStorage {
   Future<String?> getMeta(String key) async => meta[key];
 
   @override
-  Future<void> insert(
-    String tableName,
-    Map<String, dynamic> item,
-    String idField,
-  ) async {
+  Future<void> insert(String tableName, JsonMap item, String idField) async {
     tables.putIfAbsent(tableName, () => {});
     tables[tableName]![item[idField] as String] = item;
     await _emit(tableName);
@@ -184,23 +177,19 @@ class _InMemoryStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<void> update(
-    String tableName,
-    String id,
-    Map<String, dynamic> item,
-  ) async {
+  Future<void> update(String tableName, String id, JsonMap item) async {
     tables.putIfAbsent(tableName, () => {});
     tables[tableName]![id] = item;
     await _emit(tableName);
   }
 
   @override
-  Future<List<Map<String, dynamic>>> query(LocalFirstQuery query) async {
+  Future<List<JsonMap>> query(LocalFirstQuery query) async {
     return getAll(query.repositoryName);
   }
 
   @override
-  Stream<List<Map<String, dynamic>>> watchQuery(LocalFirstQuery query) {
+  Stream<List<JsonMap>> watchQuery(LocalFirstQuery query) {
     final controller = _controller(query.repositoryName);
     controller.addStream(Stream.value([]));
     return controller.stream;
@@ -311,12 +300,15 @@ void main() {
       expect(storage.initialized, isTrue);
     });
 
-    test('initialize can be called multiple times without reinitializing', () async {
-      await Future.wait([client.initialize(), client.initialize()]);
-      expect(storage.initialized, isTrue);
-      expect(storage.initializeCalls, 1);
-      expect(metaStorage.openCalls, 1);
-    });
+    test(
+      'initialize can be called multiple times without reinitializing',
+      () async {
+        await Future.wait([client.initialize(), client.initialize()]);
+        expect(storage.initialized, isTrue);
+        expect(storage.initializeCalls, 1);
+        expect(metaStorage.openCalls, 1);
+      },
+    );
 
     test('constructor registers repositories and sync strategies', () async {
       final repoA = buildRepo('repo_a');
@@ -358,10 +350,7 @@ void main() {
         syncStrategies: [_OkStrategy()],
       );
 
-      expect(
-        () => emptyClient.initialize(),
-        throwsA(isA<AssertionError>()),
-      );
+      expect(() => emptyClient.initialize(), throwsA(isA<AssertionError>()));
     });
 
     test('initialize asserts when no sync strategies registered', () {
@@ -372,29 +361,29 @@ void main() {
         syncStrategies: const [],
       );
 
-      expect(
-        () => emptyClient.initialize(),
-        throwsA(isA<AssertionError>()),
-      );
+      expect(() => emptyClient.initialize(), throwsA(isA<AssertionError>()));
     });
 
-    test('registerRepositories supports multiple calls before initialize', () async {
-      final emptyClient = LocalFirstClient(
-        repositories: const [],
-        localStorage: storage,
-        metaStorage: metaStorage,
-        syncStrategies: [_OkStrategy()],
-      );
-      final repoA = buildRepo('repo_a');
-      final repoB = buildRepo('repo_b');
+    test(
+      'registerRepositories supports multiple calls before initialize',
+      () async {
+        final emptyClient = LocalFirstClient(
+          repositories: const [],
+          localStorage: storage,
+          metaStorage: metaStorage,
+          syncStrategies: [_OkStrategy()],
+        );
+        final repoA = buildRepo('repo_a');
+        final repoB = buildRepo('repo_b');
 
-      emptyClient.registerRepositories([repoA]);
-      emptyClient.registerRepositories([repoB]);
+        emptyClient.registerRepositories([repoA]);
+        emptyClient.registerRepositories([repoB]);
 
-      await emptyClient.initialize();
-      expect(emptyClient.getRepositoryByName('repo_a'), same(repoA));
-      expect(emptyClient.getRepositoryByName('repo_b'), same(repoB));
-    });
+        await emptyClient.initialize();
+        expect(emptyClient.getRepositoryByName('repo_a'), same(repoA));
+        expect(emptyClient.getRepositoryByName('repo_b'), same(repoB));
+      },
+    );
 
     test('registerRepositories throws on duplicate names across calls', () {
       final emptyClient = LocalFirstClient(
@@ -429,20 +418,23 @@ void main() {
       );
     });
 
-    test('registerSyncStrategies supports multiple calls before initialize', () async {
-      final emptyClient = LocalFirstClient(
-        repositories: [repo],
-        localStorage: storage,
-        metaStorage: metaStorage,
-        syncStrategies: const [],
-      );
+    test(
+      'registerSyncStrategies supports multiple calls before initialize',
+      () async {
+        final emptyClient = LocalFirstClient(
+          repositories: [repo],
+          localStorage: storage,
+          metaStorage: metaStorage,
+          syncStrategies: const [],
+        );
 
-      emptyClient.registerSyncStrategies([_OkStrategy()]);
-      emptyClient.registerSyncStrategies([_OkStrategy()]);
+        emptyClient.registerSyncStrategies([_OkStrategy()]);
+        emptyClient.registerSyncStrategies([_OkStrategy()]);
 
-      await emptyClient.initialize();
-      expect(emptyClient.syncStrategies.length, 2);
-    });
+        await emptyClient.initialize();
+        expect(emptyClient.syncStrategies.length, 2);
+      },
+    );
 
     test('registerSyncStrategies throws after initialize', () async {
       final emptyClient = LocalFirstClient(

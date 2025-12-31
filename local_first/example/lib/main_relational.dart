@@ -318,10 +318,7 @@ class MyHomePageState extends State<MyHomePage> {
     );
   }
 
-  Column buildAvatarAndGlobalCounter(
-    UserModel user,
-    List<UserModel> users,
-  ) {
+  Column buildAvatarAndGlobalCounter(UserModel user, List<UserModel> users) {
     final avatarMap = {for (final u in users) u.username: u.avatarUrl};
     final currentUserAvatar = avatarMap[user.username] ?? user.avatarUrl ?? '';
 
@@ -378,13 +375,8 @@ class MyHomePageState extends State<MyHomePage> {
     );
   }
 
-  Column buildRecentActivities(
-    BuildContext context,
-    List<UserModel> users,
-  ) {
-    final avatarMap = {
-      for (final u in users) u.username: u.avatarUrl,
-    };
+  Column buildRecentActivities(BuildContext context, List<UserModel> users) {
+    final avatarMap = {for (final u in users) u.username: u.avatarUrl};
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -467,8 +459,7 @@ class MyHomePageState extends State<MyHomePage> {
         continue;
       }
 
-      final existingIndex =
-          recentLogs.indexWhere((item) => item.id == log.id);
+      final existingIndex = recentLogs.indexWhere((item) => item.id == log.id);
       if (existingIndex == -1) {
         recentLogs.insert(i, log);
         listState.insertItem(i);
@@ -775,13 +766,12 @@ class RepositoryService {
       .orderBy('created_at', descending: true)
       .watch();
 
-  Stream<int> watchCounter() => counterDeviceRepository.query().watch().map((
-    counters,
-  ) {
-    final total = counters.fold(0, (sum, counter) => sum + counter.count);
-    counterTotal = total;
-    return total;
-  });
+  Stream<int> watchCounter() =>
+      counterDeviceRepository.query().watch().map((counters) {
+        final total = counters.fold(0, (sum, counter) => sum + counter.count);
+        counterTotal = total;
+        return total;
+      });
 
   Stream<bool> watchRemoteConnection() => (() async* {
     yield isRemoteConnected;
@@ -791,10 +781,8 @@ class RepositoryService {
   Stream<List<CounterLogModel>> watchRecentLogs({int limit = 5}) =>
       watchLogs().map((logs) => logs.take(limit).toList());
 
-  Stream<List<UserModel>> watchUsers() => userRepository
-      .query()
-      .orderBy('username')
-      .watch();
+  Stream<List<UserModel>> watchUsers() =>
+      userRepository.query().orderBy('username').watch();
 
   Future<JsonMap<String?>> getAvatarsForUsers(Set<String> usernames) async {
     if (usernames.isEmpty) return {};
@@ -1430,8 +1418,7 @@ class MongoApi {
     this.requestTimeout = const Duration(seconds: 5),
   });
 
-  Future<T> withTimeout<T>(Future<T> future) =>
-      future.timeout(requestTimeout);
+  Future<T> withTimeout<T>(Future<T> future) => future.timeout(requestTimeout);
 
   Future<Db> getDb() async {
     final current = db;
@@ -1542,10 +1529,10 @@ class MongoApi {
       final collectionRef = await collection(repositoryName);
       final cursor = cutoff == null
           ? (repositoryName == 'counter_device'
-              ? collectionRef.find(where.sortBy('updated_at'))
-              : collectionRef.find(
-                  where.sortBy('updated_at', descending: true).limit(5),
-                ))
+                ? collectionRef.find(where.sortBy('updated_at'))
+                : collectionRef.find(
+                    where.sortBy('updated_at', descending: true).limit(5),
+                  ))
           : collectionRef.find(
               where.gt('updated_at', cutoff).sortBy('updated_at'),
             );
@@ -1554,21 +1541,23 @@ class MongoApi {
       final updates = <dynamic>[];
       final deletes = <dynamic>[];
 
-      await withTimeout(cursor.forEach((doc) {
-        final op = doc['operation'];
-        if (op == 'delete') {
-          if (doc['id'] != null) deletes.add(doc['id']);
-          return;
-        }
-        final item = Map<String, dynamic>.from(doc)
-          ..remove('operation')
-          ..remove('_id');
-        if (op == 'insert') {
-          inserts.add(fromMongoDateFields(item));
-        } else {
-          updates.add(fromMongoDateFields(item));
-        }
-      }));
+      await withTimeout(
+        cursor.forEach((doc) {
+          final op = doc['operation'];
+          if (op == 'delete') {
+            if (doc['id'] != null) deletes.add(doc['id']);
+            return;
+          }
+          final item = JsonMap.from(doc)
+            ..remove('operation')
+            ..remove('_id');
+          if (op == 'insert') {
+            inserts.add(fromMongoDateFields(item));
+          } else {
+            updates.add(fromMongoDateFields(item));
+          }
+        }),
+      );
 
       final finalChanges = {
         if (inserts.isNotEmpty) 'insert': inserts,
@@ -1594,14 +1583,16 @@ class MongoApi {
 
     final users = <String, JsonMap<dynamic>>{};
 
-    await withTimeout(cursor.forEach((doc) {
-      final id = doc['id'];
-      if (id is! String) return;
-      final data = Map<String, dynamic>.from(doc)
-        ..remove('_id')
-        ..remove('operation');
-      users[id] = fromMongoDateFields(data);
-    }));
+    await withTimeout(
+      cursor.forEach((doc) {
+        final id = doc['id'];
+        if (id is! String) return;
+        final data = JsonMap.from(doc)
+          ..remove('_id')
+          ..remove('operation');
+        users[id] = fromMongoDateFields(data);
+      }),
+    );
 
     return users.values.toList();
   }
@@ -1619,7 +1610,7 @@ class MongoApi {
         final list = repositoryChanges[key];
         if (list is! List) continue;
         for (final item in list) {
-          if (item is! Map<String, dynamic>) continue;
+          if (item is! JsonMap) continue;
           final updatedValue = item['updated_at'];
           DateTime? candidate;
           if (updatedValue is DateTime) {
@@ -1638,7 +1629,7 @@ class MongoApi {
   }
 
   JsonMap<dynamic> toMongoDateFields(JsonMap<dynamic> item) {
-    final map = Map<String, dynamic>.from(item);
+    final map = JsonMap.from(item);
     for (final key in ['created_at', 'updated_at']) {
       final value = map[key];
       if (value is String) {
@@ -1652,7 +1643,7 @@ class MongoApi {
   }
 
   JsonMap<dynamic> fromMongoDateFields(JsonMap<dynamic> item) {
-    final map = Map<String, dynamic>.from(item);
+    final map = JsonMap.from(item);
     for (final key in ['created_at', 'updated_at']) {
       final value = map[key];
       if (value is DateTime) {

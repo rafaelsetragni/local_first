@@ -69,14 +69,14 @@ class Todo {
   final String title;
   final bool completed;
   final DateTime updatedAt;
-  Map<String, dynamic> toJson() => {
+  JsonMap toJson() => {
         'id': id,
         'title': title,
         'completed': completed,
         'updated_at': updatedAt.toIso8601String(),
       };
 
-  factory Todo.fromJson(Map<String, dynamic> json) => Todo(
+  factory Todo.fromJson(JsonMap json) => Todo(
         id: json['id'] as String,
         title: json['title'] as String,
         completed: json['completed'] as bool? ?? false,

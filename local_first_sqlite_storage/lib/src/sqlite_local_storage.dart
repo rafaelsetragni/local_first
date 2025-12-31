@@ -143,7 +143,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> getAll(String tableName) async {
+  Future<List<JsonMap>> getAll(String tableName) async {
     final db = await _database;
     await _ensureTable(tableName);
     final resolvedTable = _tableName(tableName);
@@ -152,12 +152,12 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return rows
         .map((row) => row['data'])
         .whereType<String>()
-        .map((json) => Map<String, dynamic>.from(jsonDecode(json) as Map))
+        .map((json) => JsonMap.from(jsonDecode(json) as Map))
         .toList();
   }
 
   @override
-  Future<Map<String, dynamic>?> getById(String tableName, String id) async {
+  Future<JsonMap?> getById(String tableName, String id) async {
     final db = await _database;
     await _ensureTable(tableName);
     final resolvedTable = _tableName(tableName);
@@ -173,15 +173,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     final data = rows.first['data'];
     if (data is! String) return null;
 
-    return Map<String, dynamic>.from(jsonDecode(data) as Map);
+    return JsonMap.from(jsonDecode(data) as Map);
   }
 
   @override
-  Future<void> insert(
-    String tableName,
-    Map<String, dynamic> item,
-    String idField,
-  ) async {
+  Future<void> insert(String tableName, JsonMap item, String idField) async {
     final db = await _database;
     await _ensureTable(tableName);
     final resolvedTable = _tableName(tableName);
@@ -204,11 +200,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<void> update(
-    String tableName,
-    String id,
-    Map<String, dynamic> item,
-  ) async {
+  Future<void> update(String tableName, String id, JsonMap item) async {
     final db = await _database;
     await _ensureTable(tableName);
     final resolvedTable = _tableName(tableName);
@@ -274,7 +266,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Stream<List<Map<String, dynamic>>> watchQuery(LocalFirstQuery query) {
+  Stream<List<JsonMap>> watchQuery(LocalFirstQuery query) {
     if (!_initialized || !_opened) {
       throw StateError(
         'SqliteLocalFirstStorage not initialized. Call open() and initialize() first.',
@@ -283,7 +275,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     final observer = _SqliteQueryObserver(
       query,
-      StreamController<List<Map<String, dynamic>>>.broadcast(),
+      StreamController<List<JsonMap>>.broadcast(),
     );
 
     _observers
@@ -403,14 +395,10 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   Future<void> registerEvent(String eventId, DateTime createdAt) async {
     final db = await _database;
     await _ensureEventLogTable(db: db);
-    await db.insert(
-      _eventLogTable,
-      {
-        'event_id': eventId,
-        'created_at': createdAt.toUtc().millisecondsSinceEpoch,
-      },
-      conflictAlgorithm: ConflictAlgorithm.ignore,
-    );
+    await db.insert(_eventLogTable, {
+      'event_id': eventId,
+      'created_at': createdAt.toUtc().millisecondsSinceEpoch,
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
   }
 
   @override
@@ -486,7 +474,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
   Map<String, Object?> _encodeRowForStorage(
     Map<String, LocalFieldType> schema,
-    Map<String, dynamic> item,
+    JsonMap item,
     String id,
   ) {
     final row = <String, Object?>{
@@ -507,7 +495,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return row;
   }
 
-  Map<String, dynamic> _normalizeJsonMap(Map<String, dynamic> map) {
+  JsonMap _normalizeJsonMap(JsonMap map) {
     return map.map((key, value) => MapEntry(key, _normalizeJsonValue(value)));
   }
 
@@ -545,9 +533,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> query(
-    LocalFirstQuery query,
-  ) async {
+  Future<List<JsonMap>> query(LocalFirstQuery query) async {
     final db = await _database;
     await _ensureTable(query.repositoryName);
     final resolvedTable = _tableName(query.repositoryName);
@@ -671,7 +657,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return rows
         .map((row) => row['data'])
         .whereType<String>()
-        .map((json) => Map<String, dynamic>.from(jsonDecode(json) as Map))
+        .map((json) => JsonMap.from(jsonDecode(json) as Map))
         .toList();
   }
 }
@@ -680,5 +666,5 @@ class _SqliteQueryObserver {
   _SqliteQueryObserver(this.query, this.controller);
 
   final LocalFirstQuery query;
-  final StreamController<List<Map<String, dynamic>>> controller;
+  final StreamController<List<JsonMap>> controller;
 }

@@ -14,9 +14,7 @@ void main() {
 
     setUp(() async {
       tempDir = await Directory.systemTemp.createTemp('hive_local_first_test');
-      storage = HiveLocalFirstStorage(
-        customPath: tempDir.path,
-      );
+      storage = HiveLocalFirstStorage(customPath: tempDir.path);
       await storage.open(namespace: 'ns1');
       await storage.initialize();
     });
@@ -215,9 +213,7 @@ void main() {
     });
 
     test('watchQuery throws if not initialized', () async {
-      final uninitialized = HiveLocalFirstStorage(
-        customPath: tempDir.path,
-      );
+      final uninitialized = HiveLocalFirstStorage(customPath: tempDir.path);
       final q = LocalFirstQuery<_TestModel>(
         repositoryName: 'users',
         delegate: uninitialized,
@@ -267,9 +263,7 @@ void main() {
       tempDir = await Directory.systemTemp.createTemp(
         'hive_local_first_test_throw',
       );
-      throwingStorage = HiveLocalFirstStorage(
-        customPath: tempDir.path,
-      );
+      throwingStorage = HiveLocalFirstStorage(customPath: tempDir.path);
       await throwingStorage.open(namespace: 'ns_throw');
       await throwingStorage.initialize();
       // Force an error by closing to make watchQuery emit StateError on listen.
@@ -386,9 +380,7 @@ void main() {
   group('HiveLocalFirstStorage initialization paths', () {
     test('stores metadata under customPath', () async {
       final dir = await Directory.systemTemp.createTemp('hive_custom_path');
-      final storage = HiveLocalFirstStorage(
-        customPath: dir.path,
-      );
+      final storage = HiveLocalFirstStorage(customPath: dir.path);
 
       await storage.open(namespace: 'ns_init');
       await storage.initialize();
@@ -537,9 +529,9 @@ class _TestModel {
   final String id;
   final int? age;
 
-  Map<String, dynamic> toJson() => {'id': id, if (age != null) 'age': age};
+  JsonMap toJson() => {'id': id, if (age != null) 'age': age};
 
-  factory _TestModel.fromJson(Map<String, dynamic> json) =>
+  factory _TestModel.fromJson(JsonMap json) =>
       _TestModel(id: json['id'] as String, age: json['age'] as int?);
 }
 
@@ -560,14 +552,10 @@ class _MockHive extends Mock implements HiveInterface {}
 class _MockBox<E> extends Mock implements Box<E> {}
 
 class _ThrowingQueryHiveStorage extends HiveLocalFirstStorage {
-  _ThrowingQueryHiveStorage({
-    super.customPath,
-    super.hive,
-    super.initFlutter,
-  });
+  _ThrowingQueryHiveStorage({super.customPath, super.hive, super.initFlutter});
 
   @override
-  Future<List<Map<String, dynamic>>> query(LocalFirstQuery query) {
+  Future<List<JsonMap>> query(LocalFirstQuery query) {
     throw Exception('query failed');
   }
 }

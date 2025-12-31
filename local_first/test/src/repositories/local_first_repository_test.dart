@@ -10,12 +10,9 @@ class _TestModel {
   final String id;
   final String? value;
 
-  Map<String, dynamic> toJson() => {
-    'id': id,
-    if (value != null) 'value': value,
-  };
+  JsonMap toJson() => {'id': id, if (value != null) 'value': value};
 
-  factory _TestModel.fromJson(Map<String, dynamic> json) =>
+  factory _TestModel.fromJson(JsonMap json) =>
       _TestModel(json['id'] as String, value: json['value'] as String?);
 }
 
@@ -23,7 +20,7 @@ class _OtherModel {
   _OtherModel(this.id);
   final String id;
 
-  Map<String, dynamic> toJson() => {'id': id};
+  JsonMap toJson() => {'id': id};
 }
 
 class _ConfigurableRepo with LocalFirstRepository<_TestModel> {
@@ -39,18 +36,17 @@ class _ConfigurableRepo with LocalFirstRepository<_TestModel> {
 }
 
 class _InMemoryStorage implements LocalFirstStorage {
-  final Map<String, Map<String, Map<String, dynamic>>> tables = {};
+  final Map<String, Map<String, JsonMap>> tables = {};
   final Map<String, String> meta = {};
   final Map<String, DateTime> registeredEvents = {};
-  final Map<String, StreamController<List<Map<String, dynamic>>>> _controllers =
-      {};
+  final Map<String, StreamController<List<JsonMap>>> _controllers = {};
   bool initialized = false;
   bool opened = false;
 
-  StreamController<List<Map<String, dynamic>>> _controller(String name) {
+  StreamController<List<JsonMap>> _controller(String name) {
     return _controllers.putIfAbsent(
       name,
-      () => StreamController<List<Map<String, dynamic>>>.broadcast(),
+      () => StreamController<List<JsonMap>>.broadcast(),
     );
   }
 
@@ -101,32 +97,24 @@ class _InMemoryStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> getAll(String tableName) async {
+  Future<List<JsonMap>> getAll(String tableName) async {
     return tables[tableName]?.values.map((e) => Map.of(e)).toList() ?? [];
   }
 
   @override
-  Future<Map<String, dynamic>?> getById(String tableName, String id) async {
+  Future<JsonMap?> getById(String tableName, String id) async {
     return tables[tableName]?[id];
   }
 
   @override
-  Future<void> insert(
-    String tableName,
-    Map<String, dynamic> item,
-    String idField,
-  ) async {
+  Future<void> insert(String tableName, JsonMap item, String idField) async {
     tables.putIfAbsent(tableName, () => {});
     tables[tableName]![item[idField] as String] = item;
     await _emit(tableName);
   }
 
   @override
-  Future<void> update(
-    String tableName,
-    String id,
-    Map<String, dynamic> item,
-  ) async {
+  Future<void> update(String tableName, String id, JsonMap item) async {
     tables.putIfAbsent(tableName, () => {});
     tables[tableName]![id] = item;
     await _emit(tableName);
@@ -182,12 +170,12 @@ class _InMemoryStorage implements LocalFirstStorage {
   }) async {}
 
   @override
-  Future<List<Map<String, dynamic>>> query(LocalFirstQuery query) async {
+  Future<List<JsonMap>> query(LocalFirstQuery query) async {
     return getAll(query.repositoryName);
   }
 
   @override
-  Stream<List<Map<String, dynamic>>> watchQuery(LocalFirstQuery query) async* {
+  Stream<List<JsonMap>> watchQuery(LocalFirstQuery query) async* {
     final controller = _controller(query.repositoryName);
     controller.onListen = () async {
       controller.add(await getAll(query.repositoryName));
@@ -304,7 +292,7 @@ void main() {
         getId: (m) => m.id,
         toJson: (m) => m.toJson(),
         fromJson: _TestModel.fromJson,
-        onConflict: (l, r) => l,
+        onConflict: (l, r) => r,
       );
       client = LocalFirstClient(
         repositories: [repo],
@@ -318,10 +306,7 @@ void main() {
     test('initLocalFirstRepository throws when already configured', () {
       final repo = _ConfigurableRepo();
       repo.configure(name: 'first');
-      expect(
-        () => repo.configure(name: 'second'),
-        throwsA(isA<StateError>()),
-      );
+      expect(() => repo.configure(name: 'second'), throwsA(isA<StateError>()));
     });
 
     test('initialize can be re-run after reset without errors', () async {
@@ -332,13 +317,13 @@ void main() {
       expect(stored, isNotNull);
     });
 
-  test('insert sets sync metadata and persists', () async {
-    final model = _TestModel('1', value: 'a');
-    await repo.upsert(model);
+    test('insert sets sync metadata and persists', () async {
+      final model = _TestModel('1', value: 'a');
+      await repo.upsert(model);
 
-    final stored = await storage.getById('tests', '1');
-    expect(stored, isNotNull);
-    expect(stored!['_sync_status'], SyncStatus.ok.index);
+      final stored = await storage.getById('tests', '1');
+      expect(stored, isNotNull);
+      expect(stored!['_sync_status'], SyncStatus.ok.index);
       expect(stored['_sync_operation'], SyncOperation.insert.index);
       expect(
         stored['_sync_created_at'] is int &&
@@ -498,14 +483,8 @@ void main() {
       }, 'id');
 
       final pending = await repo.getPendingObjects();
-      expect(
-        pending.map((e) => e.dataAs<_TestModel>().id),
-        contains('p1'),
-      );
-      expect(
-        pending.any((e) => e.dataAs<_TestModel>().id == 'ok1'),
-        isFalse,
-      );
+      expect(pending.map((e) => e.dataAs<_TestModel>().id), contains('p1'));
+      expect(pending.any((e) => e.dataAs<_TestModel>().id == 'ok1'), isFalse);
     });
 
     test(
@@ -626,10 +605,7 @@ void main() {
       final stored = await storage.getById('tests', 'syncedInsert');
       expect(stored?['_sync_operation'], SyncOperation.update.index);
       expect(stored?['_sync_status'], SyncStatus.ok.index);
-      expect(
-        stored?['_sync_created_at'],
-        greaterThanOrEqualTo(createdAt),
-      );
+      expect(stored?['_sync_created_at'], greaterThanOrEqualTo(createdAt));
       expect(stored?['value'], 'new');
     });
 
@@ -726,10 +702,22 @@ void main() {
 
     test('pullChangesToLocal parses integer timestamps', () async {
       final strategy = client.syncStrategies.first;
-      final createdAtClientMs =
-          DateTime.utc(2024, 1, 2, 12, 0, 0).millisecondsSinceEpoch;
-      final createdAtServerMs =
-          DateTime.utc(2024, 1, 2, 12, 5, 0).millisecondsSinceEpoch;
+      final createdAtClientMs = DateTime.utc(
+        2024,
+        1,
+        2,
+        12,
+        0,
+        0,
+      ).millisecondsSinceEpoch;
+      final createdAtServerMs = DateTime.utc(
+        2024,
+        1,
+        2,
+        12,
+        5,
+        0,
+      ).millisecondsSinceEpoch;
       final payload = {
         'timestamp': DateTime.now().toUtc().toIso8601String(),
         'changes': {
@@ -800,11 +788,7 @@ void main() {
           'changes': {
             'tests': {
               'update': [
-                {
-                  'id': 'registered',
-                  'value': 'remote',
-                  'event_id': eventId,
-                },
+                {'id': 'registered', 'value': 'remote', 'event_id': eventId},
               ],
             },
           },

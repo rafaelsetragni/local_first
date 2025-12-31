@@ -32,7 +32,7 @@ abstract mixin class DataSyncStrategy<T extends Object> {
     return pending.where((event) => event.data is T).toList();
   }
 
-  Future<void> pullChangesToLocal(Map<String, dynamic> remoteChanges) {
+  Future<void> pullChangesToLocal(JsonMap remoteChanges) {
     return _client._pullRemoteChanges(remoteChanges);
   }
 }

@@ -167,8 +167,8 @@ class LocalFirstClient {
     await _metaStorage.close();
   }
 
-  Future<void> _pullRemoteChanges(Map<String, dynamic> map) async {
-    final LocalFirstResponse response = await _buildOfflineResponse(map);
+  Future<void> _pullRemoteChanges(JsonMap map) async {
+    final LocalFirstRemoteResponse response = await _buildOfflineResponse(map);
 
     for (final MapEntry<LocalFirstRepository, List<LocalFirstEvent>> entry
         in response.changes.entries) {
@@ -177,11 +177,10 @@ class LocalFirstClient {
       await repository._mergeRemoteItems(remoteEvents);
     }
 
+    // Persist last server sequence for all repositories.
+    final seqString = response.serverSequence.toString();
     for (final repository in _repositories) {
-      await setKeyValue(
-        '__last_sync__${repository.name}',
-        response.timestamp.toIso8601String(),
-      );
+      await setKeyValue('__last_sync__${repository.name}', seqString);
     }
   }
 
@@ -201,14 +200,12 @@ class LocalFirstClient {
     await _metaStorage.set(key, value);
   }
 
-  Future<LocalFirstResponse> _buildOfflineResponse(
-    Map<String, dynamic> json,
-  ) async {
-    if (json['timestamp'] == null || json['changes'] == null) {
+  Future<LocalFirstRemoteResponse> _buildOfflineResponse(JsonMap json) async {
+    if (json['serverSequence'] == null || json['changes'] == null) {
       throw FormatException('Invalid offline response format');
     }
 
-    final timestamp = DateTime.parse(json['timestamp'] as String);
+    final serverSequence = json['serverSequence'] as int;
     final changesJson = json['changes'] as Map;
     final repositoryObjects = <LocalFirstRepository, List<LocalFirstEvent>>{};
 
@@ -216,13 +213,12 @@ class LocalFirstClient {
       final repository = getRepositoryByName(repositoryName as String);
       final objects = <LocalFirstEvent>[];
 
-      final repositoryChangeJson =
-          changesJson[repositoryName] as Map<String, dynamic>;
+      final repositoryChangeJson = changesJson[repositoryName] as JsonMap;
 
       if (repositoryChangeJson.containsKey('insert')) {
         final inserts = (repositoryChangeJson['insert'] as List);
         for (var element in inserts) {
-          final item = Map<String, dynamic>.from(element);
+          final item = JsonMap.from(element);
           final idValue = item[repository.idFieldName];
           if (idValue is! String) {
             continue;
@@ -237,7 +233,7 @@ class LocalFirstClient {
       if (repositoryChangeJson.containsKey('update')) {
         final updates = (repositoryChangeJson['update'] as List);
         for (var element in updates) {
-          final item = Map<String, dynamic>.from(element);
+          final item = JsonMap.from(element);
           final idValue = item[repository.idFieldName];
           if (idValue is! String) {
             continue;
@@ -269,6 +265,9 @@ class LocalFirstClient {
 
       repositoryObjects[repository] = objects;
     }
-    return LocalFirstResponse(changes: repositoryObjects, timestamp: timestamp);
+    return LocalFirstRemoteResponse(
+      changes: repositoryObjects,
+      serverSequence: serverSequence,
+    );
   }
 }
