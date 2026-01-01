@@ -125,15 +125,46 @@ mixin LocalFirstRepository<T extends Object> {
   /// If the local record has pending changes, it is left untouched.
   Future<void> saveRemoteSnapshot(T item) async {
     final existingJson = await _client.localStorage.getById(name, getId(item));
-    if (existingJson != null) {
-      final existing = _eventFromJson(existingJson);
-      if (existing.needSync) return;
+    if (existingJson == null) {
+      final snapshot = LocalFirstEvent(
+        data: item,
+        syncStatus: SyncStatus.ok,
+        syncOperation: SyncOperation.insert,
+        syncCreatedAt: DateTime.now().toUtc(),
+        repositoryName: name,
+      );
+      await _client.localStorage.insert(
+        name,
+        _toStorageJson(snapshot),
+        idFieldName,
+      );
+      return;
+    }
+
+    final existing = _eventFromJson(existingJson);
+    if (existing.needSync) {
       final merged = resolveConflict(existing.dataAs<T>(), item);
+      final pending = LocalFirstEvent(
+        data: merged,
+        eventId: existing.eventId,
+        syncStatus: existing.syncStatus,
+        syncOperation: existing.syncOperation,
+        syncCreatedAt: existing.syncCreatedAt,
+        syncCreatedAtServer: existing.syncCreatedAtServer,
+        syncServerSequence: existing.syncServerSequence,
+        repositoryName: name,
+      );
+      await _client.localStorage.update(
+        name,
+        getId(item),
+        _toStorageJson(pending),
+      );
+    } else {
       final operation = existing.syncOperation == SyncOperation.insert
           ? SyncOperation.update
           : existing.syncOperation;
       final updated = LocalFirstEvent(
-        data: merged,
+        data: item,
         eventId: existing.eventId,
         syncStatus: SyncStatus.ok,
         syncOperation: operation,
@@ -147,21 +178,7 @@ mixin LocalFirstRepository<T extends Object> {
         getId(item),
         _toStorageJson(updated),
       );
-      return;
     }
-
-    final snapshot = LocalFirstEvent(
-      data: item,
-      syncStatus: SyncStatus.ok,
-      syncOperation: SyncOperation.insert,
-      syncCreatedAt: DateTime.now().toUtc(),
-      repositoryName: name,
-    );
-    await _client.localStorage.insert(
-      name,
-      _toStorageJson(snapshot),
-      idFieldName,
-    );
   }
 
   /// Initializes the repository.
@@ -190,18 +207,19 @@ mixin LocalFirstRepository<T extends Object> {
         .toList();
     if (supported.isEmpty) return;
 
-    final results = await Future.wait(supported.map((strategy) async {
-      try {
-        return await strategy.onPushToRemote(event);
-      } catch (_) {
-        return SyncStatus.failed;
-      }
-    }));
+    final results = await Future.wait(
+      supported.map((strategy) async {
+        try {
+          return await strategy.onPushToRemote(event);
+        } catch (_) {
+          return SyncStatus.failed;
+        }
+      }),
+    );
 
     // Choose the highest status returned (by enum index).
     final statuses = [event.syncStatus, ...results];
-    final newStatus =
-        statuses.reduce((a, b) => a.index >= b.index ? a : b);
+    final newStatus = statuses.reduce((a, b) => a.index >= b.index ? a : b);
 
     if (newStatus != event.syncStatus) {
       final updatedEvent = event.copyWith(syncStatus: newStatus);
