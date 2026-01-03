@@ -37,14 +37,12 @@ void main() {
         onConflict: (l, r) => r,
       );
       // minimal client and storage for adapter calls that don't hit storage
-      final storage = InMemoryLocalFirstStorage();
-      final client = LocalFirstClient(
+      repo._client = LocalFirstClient(
         repositories: [repo],
-        localStorage: storage,
+        localStorage: InMemoryLocalFirstStorage(),
         metaStorage: InMemoryKeyValueStorage(),
         syncStrategies: [],
       );
-      repo._client = client;
       repo._syncStrategies = [];
       adapter = LocalFirstRepositoryTestAdapter(repo);
     });
@@ -57,7 +55,10 @@ void main() {
         syncStatus: SyncStatus.pending,
       );
       await adapter.pushLocalEventToRemote(event);
-      // no exception, no status change expected
+
+      // no strategies, so storage should remain empty
+      final stored = await repo.delegate.getById('tests', '1');
+      expect(stored, isNull);
     });
 
     test('chooses highest status among strategies', () async {
@@ -82,7 +83,7 @@ void main() {
       repo._client = LocalFirstClient(
         repositories: [repo],
         localStorage: storage,
-        metaStorage: _InMemoryKeyValueStorage(),
+        metaStorage: InMemoryKeyValueStorage(),
         syncStrategies: [],
       );
 
@@ -92,18 +93,15 @@ void main() {
       expect(s1.seen.length, 1);
       expect(s2.seen.length, 1);
 
-      // highest status among [pending (initial), failed, ok, pending] is failed
+      // highest status among [pending (initial), failed, pending] is failed
       final stored = await storage.getById('tests', '1');
-      // No storage writes happen in adapter; just ensure status is updated via adapter call
-      // so check via event copy path
-      // Since _updateEventStatus writes to storage, attach dummy storage:
-      // storage may be empty; we assert that no exception was thrown and strategies were called.
+      expect(stored?['_sync_status'], SyncStatus.failed.index);
     });
 
     test('marks failed on exception', () async {
       final failing = _RecordingStrategy([() => throw Exception('boom')]);
       repo._syncStrategies = [failing];
-      final storage = _InMemoryStorage();
+      final storage = InMemoryLocalFirstStorage();
       repo._client = LocalFirstClient(
         repositories: [repo],
         localStorage: storage,

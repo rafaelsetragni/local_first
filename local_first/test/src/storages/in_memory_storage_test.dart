@@ -64,8 +64,14 @@ void main() {
     });
 
     test('watch emits initial and subsequent updates', () async {
+      final repo = _DummyRepo();
+      final query = LocalFirstQuery<Object>(
+        repositoryName: 'items',
+        delegate: storage,
+        repository: repo,
+      );
       final updates = <List<JsonMap>>[];
-      final sub = storage.watch('items').listen(updates.add);
+      final sub = storage.watchQuery(query).listen(updates.add);
 
       await storage.insert('items', {'id': '1'}, 'id');
       await storage.insert('items', {'id': '2'}, 'id');
@@ -75,28 +81,30 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 10));
       await sub.cancel();
 
-      expect(updates.firstOrNull, isNotEmpty);
+      expect(updates.first, isEmpty);
       expect(updates.any((e) => e.any((r) => r['id'] == '1')), isTrue);
       expect(updates.any((e) => e.any((r) => r['id'] == '2')), isTrue);
       expect(updates.last.every((r) => r['id'] != '2'), isTrue);
     });
 
-    test('queryTable applies filters, sorting, limit and offset', () async {
+    test('query applies filters, sorting, limit and offset', () async {
       await storage.insert('items', {'id': 'a', 'score': 5}, 'id');
       await storage.insert('items', {'id': 'b', 'score': 10}, 'id');
       await storage.insert('items', {'id': 'c', 'score': 15}, 'id');
 
-      final result = await storage.queryTable(
-        'items',
+      final query = LocalFirstQuery<Object>(
+        repositoryName: 'items',
+        delegate: storage,
+        repository: _DummyRepo(),
         filters: [QueryFilter(field: 'score', isGreaterThan: 5)],
         sorts: const [QuerySort(field: 'score', descending: true)],
         limit: 1,
         offset: 1,
       );
 
-      final data = result['data'] as List;
-      expect(data.length, 1);
-      expect((data.single as Map)['id'], 'b');
+      final result = await storage.query(query);
+      expect(result.length, 1);
+      expect((result.single)['id'], 'b');
     });
 
     test('query uses LocalFirstQuery helpers', () async {
@@ -117,6 +125,8 @@ void main() {
 
     test('watchQuery emits filtered updates', () async {
       await storage.insert('items', {'id': '1', 'score': 1}, 'id');
+      await storage.insert('items', {'id': '2', 'score': 3}, 'id');
+
       final repo = _DummyRepo();
       final query = LocalFirstQuery<Object>(
         repositoryName: 'items',
@@ -127,14 +137,54 @@ void main() {
       final collected = <List<JsonMap>>[];
       final sub = storage.watchQuery(query).listen(collected.add);
 
-      await storage.insert('items', {'id': '2', 'score': 3}, 'id');
-      await storage.insert('items', {'id': '3', 'score': 0}, 'id');
+      await storage.insert('items', {'id': '3', 'score': 5}, 'id'); // included
       await Future<void>.delayed(const Duration(milliseconds: 10));
       await sub.cancel();
 
-      expect(collected.first.length, 2);
-      expect(collected.last.map((r) => r['id']), containsAll(['1', '2']));
-      expect(collected.last.map((r) => r['id']), isNot(contains('3')));
+      expect(collected.first.map((r) => r['id']), containsAll(['1', '2']));
+      expect(collected.last.map((r) => r['id']), containsAll(['1', '2', '3']));
+    });
+
+    test('query supports multi-sort precedence', () async {
+      await storage.insert('items', {'id': '1', 'group': 'a', 'score': 2}, 'id');
+      await storage.insert('items', {'id': '2', 'group': 'a', 'score': 1}, 'id');
+      await storage.insert('items', {'id': '3', 'group': 'b', 'score': 3}, 'id');
+      await storage.insert('items', {'id': '4', 'group': 'b', 'score': 0}, 'id');
+
+      final query = LocalFirstQuery<Object>(
+        repositoryName: 'items',
+        delegate: storage,
+        repository: _DummyRepo(),
+        sorts: const [
+          QuerySort(field: 'group', descending: false),
+          QuerySort(field: 'score', descending: true),
+        ],
+      );
+
+      final result = await storage.query(query);
+      final ids = (result).map((e) => e['id']).toList();
+      expect(ids, ['1', '2', '3', '4']); // a sorted by score desc, then b
+    });
+
+    test('query multi-sort with descending primary', () async {
+      await storage.insert('items', {'id': '1', 'group': 'a', 'score': 2}, 'id');
+      await storage.insert('items', {'id': '2', 'group': 'a', 'score': 1}, 'id');
+      await storage.insert('items', {'id': '3', 'group': 'b', 'score': 3}, 'id');
+      await storage.insert('items', {'id': '4', 'group': 'b', 'score': 0}, 'id');
+
+      final query = LocalFirstQuery<Object>(
+        repositoryName: 'items',
+        delegate: storage,
+        repository: _DummyRepo(),
+        sorts: const [
+          QuerySort(field: 'group', descending: true),
+          QuerySort(field: 'score', descending: false),
+        ],
+      );
+
+      final result = await storage.query(query);
+      final ids = result.map((e) => e['id']).toList();
+      expect(ids, ['4', '3', '2', '1']); // groups b then a, score asc inside
     });
 
     test('event registration persists and prunes correctly', () async {

@@ -122,15 +122,17 @@ mixin LocalFirstRepository<T extends Object> {
 
   /// Saves a remote snapshot without scheduling a push.
   ///
-  /// If the local record has pending changes, it is left untouched.
-  Future<void> saveRemoteSnapshot(T item) async {
-    final existingJson = await _client.localStorage.getById(name, getId(item));
+  /// Consumes a full remote event (with metadata) and applies conflict
+  /// resolution before persisting locally.
+  Future<void> saveRemoteSnapshot(LocalFirstEvent remoteEvent) async {
+    final remoteData = remoteEvent.dataAs<T>();
+    final remoteId = getId(remoteData);
+
+    final existingJson = await _client.localStorage.getById(name, remoteId);
+
     if (existingJson == null) {
-      final snapshot = LocalFirstEvent(
-        data: item,
+      final snapshot = remoteEvent.copyWith(
         syncStatus: SyncStatus.ok,
-        syncOperation: SyncOperation.insert,
-        syncCreatedAt: DateTime.now().toUtc(),
         repositoryName: name,
       );
       await _client.localStorage.insert(
@@ -138,45 +140,50 @@ mixin LocalFirstRepository<T extends Object> {
         _toStorageJson(snapshot),
         idFieldName,
       );
+      if (remoteEvent.eventId.isNotEmpty) {
+        await _client.localStorage.registerEvent(
+          remoteEvent.eventId,
+          remoteEvent.syncCreatedAt,
+        );
+      }
       return;
     }
 
     final existing = _eventFromJson(existingJson);
+
     if (existing.needSync) {
-      final merged = resolveConflict(existing.dataAs<T>(), item);
-      final pending = LocalFirstEvent(
-        data: merged,
-        eventId: existing.eventId,
-        syncStatus: existing.syncStatus,
-        syncOperation: existing.syncOperation,
-        syncCreatedAt: existing.syncCreatedAt,
-        syncCreatedAtServer: existing.syncCreatedAtServer,
-        syncServerSequence: existing.syncServerSequence,
-        repositoryName: name,
-      );
+      final merged = resolveConflict(existing.dataAs<T>(), remoteData);
+      final pending = existing.copyWith(data: merged);
       await _client.localStorage.update(
         name,
-        getId(item),
+        remoteId,
         _toStorageJson(pending),
       );
-    } else {
-      final operation = existing.syncOperation == SyncOperation.insert
-          ? SyncOperation.update
-          : existing.syncOperation;
-      final updated = LocalFirstEvent(
-        data: item,
-        eventId: existing.eventId,
-        syncStatus: SyncStatus.ok,
-        syncOperation: operation,
-        syncCreatedAt: existing.syncCreatedAt,
-        syncCreatedAtServer: existing.syncCreatedAtServer,
-        syncServerSequence: existing.syncServerSequence,
-        repositoryName: name,
-      );
-      await _client.localStorage.update(
-        name,
-        getId(item),
-        _toStorageJson(updated),
+      if (remoteEvent.eventId.isNotEmpty) {
+        await _client.localStorage.registerEvent(
+          remoteEvent.eventId,
+          remoteEvent.syncCreatedAt,
+        );
+      }
+      return;
+    }
+    final operation = remoteEvent.syncOperation == SyncOperation.insert
+        ? SyncOperation.update
+        : remoteEvent.syncOperation;
+
+    final updated = remoteEvent.copyWith(
+      syncStatus: SyncStatus.ok,
+      syncOperation: operation,
+      syncCreatedAt: remoteEvent.syncCreatedAt,
+      repositoryName: name,
+    );
+
+    await _client.localStorage.update(name, remoteId, _toStorageJson(updated));
+
+    if (remoteEvent.eventId.isNotEmpty) {
+      await _client.localStorage.registerEvent(
+        remoteEvent.eventId,
+        remoteEvent.syncCreatedAt,
       );
     }
   }
@@ -202,6 +209,8 @@ mixin LocalFirstRepository<T extends Object> {
   }
 
   Future<void> _pushLocalEventToRemote(LocalFirstEvent event) async {
+    assert(event.needSync, 'Only pending events should be pushed to remote');
+
     final supported = _syncStrategies
         .where((strategy) => strategy.supportsEvent(event))
         .toList();
@@ -233,16 +242,12 @@ mixin LocalFirstRepository<T extends Object> {
   /// Otherwise, a new item will be inserted.
   ///
   /// The operation is marked as pending and will be synced on next [LocalFirstClient.sync].
-  Future<void> upsert(T item, {bool fromRemote = false}) async {
-    if (fromRemote) {
-      await saveRemoteSnapshot(item);
-      return;
-    }
+  Future<void> upsert(T item) async {
     final json = await _client.localStorage.getById(name, getId(item));
     if (json != null) {
       final existing = _eventFromJson(json);
       final merged = resolveConflict(existing.dataAs<T>(), item);
-      if (_jsonEquals(_toJson(existing.dataAs<T>()), _toJson(merged))) {
+      if (JsonUtil.equals(_toJson(existing.dataAs<T>()), _toJson(merged))) {
         return;
       }
       final wasPendingInsert =
@@ -257,27 +262,6 @@ mixin LocalFirstRepository<T extends Object> {
     } else {
       await _insert(item);
     }
-  }
-
-  bool _jsonEquals(Object? left, Object? right) {
-    if (identical(left, right)) return true;
-    if (left == null || right == null) return left == right;
-    if (left is Map && right is Map) {
-      if (left.length != right.length) return false;
-      for (final entry in left.entries) {
-        if (!right.containsKey(entry.key)) return false;
-        if (!_jsonEquals(entry.value, right[entry.key])) return false;
-      }
-      return true;
-    }
-    if (left is List && right is List) {
-      if (left.length != right.length) return false;
-      for (var i = 0; i < left.length; i++) {
-        if (!_jsonEquals(left[i], right[i])) return false;
-      }
-      return true;
-    }
-    return left == right;
   }
 
   Future<void> _insert(T item) async {

@@ -128,47 +128,6 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
   Future<String?> getMeta(String key) async => _meta[key];
 
   @override
-  Future<Map<String, dynamic>> queryTable(
-    String tableName, {
-    List<QueryFilter> filters = const [],
-    List<QuerySort> sorts = const [],
-    int? limit,
-    int? offset,
-  }) async {
-    var rows = await getAll(tableName);
-    // Apply filters
-    for (final filter in filters) {
-      rows = rows.where(filter.matches).toList();
-    }
-    // Apply sorts
-    for (final sort in sorts.reversed) {
-      rows.sort((a, b) {
-        final va = a[sort.field];
-        final vb = b[sort.field];
-        if (va is Comparable && vb is Comparable) {
-          final cmp = va.compareTo(vb);
-          return sort.descending ? -cmp : cmp;
-        }
-        return 0;
-      });
-    }
-    // Offset and limit
-    if (offset != null && offset > 0) {
-      rows = rows.skip(offset).toList();
-    }
-    if (limit != null && limit >= 0) {
-      rows = rows.take(limit).toList();
-    }
-    return {'data': rows};
-  }
-
-  @override
-  Stream<List<Map<String, dynamic>>> watch(String tableName) async* {
-    yield await getAll(tableName);
-    yield* _controller(tableName).stream;
-  }
-
-  @override
   Future<void> registerEvent(String eventId, DateTime createdAt) async {
     _registeredEvents[eventId] = createdAt;
   }
@@ -189,9 +148,11 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
 
   @override
   Stream<List<JsonMap<dynamic>>> watchQuery(LocalFirstQuery<Object> query) {
-    return watch(
-      query.repositoryName,
-    ).map((items) => _applyQuery(items, query));
+    final stream = _controller(query.repositoryName).stream;
+    return Stream<List<JsonMap>>.multi((controller) async {
+      controller.add(_applyQuery(await getAll(query.repositoryName), query));
+      stream.map((items) => _applyQuery(items, query)).listen(controller.add);
+    });
   }
 
   List<JsonMap<dynamic>> _applyQuery(
