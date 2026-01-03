@@ -124,7 +124,7 @@ mixin LocalFirstRepository<T extends Object> {
   ///
   /// Consumes a full remote event (with metadata) and applies conflict
   /// resolution before persisting locally.
-  Future<void> saveRemoteSnapshot(LocalFirstEvent remoteEvent) async {
+  Future<void> _saveRemoteSnapshot(LocalFirstEvent remoteEvent) async {
     final remoteData = remoteEvent.dataAs<T>();
     final remoteId = getId(remoteData);
 
@@ -445,59 +445,7 @@ mixin LocalFirstRepository<T extends Object> {
         continue;
       }
 
-      if (localEvent == null) {
-        final createdAtServer =
-            remoteEvent.syncCreatedAtServer ?? DateTime.now().toUtc();
-        final insertEvent = LocalFirstEvent(
-          data: remoteObj,
-          eventId: remoteEvent.eventId,
-          syncStatus: SyncStatus.ok,
-          syncOperation: remoteEvent.syncOperation,
-          syncCreatedAt: remoteEvent.syncCreatedAt,
-          syncCreatedAtServer: createdAtServer,
-          syncServerSequence: remoteEvent.syncServerSequence,
-          repositoryName: name,
-        );
-        await _client.localStorage.insert(
-          name,
-          _toStorageJson(insertEvent),
-          idFieldName,
-        );
-        if (remoteEventId.isNotEmpty) {
-          await _client.localStorage.registerEvent(
-            remoteEventId,
-            remoteEvent.syncCreatedAt,
-          );
-        }
-        continue;
-      }
-
-      final resolved = resolveConflict(localEvent.dataAs<T>(), remoteObj);
-      final createdAtServer =
-          localEvent.syncCreatedAtServer ??
-          remoteEvent.syncCreatedAtServer ??
-          DateTime.now().toUtc();
-      final updatedEvent = LocalFirstEvent(
-        data: resolved,
-        eventId: remoteEvent.eventId,
-        syncStatus: SyncStatus.ok,
-        syncOperation: SyncOperation.update,
-        syncCreatedAt: remoteEvent.syncCreatedAt,
-        syncCreatedAtServer: createdAtServer,
-        syncServerSequence: remoteEvent.syncServerSequence,
-        repositoryName: name,
-      );
-      await _client.localStorage.update(
-        name,
-        remoteId,
-        _toStorageJson(updatedEvent),
-      );
-      if (remoteEventId.isNotEmpty) {
-        await _client.localStorage.registerEvent(
-          remoteEventId,
-          remoteEvent.syncCreatedAt,
-        );
-      }
+      await _saveRemoteSnapshot(remoteEvent);
     }
   }
 

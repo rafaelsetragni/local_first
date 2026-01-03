@@ -93,9 +93,12 @@ class LocalFirstClient {
 
   /// Gets a repository by its name.
   ///
-  /// Throws [StateError] if no node with the given name exists.
-  LocalFirstRepository getRepositoryByName(String name) {
-    return _repositories.firstWhere((repo) => repo.name == name);
+  /// Returns the repository with the given name, or null if not found.
+  LocalFirstRepository? getRepositoryByName(String name) {
+    for (final repo in _repositories) {
+      if (repo.name == name) return repo;
+    }
+    return null;
   }
 
   /// Initializes the LocalFirstClient and all its repositories.
@@ -167,22 +170,42 @@ class LocalFirstClient {
     await _metaStorage.close();
   }
 
-  Future<void> _pullRemoteChanges(JsonMap map) async {
-    final LocalFirstRemoteResponse response = await _buildOfflineResponse(map);
-
-    for (final MapEntry<LocalFirstRepository, List<LocalFirstEvent>> entry
-        in response.changes.entries) {
-      final LocalFirstRepository repository = entry.key;
-      final List<LocalFirstEvent> remoteEvents = entry.value;
-      await repository._mergeRemoteItems(remoteEvents);
-    }
-
-    // Persist last server sequence for all repositories.
-    final seqString = response.serverSequence.toString();
-    for (final repository in _repositories) {
-      await setKeyValue('__last_sync__${repository.name}', seqString);
-    }
+  Future<void> _pullRemoteChanges(JsonMap map) {
+    return Future.wait([
+      for (final repositoryName in map.keys)
+        _pullRemoteRepositoryChanges(
+          repositoryName: repositoryName,
+          changes: map[repositoryName] as JsonMap,
+        ),
+    ]);
   }
+
+  Future<void> _pullRemoteRepositoryChanges({
+    required String repositoryName,
+    required JsonMap changes,
+  }) {
+    final repository = getRepositoryByName(repositoryName);
+    if (repository == null) {
+      throw Exception('Repository $repositoryName not registered');
+    }
+
+    final repositoryChangeJson = changes[repositoryName] as JsonMap;
+    final repoServerSequence = repositoryChangeJson['sequence'];
+    if (repoServerSequence is! int) {
+      throw FormatException('Missing serverSequence for $repositoryName');
+    }
+
+    return Future.wait([
+      setKeyValue(
+        _getServerSequenceKey(repositoryName: repositoryName),
+        repoServerSequence,
+      ),
+      repository._pullRemoteChanges(changes: repositoryChangeJson),
+    ]);
+  }
+
+  Future<int?> getLastServerSequence({required String repositoryName}) =>
+      getKeyValue<int>(_getServerSequenceKey(repositoryName: repositoryName));
 
   Future<List<LocalFirstEvent>> getAllPendingObjects() async {
     final results = await Future.wait([
@@ -192,82 +215,13 @@ class LocalFirstClient {
     return pending.toList();
   }
 
-  Future<String?> getMeta(String key) async {
-    return await _metaStorage.get(key);
-  }
+  Future<T?> getKeyValue<T>(String key) => _metaStorage.get(key);
 
-  Future<void> setKeyValue(String key, String value) async {
-    await _metaStorage.set(key, value);
-  }
+  Future<void> setKeyValue<T>(String key, T value) =>
+      _metaStorage.set<T>(key, value);
 
-  Future<LocalFirstRemoteResponse> _buildOfflineResponse(JsonMap json) async {
-    if (json['serverSequence'] == null || json['changes'] == null) {
-      throw FormatException('Invalid offline response format');
-    }
+  Future<void> deleteKeyValue<T>(String key) => _metaStorage.delete(key);
 
-    final serverSequence = json['serverSequence'] as int;
-    final changesJson = json['changes'] as Map;
-    final repositoryObjects = <LocalFirstRepository, List<LocalFirstEvent>>{};
-
-    for (var repositoryName in changesJson.keys) {
-      final repository = getRepositoryByName(repositoryName as String);
-      final objects = <LocalFirstEvent>[];
-
-      final repositoryChangeJson = changesJson[repositoryName] as JsonMap;
-
-      if (repositoryChangeJson.containsKey('insert')) {
-        final inserts = (repositoryChangeJson['insert'] as List);
-        for (var element in inserts) {
-          final item = JsonMap.from(element);
-          final idValue = item[repository.idFieldName];
-          if (idValue is! String) {
-            continue;
-          }
-          final object = repository._buildRemoteEvent(
-            item,
-            operation: SyncOperation.insert,
-          );
-          objects.add(object);
-        }
-      }
-      if (repositoryChangeJson.containsKey('update')) {
-        final updates = (repositoryChangeJson['update'] as List);
-        for (var element in updates) {
-          final item = JsonMap.from(element);
-          final idValue = item[repository.idFieldName];
-          if (idValue is! String) {
-            continue;
-          }
-          final object = repository._buildRemoteEvent(
-            item,
-            operation: SyncOperation.update,
-          );
-          objects.add(object);
-        }
-      }
-      if (repositoryChangeJson.containsKey('delete')) {
-        final deleteIds = (repositoryChangeJson['delete'] as List);
-        for (var id in deleteIds) {
-          if (id is! String) {
-            continue;
-          }
-          final object = await repository._getById(id);
-          if (object != null) {
-            objects.add(
-              object.copyWith(
-                syncStatus: SyncStatus.ok,
-                syncOperation: SyncOperation.delete,
-              ),
-            );
-          }
-        }
-      }
-
-      repositoryObjects[repository] = objects;
-    }
-    return LocalFirstRemoteResponse(
-      changes: repositoryObjects,
-      serverSequence: serverSequence,
-    );
-  }
+  String _getServerSequenceKey({required String repositoryName}) =>
+      '_last_sync_seq_$repositoryName';
 }
