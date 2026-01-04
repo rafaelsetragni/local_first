@@ -222,7 +222,7 @@ class _MyHomePageState extends State<MyHomePage> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            _buildAvatarAndGlobalCounter(user),
+            Expanded(child: _buildAvatarAndGlobalCounter(user)),
             Column(
               children: [
                 _buildUserList(context),
@@ -261,25 +261,63 @@ class _MyHomePageState extends State<MyHomePage> {
         final avatarMap = {for (final u in users) u.username: u.avatarUrl};
         final currentUserAvatar =
             avatarMap[user.username] ?? user.avatarUrl ?? '';
+        const isConnected = true; // placeholder state
 
         return Column(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            GestureDetector(
-              onTap: () => _onAvatarTap(context, currentUserAvatar),
-              child: AvatarPreview(
-                avatarUrl: currentUserAvatar,
-                showEditIndicator: true,
-              ),
+            // Connection badge
+            Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  margin: const EdgeInsets.only(bottom: 8),
+                  decoration: BoxDecoration(
+                    color: isConnected
+                        ? Colors.green.shade100
+                        : Colors.red.shade100,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    isConnected ? 'Connected' : 'Disconnected',
+                    style: TextStyle(
+                      color: isConnected
+                          ? Colors.green.shade800
+                          : Colors.red.shade800,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () => _onAvatarTap(context, currentUserAvatar),
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: isConnected ? Colors.green : Colors.red,
+                        width: 4,
+                      ),
+                    ),
+                    child: AvatarPreview(
+                      avatarUrl: currentUserAvatar,
+                      showEditIndicator: true,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Hello, ${user.username}!',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
-            Text(
-              'Hello, ${user.username}!',
-              textAlign: TextAlign.center,
-              style: Theme.of(
-                context,
-              ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 48),
             const Text('Global counter updated by all users:'),
             StreamBuilder<int>(
               stream: _counterStream,

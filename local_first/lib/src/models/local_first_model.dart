@@ -5,11 +5,11 @@ enum SyncStatus {
   /// The object has pending changes that need to be synced.
   pending,
 
-  /// The object is synchronized with the server.
-  ok,
-
   /// The last sync attempt failed (will be retried).
   failed,
+
+  /// The object is synchronized with the server.
+  ok,
 }
 
 /// Represents the type of operation performed on an object.

@@ -320,7 +320,7 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
         await _client.localStorage.getEvents(repositoryName: name);
     if (eventMaps.isNotEmpty) {
       final events = eventMaps
-          .map(_modelFromJson)
+          .map(_modelFromEvent)
           .where((obj) => obj.needSync)
           .toList();
       return events;
@@ -363,6 +363,14 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
     );
     model._setRepositoryName(name);
     return model;
+  }
+
+  T _modelFromEvent(Map<String, dynamic> json) {
+    final itemJson = Map<String, dynamic>.from(json);
+    itemJson.remove('event_id');
+    itemJson.remove('repository');
+    itemJson.remove('record_id');
+    return _modelFromJson(itemJson);
   }
 
   T _copyModel(T target, T source) {
