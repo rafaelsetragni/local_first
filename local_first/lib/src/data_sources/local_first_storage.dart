@@ -57,6 +57,33 @@ abstract class LocalFirstStorage {
   /// Deletes all items from a table/collection.
   Future<void> deleteAll(String tableName);
 
+  /// Persists an event (tombstone/upsert) in the event log store.
+  ///
+  /// Implementations should treat this as an idempotent upsert keyed by
+  /// `event_id`.
+  Future<void> insertEvent(Map<String, dynamic> event) async =>
+      throw UnimplementedError('insertEvent not implemented');
+
+  /// Retrieves a previously stored event by its `event_id`.
+  Future<Map<String, dynamic>?> getEventById(String eventId) async =>
+      throw UnimplementedError('getEventById not implemented');
+
+  /// Retrieves all events, optionally filtered by repository name.
+  Future<List<Map<String, dynamic>>> getEvents({String? repositoryName}) async =>
+      throw UnimplementedError('getEvents not implemented');
+
+  /// Deletes a single event by `event_id`.
+  Future<void> deleteEvent(String eventId) async =>
+      throw UnimplementedError('deleteEvent not implemented');
+
+  /// Clears the entire event log.
+  Future<void> clearEvents() async =>
+      throw UnimplementedError('clearEvents not implemented');
+
+  /// Prunes events older than the given UTC cutoff.
+  Future<void> pruneEvents(DateTime before) async =>
+      throw UnimplementedError('pruneEvents not implemented');
+
   /// Stores arbitrary metadata as string by key.
   Future<void> setMeta(String key, String value);
 

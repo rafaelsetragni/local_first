@@ -120,6 +120,45 @@ class _InMemoryStorage implements LocalFirstStorage {
   @override
   Future<String?> getMeta(String key) async => meta[key];
 
+  // Event log stubs
+  final Map<String, Map<String, dynamic>> events = {};
+
+  @override
+  Future<void> insertEvent(Map<String, dynamic> event) async {
+    events[event['event_id'] as String] = event;
+  }
+
+  @override
+  Future<Map<String, dynamic>?> getEventById(String eventId) async {
+    return events[eventId];
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> getEvents({String? repositoryName}) async {
+    return events.values
+        .where((e) => repositoryName == null || e['repository'] == repositoryName)
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+  }
+
+  @override
+  Future<void> deleteEvent(String eventId) async {
+    events.remove(eventId);
+  }
+
+  @override
+  Future<void> clearEvents() async {
+    events.clear();
+  }
+
+  @override
+  Future<void> pruneEvents(DateTime before) async {
+    events.removeWhere((_, e) {
+      final ts = e['_sync_created_at'];
+      return ts is int && ts < before.toUtc().millisecondsSinceEpoch;
+    });
+  }
+
   @override
   Future<void> insert(
     String tableName,

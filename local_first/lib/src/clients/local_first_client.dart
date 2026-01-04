@@ -144,8 +144,22 @@ class LocalFirstClient {
       if (repositoryChangeJson.containsKey('insert')) {
         final inserts = (repositoryChangeJson['insert'] as List);
         for (var element in inserts) {
+          final map = Map<String, dynamic>.from(element);
+          final eventId = map['event_id'] as String? ?? map['_event_id'] as String?;
+          if (eventId != null &&
+              await _localStorage.getEventById(eventId) != null) {
+            continue; // already processed
+          }
+          // register event for idempotence
+          final recordId = map[repository.idFieldName]?.toString();
+          await _localStorage.insertEvent({
+            'event_id': eventId ?? UuidUtil.generateUuidV7(),
+            'repository': repository.name,
+            'record_id': recordId,
+            ...map,
+          });
           final object = repository._buildRemoteObject(
-            Map<String, dynamic>.from(element),
+            map,
             operation: SyncOperation.insert,
           );
           objects.add(object);
@@ -153,8 +167,21 @@ class LocalFirstClient {
       } else if (repositoryChangeJson.containsKey('update')) {
         final updates = (repositoryChangeJson['update'] as List);
         for (var element in updates) {
+          final map = Map<String, dynamic>.from(element);
+          final eventId = map['event_id'] as String? ?? map['_event_id'] as String?;
+          if (eventId != null &&
+              await _localStorage.getEventById(eventId) != null) {
+            continue;
+          }
+          final recordId = map[repository.idFieldName]?.toString();
+          await _localStorage.insertEvent({
+            'event_id': eventId ?? UuidUtil.generateUuidV7(),
+            'repository': repository.name,
+            'record_id': recordId,
+            ...map,
+          });
           final object = repository._buildRemoteObject(
-            Map<String, dynamic>.from(element),
+            map,
             operation: SyncOperation.update,
           );
           objects.add(object);

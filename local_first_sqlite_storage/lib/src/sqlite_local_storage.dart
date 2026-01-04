@@ -39,6 +39,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   static final RegExp _validName = RegExp(r'^[a-zA-Z0-9_]+$');
 
   String get _metadataTable => '${_namespace}__metadata';
+  String _eventsTable(String repo) => '${_namespace}__${repo}__events';
 
   Future<Database> get _database async {
     if (!_initialized || _db == null) {
@@ -116,6 +117,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }) async {
     _schemas[tableName] = Map.unmodifiable(schema);
     await _ensureTable(tableName);
+    await _ensureEventsTable(tableName);
   }
 
   @override
@@ -221,6 +223,118 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     await _notifyWatchers(tableName);
   }
 
+  // --- Event log API ---
+  @override
+  Future<void> insertEvent(Map<String, dynamic> event) async {
+    final repo = event['repository'] as String?;
+    final eventId = event['event_id'] as String?;
+    if (repo == null || repo.isEmpty) {
+      throw ArgumentError('Event is missing "repository".');
+    }
+    if (eventId == null || eventId.isEmpty) {
+      throw ArgumentError('Event is missing "event_id".');
+    }
+
+    final db = await _database;
+    await _ensureEventsTable(repo, db: db);
+    final table = _eventsTable(repo);
+
+    await db.insert(table, {
+      'event_id': eventId,
+      'payload': jsonEncode(event),
+      'sync_status': event['_sync_status'],
+      'sync_operation': event['_sync_operation'],
+      'sync_created_at': event['_sync_created_at'],
+      'sync_created_at_server': event['_sync_created_at_server'],
+      'sync_server_sequence': event['_sync_server_sequence'],
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  @override
+  Future<Map<String, dynamic>?> getEventById(String eventId) async {
+    final db = await _database;
+    for (final table in await _listEventTables(db: db)) {
+      final rows = await db.query(
+        table,
+        where: 'event_id = ?',
+        whereArgs: [eventId],
+        limit: 1,
+      );
+      if (rows.isNotEmpty) {
+        return _decodeEventRow(rows.first);
+      }
+    }
+    return null;
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> getEvents({String? repositoryName}) async {
+    final db = await _database;
+    final tables = repositoryName != null
+        ? <String>[_eventsTable(repositoryName)]
+        : await _listEventTables(db: db);
+
+    final results = <Map<String, dynamic>>[];
+    for (final table in tables) {
+      if (repositoryName != null) {
+        await _ensureEventsTable(repositoryName, db: db);
+      }
+      final rows = await db.query(table);
+      results.addAll(
+        rows.map(_decodeEventRow).whereType<Map<String, dynamic>>(),
+      );
+    }
+    return results;
+  }
+
+  @override
+  Future<void> deleteEvent(String eventId) async {
+    final db = await _database;
+    for (final table in await _listEventTables(db: db)) {
+      await db.delete(table, where: 'event_id = ?', whereArgs: [eventId]);
+    }
+  }
+
+  @override
+  Future<void> clearEvents() async {
+    final db = await _database;
+    for (final table in await _listEventTables(db: db)) {
+      await db.delete(table);
+    }
+  }
+
+  @override
+  Future<void> pruneEvents(DateTime before) async {
+    final db = await _database;
+    final cutoff = before.toUtc().millisecondsSinceEpoch;
+    for (final table in await _listEventTables(db: db)) {
+      await db.delete(
+        table,
+        where: 'sync_created_at IS NOT NULL AND sync_created_at < ?',
+        whereArgs: [cutoff],
+      );
+    }
+  }
+
+  Map<String, dynamic>? _decodeEventRow(Map<String, Object?> row) {
+    final payload = row['payload'];
+    if (payload is! String) return null;
+    final decoded = jsonDecode(payload);
+    if (decoded is! Map) return null;
+    return Map<String, dynamic>.from(decoded);
+  }
+
+  Future<List<String>> _listEventTables({Database? db}) async {
+    db ??= await _database;
+    final prefix = '${_namespace}__';
+    const suffix = '__events';
+    final rows = await db.rawQuery(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE ? AND name LIKE ?",
+      ['$prefix%', '%$suffix'],
+    );
+    return rows.map((r) => r['name'] as String).toList();
+  }
+
   @override
   Future<void> setMeta(String key, String value) async {
     final db = await _database;
@@ -296,6 +410,22 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     db ??= await _database;
     await db.execute(
       'CREATE TABLE IF NOT EXISTS $_metadataTable (key TEXT PRIMARY KEY, value TEXT)',
+    );
+  }
+
+  Future<void> _ensureEventsTable(String repositoryName, {Database? db}) async {
+    db ??= await _database;
+    final table = _eventsTable(repositoryName);
+    await db.execute(
+      'CREATE TABLE IF NOT EXISTS $table ('
+      'event_id TEXT PRIMARY KEY, '
+      'payload TEXT NOT NULL, '
+      'sync_status INTEGER, '
+      'sync_operation INTEGER, '
+      'sync_created_at INTEGER, '
+      'sync_created_at_server INTEGER, '
+      'sync_server_sequence INTEGER'
+      ')',
     );
   }
 

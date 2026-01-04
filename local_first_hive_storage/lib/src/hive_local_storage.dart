@@ -23,6 +23,9 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   /// Box for sync metadata
   late Box<dynamic> _metadataBox;
 
+  /// Box for event log
+  late Box<dynamic> _eventsBox;
+
   /// Initialization control flag
   bool _initialized = false;
 
@@ -69,6 +72,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
     // Open metadata box
     _metadataBox = await _hive.openBox<dynamic>(_metadataBoxName);
+    _eventsBox = await _hive.openBox<dynamic>(_eventsBoxName);
 
     _initialized = true;
   }
@@ -93,7 +97,9 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     await _closeAllBoxes();
     _boxes.clear();
     await _metadataBox.close();
+    await _eventsBox.close();
     _metadataBox = await _hive.openBox<dynamic>(_metadataBoxName);
+    _eventsBox = await _hive.openBox<dynamic>(_eventsBoxName);
   }
 
   Future<void> _closeAllBoxes() async {
@@ -104,6 +110,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   String get _metadataBoxName => '${_namespace}__offline_metadata';
+  String get _eventsBoxName => '${_namespace}__events';
 
   String _boxName(String tableName) => '${_namespace}__$tableName';
 
@@ -195,6 +202,72 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   Future<void> deleteAll(String tableName) async {
     final box = await _getBox(tableName);
     await box.clear();
+  }
+
+  // --- Event log API using a dedicated box ---
+  @override
+  Future<void> insertEvent(Map<String, dynamic> event) async {
+    if (!_initialized) {
+      throw StateError('HiveLocalFirstStorage not initialized. Call initialize() first.');
+    }
+    final eventId = event['event_id'] as String?;
+    if (eventId == null || eventId.isEmpty) {
+      throw ArgumentError('Event is missing "event_id".');
+    }
+    await _eventsBox.put(eventId, event);
+  }
+
+  @override
+  Future<Map<String, dynamic>?> getEventById(String eventId) async {
+    if (!_initialized) {
+      throw StateError('HiveLocalFirstStorage not initialized. Call initialize() first.');
+    }
+    final value = _eventsBox.get(eventId);
+    return value is Map ? Map<String, dynamic>.from(value) : null;
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> getEvents({String? repositoryName}) async {
+    if (!_initialized) {
+      throw StateError('HiveLocalFirstStorage not initialized. Call initialize() first.');
+    }
+    return _eventsBox.values
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .where((e) => repositoryName == null || e['repository'] == repositoryName)
+        .toList();
+  }
+
+  @override
+  Future<void> deleteEvent(String eventId) async {
+    if (!_initialized) {
+      throw StateError('HiveLocalFirstStorage not initialized. Call initialize() first.');
+    }
+    await _eventsBox.delete(eventId);
+  }
+
+  @override
+  Future<void> clearEvents() async {
+    if (!_initialized) {
+      throw StateError('HiveLocalFirstStorage not initialized. Call initialize() first.');
+    }
+    await _eventsBox.clear();
+  }
+
+  @override
+  Future<void> pruneEvents(DateTime before) async {
+    if (!_initialized) {
+      throw StateError('HiveLocalFirstStorage not initialized. Call initialize() first.');
+    }
+    final cutoff = before.toUtc().millisecondsSinceEpoch;
+    final keysToDelete = _eventsBox.keys.where((key) {
+      final value = _eventsBox.get(key);
+      if (value is Map && value['_sync_created_at'] is int) {
+        return (value['_sync_created_at'] as int) < cutoff;
+      }
+      return false;
+    }).toList();
+    await _eventsBox.deleteAll(keysToDelete);
   }
 
   @override

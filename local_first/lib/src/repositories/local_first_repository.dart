@@ -121,7 +121,9 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
       try {
         final syncResult = await strategy.onPushToRemote(object);
         object._setSyncStatus(syncResult);
-        if (syncResult == SyncStatus.ok) return;
+        if (syncResult == SyncStatus.ok) {
+          return;
+        }
       } catch (e) {
         object._setSyncStatus(SyncStatus.failed);
       }
@@ -148,6 +150,7 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
   Future<void> _insert(T item) async {
     final model = _prepareForInsert(item);
 
+    await _saveEvent(model);
     final insertFuture = _client.localStorage.insert(
       name,
       _toStorageJson(model),
@@ -166,6 +169,7 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
     object._setSyncStatus(SyncStatus.pending);
     object._setSyncOperation(operation);
 
+    await _saveEvent(object);
     await _client.localStorage.update(
       name,
       getId(object),
@@ -199,6 +203,7 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
     object._setSyncStatus(SyncStatus.pending);
     object._setSyncOperation(SyncOperation.delete);
 
+    await _saveEvent(object);
     await _client.localStorage.update(
       name,
       getId(object),
@@ -215,6 +220,17 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
           model.syncCreatedAt?.millisecondsSinceEpoch ??
           DateTime.now().toUtc().millisecondsSinceEpoch,
     };
+  }
+
+  Future<void> _saveEvent(T model) async {
+    final eventId = UuidUtil.generateUuidV7();
+    final event = {
+      'event_id': eventId,
+      'repository': name,
+      'record_id': getId(model),
+      ..._toStorageJson(model),
+    };
+    await _client.localStorage.insertEvent(event);
   }
 
   T _prepareForInsert(T model) {
@@ -270,6 +286,7 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
       final localObj = localMap[remoteId];
 
       if (remoteObj.isDeleted) {
+        await _saveEvent(remoteObj);
         if (localObj != null && !localObj.needSync) {
           await _client.localStorage.delete(name, remoteId);
         }
@@ -277,6 +294,7 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
       }
 
       if (localObj == null) {
+        await _saveEvent(remoteObj);
         await _client.localStorage.insert(
           name,
           _toStorageJson(remoteObj),
@@ -288,6 +306,7 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
       final resolved = resolveConflict(localObj, remoteObj);
       resolved._setSyncStatus(SyncStatus.ok);
       resolved._setSyncOperation(SyncOperation.update);
+      await _saveEvent(resolved);
       await _client.localStorage.update(
         name,
         remoteId,
@@ -297,6 +316,17 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
   }
 
   Future<List<T>> getPendingObjects() async {
+    final eventMaps =
+        await _client.localStorage.getEvents(repositoryName: name);
+    if (eventMaps.isNotEmpty) {
+      final events = eventMaps
+          .map(_modelFromJson)
+          .where((obj) => obj.needSync)
+          .toList();
+      return events;
+    }
+
+    // Fallback to legacy data-table scan if no event log present.
     final allObjects = await _getAll(includeDeleted: true);
     return allObjects.where((obj) => obj.needSync).toList();
   }
