@@ -10,21 +10,25 @@ class LocalFirstRepository<T extends Object> {
     required this.getId,
     required this.toJson,
     required this.fromJson,
-    required this.onConflictEvent,
+    LocalFirstEvent<T> Function(
+      LocalFirstEvent<T> local,
+      LocalFirstEvent<T> remote,
+    )?
+        onConflictEvent,
     required this.schema,
     required this.idFieldName,
-  });
+  }) : onConflictEvent = onConflictEvent ?? ConflictUtil.lastWriteWins;
 
   factory LocalFirstRepository.create({
     required String name,
     required String Function(T model) getId,
     required JsonMap<dynamic> Function(T model) toJson,
     required T Function(JsonMap<dynamic> json) fromJson,
-    required LocalFirstEvent<T> Function(
+    LocalFirstEvent<T> Function(
       LocalFirstEvent<T> local,
       LocalFirstEvent<T> remote,
-    )
-    onConflictEvent,
+    )?
+        onConflictEvent,
     JsonMap<LocalFieldType> schema = const {},
     String idFieldName = 'id',
   }) {
@@ -36,7 +40,7 @@ class LocalFirstRepository<T extends Object> {
       onConflictEvent: onConflictEvent,
       schema: schema,
       idFieldName: idFieldName,
-    );
+  );
   }
 
   final String name;
@@ -188,7 +192,8 @@ class LocalFirstRepository<T extends Object> {
   LocalFirstEvent<T> resolveConflict(
     LocalFirstEvent<T> local,
     LocalFirstEvent<T> remote,
-  ) => onConflictEvent(local, remote);
+  ) =>
+      onConflictEvent(local, remote);
 
   /// Applies incoming remote events.
   Future<void> _mergeRemoteItems(LocalFirstEvents<T> remote) async {
