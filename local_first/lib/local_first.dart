@@ -12,3 +12,4 @@ part 'src/models/local_first_model.dart';
 part 'src/repositories/local_first_repository.dart';
 part 'src/sync_strategies/data_sync_strategy.dart';
 part 'src/utils/uuid_util.dart';
+part 'src/utils/value_stream.dart';

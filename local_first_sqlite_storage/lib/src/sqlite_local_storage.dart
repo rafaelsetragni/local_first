@@ -78,7 +78,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     for (final observers in List.of(_observers.values)) {
       for (final observer in List.of(observers)) {
-        await observer.controller.close();
+        await observer.stream.close();
       }
     }
     _observers.clear();
@@ -373,7 +373,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     final observer = _SqliteQueryObserver(
       query,
-      StreamController<List<Map<String, dynamic>>>.broadcast(),
+      ValueStream<List<Map<String, dynamic>>>(),
     );
 
     _observers
@@ -383,27 +383,16 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     Future<void> emit() async {
       try {
         final results = await this.query(query);
-        if (!observer.controller.isClosed) {
-          observer.controller.add(results);
-        }
+        observer.stream.add(results);
       } catch (e, st) {
-        if (!observer.controller.isClosed) {
-          observer.controller.addError(e, st);
-        }
+        observer.stream.addError(e, st);
       }
     }
 
-    observer.controller
-      ..onListen = emit
-      ..onCancel = () {
-        final observers = _observers[query.repositoryName];
-        observers?.remove(observer);
-        if (observers != null && observers.isEmpty) {
-          _observers.remove(query.repositoryName);
-        }
-      };
+    // Prime with the current snapshot.
+    emit();
 
-    return observer.controller.stream;
+    return observer.stream.stream;
   }
 
   Future<void> _ensureMetadataTable({Database? db}) async {
@@ -577,15 +566,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     if (observers == null || observers.isEmpty) return;
 
     for (final observer in List.of(observers)) {
-      if (observer.controller.isClosed) {
-        observers.remove(observer);
-        continue;
-      }
       try {
         final results = await query(observer.query);
-        observer.controller.add(results);
+        observer.stream.add(results);
       } catch (e, st) {
-        observer.controller.addError(e, st);
+        observer.stream.addError(e, st);
       }
     }
   }
@@ -723,8 +708,8 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 }
 
 class _SqliteQueryObserver {
-  _SqliteQueryObserver(this.query, this.controller);
+  _SqliteQueryObserver(this.query, this.stream);
 
   final LocalFirstQuery query;
-  final StreamController<List<Map<String, dynamic>>> controller;
+  final ValueStream<List<Map<String, dynamic>>> stream;
 }

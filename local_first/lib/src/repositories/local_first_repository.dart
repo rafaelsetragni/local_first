@@ -117,17 +117,22 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
   }
 
   Future<void> _pushLocalObject(T object) async {
-    for (var strategy in _syncStrategies) {
-      try {
-        final syncResult = await strategy.onPushToRemote(object);
-        object._setSyncStatus(syncResult);
-        if (syncResult == SyncStatus.ok) {
-          return;
+    final results = await Future.wait(
+      _syncStrategies.map((strategy) async {
+        try {
+          return await strategy.onPushToRemote(object);
+        } catch (_) {
+          return SyncStatus.failed;
         }
-      } catch (e) {
-        object._setSyncStatus(SyncStatus.failed);
-      }
-    }
+      }),
+    );
+
+    final bestStatus = results.fold<SyncStatus>(
+      object.syncStatus,
+      (best, current) => current.index > best.index ? current : best,
+    );
+
+    object._setSyncStatus(bestStatus);
     await _updateObjectStatus(object);
   }
 
@@ -286,7 +291,7 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
       final localObj = localMap[remoteId];
 
       if (remoteObj.isDeleted) {
-        await _saveEvent(remoteObj);
+        await _saveEvent(remoteObj.._setSyncStatus(SyncStatus.ok));
         if (localObj != null && !localObj.needSync) {
           await _client.localStorage.delete(name, remoteId);
         }
@@ -294,7 +299,7 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
       }
 
       if (localObj == null) {
-        await _saveEvent(remoteObj);
+        await _saveEvent(remoteObj.._setSyncStatus(SyncStatus.ok));
         await _client.localStorage.insert(
           name,
           _toStorageJson(remoteObj),

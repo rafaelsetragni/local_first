@@ -6,9 +6,9 @@ extension SqliteLocalFirstStorageTestHelpers on SqliteLocalFirstStorage {
   }
 
   void addClosedObserverFor(LocalFirstQuery query) {
-    final controller = StreamController<List<Map<String, dynamic>>>.broadcast();
-    controller.close();
-    final observer = _SqliteQueryObserver(query, controller);
+    final stream = ValueStream<List<Map<String, dynamic>>>();
+    stream.close();
+    final observer = _SqliteQueryObserver(query, stream);
     _observers
         .putIfAbsent(query.repositoryName, () => <_SqliteQueryObserver>{})
         .add(observer);
