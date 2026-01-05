@@ -6,7 +6,7 @@ import 'package:local_first/local_first.dart';
 import 'package:local_first_sqlite_storage/local_first_sqlite_storage.dart';
 import 'package:mongo_dart/mongo_dart.dart' hide State, Center;
 
-typedef JsonMap<T> = Map<String, T>;
+typedef JsonMap<T> = JsonMap<T>;
 
 // To use this example, first you need to start a MongoDB service, and
 // you can do it easily creating an container instance using Docker.
@@ -1121,7 +1121,7 @@ class MongoApi {
           if (doc['id'] != null) deletes.add(doc['id']);
           return;
         }
-        final item = Map<String, dynamic>.from(doc)
+        final item = JsonMap<dynamic>.from(doc)
           ..remove('operation')
           ..remove('_id');
         if (op == 'insert') {
@@ -1158,7 +1158,7 @@ class MongoApi {
     await cursor.forEach((doc) {
       final id = doc['id'];
       if (id is! String) return;
-      final data = Map<String, dynamic>.from(doc)
+      final data = JsonMap<dynamic>.from(doc)
         ..remove('_id')
         ..remove('operation');
       users[id] = _fromMongoDateFields(data);
@@ -1180,7 +1180,7 @@ class MongoApi {
         final list = repositoryChanges[key];
         if (list is! List) continue;
         for (final item in list) {
-          if (item is! Map<String, dynamic>) continue;
+          if (item is! JsonMap<dynamic>) continue;
           final updatedValue = item['updated_at'];
           DateTime? candidate;
           if (updatedValue is DateTime) {
@@ -1199,7 +1199,7 @@ class MongoApi {
   }
 
   JsonMap<dynamic> _toMongoDateFields(JsonMap<dynamic> item) {
-    final map = Map<String, dynamic>.from(item);
+    final map = JsonMap<dynamic>.from(item);
     for (final key in ['created_at', 'updated_at']) {
       final value = map[key];
       if (value is String) {
@@ -1213,7 +1213,7 @@ class MongoApi {
   }
 
   JsonMap<dynamic> _fromMongoDateFields(JsonMap<dynamic> item) {
-    final map = Map<String, dynamic>.from(item);
+    final map = JsonMap<dynamic>.from(item);
     for (final key in ['created_at', 'updated_at']) {
       final value = map[key];
       if (value is DateTime) {

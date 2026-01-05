@@ -34,6 +34,7 @@ class LocalFirstEvent<T> {
     required this.syncStatus,
     required DateTime syncCreatedAt,
     required String? eventId,
+    required this.serverSequence,
   }) : eventId = eventId ?? UuidUtil.generateUuidV7(),
        syncCreatedAt = syncCreatedAt.toUtc();
 
@@ -44,6 +45,7 @@ class LocalFirstEvent<T> {
   final SyncStatus syncStatus;
   final DateTime syncCreatedAt;
   final T data;
+  final int? serverSequence;
 
   bool get isDelete => syncOperation == SyncOperation.delete;
 
@@ -56,6 +58,7 @@ class LocalFirstEvent<T> {
     SyncStatus? syncStatus,
     DateTime? syncCreatedAt,
     T? data,
+    int? serverSequence,
   }) {
     return LocalFirstEvent<T>._internal(
       repositoryName: repositoryName ?? this.repositoryName,
@@ -65,6 +68,7 @@ class LocalFirstEvent<T> {
       syncCreatedAt: (syncCreatedAt ?? this.syncCreatedAt).toUtc(),
       eventId: eventId ?? this.eventId,
       data: data ?? this.data,
+      serverSequence: serverSequence ?? this.serverSequence,
     );
   }
 
@@ -85,6 +89,7 @@ class LocalFirstEvent<T> {
       syncCreatedAt: now,
       eventId: eventId,
       data: data,
+      serverSequence: null,
     );
   }
 
@@ -105,6 +110,7 @@ class LocalFirstEvent<T> {
       syncCreatedAt: now,
       eventId: eventId,
       data: data,
+      serverSequence: null,
     );
   }
 
@@ -125,17 +131,19 @@ class LocalFirstEvent<T> {
       syncCreatedAt: now,
       eventId: eventId,
       data: data,
+      serverSequence: null,
     );
   }
 
   /// Factory for a remote event (already synced/authoritative).
-  static LocalFirstEvent<T> createRemote<T>({
+  static LocalFirstEvent<T> createFromRemote<T>({
     required String repositoryName,
     required String recordId,
     required SyncOperation operation,
     required T data,
     required DateTime? createdAt,
     required String? eventId,
+    required int serverSequence,
   }) {
     final ts = (createdAt ?? DateTime.now()).toUtc();
     return LocalFirstEvent<T>._internal(
@@ -146,10 +154,11 @@ class LocalFirstEvent<T> {
       syncCreatedAt: ts,
       eventId: eventId,
       data: data,
+      serverSequence: serverSequence,
     );
   }
 
-  Map<String, dynamic> toJson({Map<String, dynamic> Function(T data)? toJson}) {
+  JsonMap<dynamic> toJson({JsonMap<dynamic> Function(T data)? toJson}) {
     final payload = toJson != null ? toJson(data) : data;
     return {
       'event_id': eventId,
@@ -159,13 +168,18 @@ class LocalFirstEvent<T> {
       'status': syncStatus.index,
       'operation': syncOperation.index,
       'created_at': syncCreatedAt.millisecondsSinceEpoch,
+      'server_sequence': serverSequence,
     };
   }
 
   static LocalFirstEvent<T> fromJson<T>(
-    Map<String, dynamic> json, {
-    required T Function(Map<String, dynamic>) fromJson,
+    JsonMap<dynamic> json, {
+    required T Function(JsonMap<dynamic>) fromJson,
   }) {
+    final serverSequence = json['server_sequence'];
+    if (serverSequence == null || serverSequence is! int) {
+      throw FormatException('Missing server_sequence');
+    }
     return LocalFirstEvent<T>._internal(
       repositoryName: json['repository'] as String,
       recordId: json['record_id'] as String,
@@ -176,21 +190,38 @@ class LocalFirstEvent<T> {
         isUtc: true,
       ),
       eventId: json['event_id'] as String?,
-      data: fromJson(json['payload'] as Map<String, dynamic>),
+      data: fromJson(json['payload'] as JsonMap<dynamic>),
+      serverSequence: serverSequence,
     );
   }
 }
 
 /// Extension methods for lists of models with sync metadata.
 extension LocalFirstEventsX<T extends LocalFirstEvent> on List<T> {
+  /// Filters events by repository name and casts to a typed list.
+  List<LocalFirstEvent<U>> forRepository<U extends Object>(String repository) {
+    return where((e) => e.repositoryName == repository)
+        .map((e) => e as LocalFirstEvent<U>)
+        .toList();
+  }
+
+  /// Groups events by repository name, preserving type.
+  Map<String, List<LocalFirstEvent>> groupByRepository() {
+    final map = <String, List<LocalFirstEvent>>{};
+    for (final e in this) {
+      map.putIfAbsent(e.repositoryName, () => []).add(e);
+    }
+    return map;
+  }
+
   /// Converts a list of objects to the sync JSON format.
   ///
   /// Groups objects by operation type (insert, update, delete) as expected
   /// by the push endpoint.
-  Map<String, dynamic> toJson() {
-    final inserts = <Map<String, dynamic>>[];
-    final updates = <Map<String, dynamic>>[];
-    final deletes = <Map<String, dynamic>>[];
+  JsonMap<dynamic> toJson({required String idFieldName}) {
+    final inserts = <JsonMap<dynamic>>[];
+    final updates = <JsonMap<dynamic>>[];
+    final deletes = <JsonMap<dynamic>>[];
 
     for (var obj in this) {
       final itemJson = obj.toJson();
@@ -203,7 +234,10 @@ extension LocalFirstEventsX<T extends LocalFirstEvent> on List<T> {
           updates.add(itemJson);
           break;
         case SyncOperation.delete:
-          deletes.add(itemJson);
+          deletes.add({
+            ...itemJson,
+            'payload': {idFieldName: obj.recordId},
+          });
           break;
       }
     }

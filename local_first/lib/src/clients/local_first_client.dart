@@ -8,11 +8,13 @@ part of '../../local_first.dart';
 /// - Maintaining sync state across nodes
 /// - Providing access to the local database delegate
 class LocalFirstClient {
-  late final List<LocalFirstRepository> _repositories;
+  final List<LocalFirstRepository> _repositories = [];
   final LocalFirstStorage _localStorage;
+  final List<DataSyncStrategy> syncStrategies = [];
+  final Completer<void> _onInitialize = Completer<void>();
+  Future<void>? _initializeFuture;
 
-  final List<DataSyncStrategy> syncStrategies;
-  final Completer _onInitialize = Completer();
+  bool get _initialized => _onInitialize.isCompleted;
 
   Future get awaitInitialization => _onInitialize.future;
 
@@ -21,53 +23,101 @@ class LocalFirstClient {
 
   /// Creates an instance of LocalFirstClient.
   ///
-  /// Parameters:
-  /// - [nodes]: List of [LocalFirstRepository] instances to be managed
-  /// - [localStorage]: The local database delegate for storage operations
-  ///
-  /// Throws [ArgumentError] if there are duplicate node names.
+  /// Repositories and estratégias de sync podem ser registradas depois via
+  /// [registerRepositories] e [registerSyncStrategies], mas sempre antes de
+  /// [initialize].
   LocalFirstClient({
-    required List<LocalFirstRepository> repositories,
+    List<LocalFirstRepository> repositories = const [],
     required LocalFirstStorage localStorage,
-    required this.syncStrategies,
-  }) : assert(
-         syncStrategies.isNotEmpty,
-         'You need to provide at least one sync strategy.',
-       ),
-       _localStorage = localStorage {
-    final names = repositories.map((n) => n.name).toSet();
-    if (names.length != repositories.length) {
-      throw ArgumentError('Duplicate node names');
+    List<DataSyncStrategy> syncStrategies = const [],
+  }) : _localStorage = localStorage {
+    if (repositories.isNotEmpty) {
+      registerRepositories(repositories);
     }
-    for (var repository in repositories) {
+    if (syncStrategies.isNotEmpty) {
+      registerSyncStrategies(syncStrategies);
+    }
+  }
+
+  /// Registers repositories before initialization.
+  void registerRepositories(List<LocalFirstRepository> repositories) {
+    if (repositories.isEmpty) return;
+    if (_initialized) {
+      throw StateError('Cannot register repositories after initialize');
+    }
+    final existingNames = _repositories.map((n) => n.name).toSet();
+    final incomingNames = repositories.map((n) => n.name).toSet();
+    if (incomingNames.length != repositories.length) {
+      throw ArgumentError('Duplicate repository names in input');
+    }
+    if (existingNames.intersection(incomingNames).isNotEmpty) {
+      throw ArgumentError('Duplicate repository names across registrations');
+    }
+    for (final repository in repositories) {
       repository._client = this;
-      repository._syncStrategies = syncStrategies;
+      repository._syncStrategies = List.unmodifiable(syncStrategies);
+      _repositories.add(repository);
     }
-    for (final strategy in syncStrategies) {
+  }
+
+  /// Registers sync strategies before initialization.
+  void registerSyncStrategies(List<DataSyncStrategy> strategies) {
+    if (strategies.isEmpty) return;
+    if (_initialized) {
+      throw StateError('Cannot register sync strategies after initialize');
+    }
+    for (final strategy in strategies) {
       strategy.attach(this);
     }
-
-    _repositories = List.unmodifiable(repositories);
+    syncStrategies.addAll(strategies);
+    for (final repository in _repositories) {
+      repository._syncStrategies = List.unmodifiable(syncStrategies);
+    }
   }
 
   /// Gets a repository by its name.
   ///
-  /// Throws [StateError] if no node with the given name exists.
-  LocalFirstRepository getRepositoryByName(String name) {
-    return _repositories.firstWhere((repo) => repo.name == name);
+  /// Returns the repository with the given name, or null if not found.
+  LocalFirstRepository? getRepositoryByName(String name) {
+    for (final repo in _repositories) {
+      if (repo.name == name) return repo;
+    }
+    return null;
   }
 
   /// Initializes the LocalFirstClient and all its repositories.
   ///
   /// This must be called before using any LocalFirstClient functionality.
   /// It initializes the local database and all registered repositories.
-  Future<void> initialize() async {
-    await _localStorage.initialize();
+  Future<void> initialize() async => _initializeFuture ??= _runInitialize();
 
-    for (var repository in _repositories) {
-      await repository.initialize();
+  Future<void> _runInitialize() async {
+    try {
+      assert(
+        !_initialized,
+        'Initialize should only be called once in the entire application.',
+      );
+      assert(
+        _repositories.isNotEmpty,
+        'You need to register at least one repository.',
+      );
+      assert(
+        syncStrategies.isNotEmpty,
+        'You need to provide at least one sync strategy.',
+      );
+
+      await _localStorage.initialize();
+      for (var repository in _repositories) {
+        repository.reset();
+        await repository.initialize();
+      }
+      if (!_onInitialize.isCompleted) {
+        _onInitialize.complete();
+      }
+    } catch (e) {
+      _initializeFuture = null;
+      rethrow;
     }
-    _onInitialize.complete();
   }
 
   /// Clears all data from the local database.
@@ -90,29 +140,73 @@ class LocalFirstClient {
     await _localStorage.close();
   }
 
-  Future<void> _pullRemoteChanges(Map<String, dynamic> map) async {
-    final LocalFirstResponse response = await _buildOfflineResponse(map);
-
-    for (final MapEntry<LocalFirstRepository, LocalFirstEventsDynamic> entry
-        in response.changes.entries) {
-      final LocalFirstRepository repository = entry.key;
-      final LocalFirstEventsDynamic remoteObjects = entry.value;
-      await repository._mergeRemoteItems(remoteObjects);
-    }
-
-    for (final repository in _repositories) {
-      await setKeyValue(
-        '__last_sync__${repository.name}',
-        response.timestamp.toIso8601String(),
-      );
-    }
+  /// Applies remote changes grouped by repository name.
+  ///
+  /// Expected shape:
+  /// {
+  ///   "repoName": {
+  ///     "server_sequence": 123,
+  ///     "events": [ ... ]
+  ///   },
+  ///   ...
+  /// }
+  Future<void> _pullRemoteChanges(JsonMap<dynamic> map) {
+    return Future.wait([
+      for (final repoName in map.keys)
+        _pullRemoteRepositoryChanges(
+          repositoryName: repoName.toString(),
+          payload: map[repoName] as JsonMap<dynamic>,
+        ).catchError((e, s) {
+          throw _PullRepositoryException(repoName.toString(), e, s);
+        }),
+    ]);
   }
 
-  Future<LocalFirstEventsDynamic> getAllPendingObjects() async {
+  Future<void> _pullRemoteRepositoryChanges({
+    required String repositoryName,
+    required JsonMap<dynamic> payload,
+  }) async {
+    final repo = getRepositoryByName(repositoryName);
+    if (repo == null) {
+      throw StateError('Repository $repositoryName not registered');
+    }
+
+    final serverSeq = payload['server_sequence'];
+    if (serverSeq is! int) {
+      throw FormatException('Missing server_sequence for $repositoryName');
+    }
+
+    final eventsJson = payload['events'];
+    if (eventsJson is! List) {
+      throw FormatException('Missing events list for $repositoryName');
+    }
+
+    final rawEvents = eventsJson
+        .map((e) => JsonMap<dynamic>.from(e as Map))
+        .toList(growable: false);
+
+    await repo._mergeRemoteEventMaps(rawEvents);
+    await setKeyValue(
+      _getServerSequenceKey(repositoryName: repositoryName),
+      serverSeq.toString(),
+    );
+  }
+
+  Future<LocalFirstEvents> getAllPendingObjects() async {
     final results = await Future.wait([
       for (var repository in _repositories) repository.getPendingObjects(),
     ]);
     return results.expand((e) => e).toList();
+  }
+
+  /// Marks events as synchronized (status ok) across repositories.
+  Future<void> confirmLocalEvents(List<LocalFirstEvent> events) async {
+    final grouped = events.groupByRepository();
+    for (final repository in _repositories) {
+      final repoEvents = grouped[repository.name];
+      if (repoEvents == null || repoEvents.isEmpty) continue;
+      await repository.markEventsAsSynced(repoEvents);
+    }
   }
 
   Future<String?> getMeta(String key) async {
@@ -123,71 +217,24 @@ class LocalFirstClient {
     await localStorage.setMeta(key, value);
   }
 
-  Future<LocalFirstResponse> _buildOfflineResponse(
-    Map<String, dynamic> json,
-  ) async {
-    if (json['timestamp'] == null || json['changes'] == null) {
-      throw FormatException('Invalid offline response format');
-    }
+  String _getServerSequenceKey({required String repositoryName}) =>
+      '_last_sync_seq_$repositoryName';
 
-    final timestamp = DateTime.parse(json['timestamp'] as String);
-    final changesJson = json['changes'] as Map;
-    final repositoryObjects =
-        <LocalFirstRepository, List<LocalFirstEvent>>{};
-
-    for (var repositoryName in changesJson.keys) {
-      final repository = getRepositoryByName(repositoryName as String);
-      final objects = <LocalFirstEvent>[];
-
-      final repositoryChangeJson =
-          changesJson[repositoryName] as Map<String, dynamic>;
-
-      if (repositoryChangeJson.containsKey('insert')) {
-        final inserts = (repositoryChangeJson['insert'] as List);
-        for (var element in inserts) {
-          final map = Map<String, dynamic>.from(element);
-          final eventId = map['event_id'] as String?;
-          if (eventId != null &&
-              await _localStorage.getEventById(eventId) != null) {
-            continue; // already processed
-          }
-          // register event for idempotence
-          final recordId = map[repository.idFieldName]?.toString();
-          await _localStorage.insertEvent({
-            'event_id': eventId ?? UuidUtil.generateUuidV7(),
-            'repository': repository.name,
-            'record_id': recordId,
-            ...map,
-          });
-          // TODO: rework remote object building in subsequent refactor.
-        }
-      } else if (repositoryChangeJson.containsKey('update')) {
-        final updates = (repositoryChangeJson['update'] as List);
-        for (var element in updates) {
-          final map = Map<String, dynamic>.from(element);
-          final eventId = map['event_id'] as String?;
-          if (eventId != null &&
-              await _localStorage.getEventById(eventId) != null) {
-            continue;
-          }
-          final recordId = map[repository.idFieldName]?.toString();
-          await _localStorage.insertEvent({
-            'event_id': eventId ?? UuidUtil.generateUuidV7(),
-            'repository': repository.name,
-            'record_id': recordId,
-            ...map,
-          });
-          // TODO: rework remote object building in subsequent refactor.
-        }
-      } else if (repositoryChangeJson.containsKey('delete')) {
-        final deleteIds = (repositoryChangeJson['delete'] as List<String>);
-        for (var id in deleteIds) {
-          // TODO: handle delete events in subsequent refactor.
-        }
-      }
-
-      repositoryObjects[repository] = objects;
-    }
-    return LocalFirstResponse(changes: repositoryObjects, timestamp: timestamp);
+  /// Returns the last server sequence stored for a repository, if any.
+  Future<int?> getLastServerSequence(String repositoryName) async {
+    final raw = await localStorage.getMeta(
+      _getServerSequenceKey(repositoryName: repositoryName),
+    );
+    return raw == null ? null : int.tryParse(raw);
   }
+}
+
+class _PullRepositoryException implements Exception {
+  _PullRepositoryException(this.repository, this.error, this.stackTrace);
+  final String repository;
+  final Object error;
+  final StackTrace stackTrace;
+
+  @override
+  String toString() => 'Pull failed for repository $repository: $error';
 }

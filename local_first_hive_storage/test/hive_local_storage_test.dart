@@ -545,9 +545,9 @@ class _TestModel with LocalFirstModel {
   final int? age;
 
   @override
-  Map<String, dynamic> toJson() => {'id': id, if (age != null) 'age': age};
+  JsonMap<dynamic> toJson() => {'id': id, if (age != null) 'age': age};
 
-  factory _TestModel.fromJson(Map<String, dynamic> json) =>
+  factory _TestModel.fromJson(JsonMap<dynamic> json) =>
       _TestModel(id: json['id'] as String, age: json['age'] as int?);
 }
 
@@ -575,7 +575,7 @@ class _ThrowingQueryHiveStorage extends HiveLocalFirstStorage {
   });
 
   @override
-  Future<List<Map<String, dynamic>>> query(LocalFirstQuery query) {
+  Future<List<JsonMap<dynamic>>> query(LocalFirstQuery query) {
     throw Exception('query failed');
   }
 }

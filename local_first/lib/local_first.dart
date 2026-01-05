@@ -13,3 +13,6 @@ part 'src/repositories/local_first_repository.dart';
 part 'src/sync_strategies/data_sync_strategy.dart';
 part 'src/utils/uuid_util.dart';
 part 'src/utils/value_stream.dart';
+part 'src/storages/local_first_memory_storage.dart';
+
+typedef JsonMap<T> = Map<String, T>;

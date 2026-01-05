@@ -42,13 +42,13 @@ class Todo with LocalFirstModel {
   final DateTime updatedAt;
 
   @override
-  Map<String, dynamic> toJson() => {
+  JsonMap<dynamic> toJson() => {
         'id': id,
         'title': title,
         'updated_at': updatedAt.toIso8601String(),
       };
 
-  factory Todo.fromJson(Map<String, dynamic> json) => Todo(
+  factory Todo.fromJson(JsonMap<dynamic> json) => Todo(
         id: json['id'] as String,
         title: json['title'] as String,
       );

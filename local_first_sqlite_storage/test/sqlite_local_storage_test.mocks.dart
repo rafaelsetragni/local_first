@@ -57,16 +57,16 @@ class MockQueryBehavior extends _i1.Mock implements _i4.QueryBehavior {
   }
 
   @override
-  _i3.Future<List<Map<String, dynamic>>> call(
+  _i3.Future<List<JsonMap<dynamic>>> call(
     _i5.LocalFirstQuery<_i5.LocalFirstModel>? query,
   ) =>
       (super.noSuchMethod(
             Invocation.method(#call, [query]),
-            returnValue: _i3.Future<List<Map<String, dynamic>>>.value(
-              <Map<String, dynamic>>[],
+            returnValue: _i3.Future<List<JsonMap<dynamic>>>.value(
+              <JsonMap<dynamic>>[],
             ),
           )
-          as _i3.Future<List<Map<String, dynamic>>>);
+          as _i3.Future<List<JsonMap<dynamic>>>);
 }
 
 /// A class which mocks [DatabaseFactory].
@@ -309,7 +309,7 @@ class MockDatabase extends _i1.Mock implements _i2.Database {
   @override
   _i3.Future<int> insert(
     String? table,
-    Map<String, Object?>? values, {
+    JsonMap<Object?>? values, {
     String? nullColumnHack,
     _i2.ConflictAlgorithm? conflictAlgorithm,
   }) =>
@@ -327,7 +327,7 @@ class MockDatabase extends _i1.Mock implements _i2.Database {
           as _i3.Future<int>);
 
   @override
-  _i3.Future<List<Map<String, Object?>>> query(
+  _i3.Future<List<JsonMap<Object?>>> query(
     String? table, {
     bool? distinct,
     List<String>? columns,
@@ -355,24 +355,24 @@ class MockDatabase extends _i1.Mock implements _i2.Database {
                 #offset: offset,
               },
             ),
-            returnValue: _i3.Future<List<Map<String, Object?>>>.value(
-              <Map<String, Object?>>[],
+            returnValue: _i3.Future<List<JsonMap<Object?>>>.value(
+              <JsonMap<Object?>>[],
             ),
           )
-          as _i3.Future<List<Map<String, Object?>>>);
+          as _i3.Future<List<JsonMap<Object?>>>);
 
   @override
-  _i3.Future<List<Map<String, Object?>>> rawQuery(
+  _i3.Future<List<JsonMap<Object?>>> rawQuery(
     String? sql, [
     List<Object?>? arguments,
   ]) =>
       (super.noSuchMethod(
             Invocation.method(#rawQuery, [sql, arguments]),
-            returnValue: _i3.Future<List<Map<String, Object?>>>.value(
-              <Map<String, Object?>>[],
+            returnValue: _i3.Future<List<JsonMap<Object?>>>.value(
+              <JsonMap<Object?>>[],
             ),
           )
-          as _i3.Future<List<Map<String, Object?>>>);
+          as _i3.Future<List<JsonMap<Object?>>>);
 
   @override
   _i3.Future<_i2.QueryCursor> rawQueryCursor(
@@ -465,7 +465,7 @@ class MockDatabase extends _i1.Mock implements _i2.Database {
   @override
   _i3.Future<int> update(
     String? table,
-    Map<String, Object?>? values, {
+    JsonMap<Object?>? values, {
     String? where,
     List<Object?>? whereArgs,
     _i2.ConflictAlgorithm? conflictAlgorithm,

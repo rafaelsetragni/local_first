@@ -6,7 +6,7 @@ extension SqliteLocalFirstStorageTestHelpers on SqliteLocalFirstStorage {
   }
 
   void addClosedObserverFor(LocalFirstQuery query) {
-    final stream = ValueStream<List<Map<String, dynamic>>>();
+    final stream = ValueStream<List<JsonMap<dynamic>>>();
     stream.close();
     final observer = _SqliteQueryObserver(query, stream);
     _observers

@@ -25,7 +25,13 @@ abstract class DataSyncStrategy {
     return _client.getAllPendingObjects();
   }
 
-  Future<void> pullChangesToLocal(Map<String, dynamic> remoteChanges) {
+  Future<void> pullChangesToLocal(JsonMap<dynamic> remoteChanges) {
     return _client._pullRemoteChanges(remoteChanges);
+  }
+
+  /// Marks a set of local events as synchronized (status ok) after a
+  /// successful push to the remote.
+  Future<void> confirmLocalEvents(List<LocalFirstEvent> events) {
+    return _client.confirmLocalEvents(events);
   }
 }

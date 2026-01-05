@@ -18,7 +18,7 @@ import 'package:path/path.dart' as p;
 /// - Supports reactive queries with box.watch()
 class HiveLocalFirstStorage implements LocalFirstStorage {
   /// Boxes for each table (lazy-loaded)
-  final Map<String, BoxBase<Map<dynamic, dynamic>>> _boxes = {};
+  final JsonMap<BoxBase<Map<dynamic, dynamic>>> _boxes = {};
 
   /// Box for sync metadata
   late Box<dynamic> _metadataBox;
@@ -136,43 +136,43 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> getAll(String tableName) async {
+  Future<List<JsonMap<dynamic>>> getAll(String tableName) async {
     final box = await _getBox(tableName);
 
     if (box is LazyBox<Map>) {
       final keys = box.keys.cast<String>();
-      final List<Map<String, dynamic>> items = [];
+      final List<JsonMap<dynamic>> items = [];
       for (final key in keys) {
         final raw = await box.get(key);
         if (raw != null) {
-          items.add(Map<String, dynamic>.from(raw));
+          items.add(JsonMap<dynamic>.from(raw));
         }
       }
       return items;
     }
 
-    // Convert Hive values to List<Map<String, dynamic>>
+    // Convert Hive values to List<JsonMap<dynamic>>
     return (box as Box<Map<dynamic, dynamic>>).values
-        .map((item) => Map<String, dynamic>.from(item))
+        .map((item) => JsonMap<dynamic>.from(item))
         .toList();
   }
 
   @override
-  Future<Map<String, dynamic>?> getById(String tableName, String id) {
+  Future<JsonMap<dynamic>?> getById(String tableName, String id) {
     return _getBox(tableName).then((box) async {
       if (box is LazyBox<Map>) {
         final rawItem = await box.get(id);
-        return rawItem != null ? Map<String, dynamic>.from(rawItem) : null;
+        return rawItem != null ? JsonMap<dynamic>.from(rawItem) : null;
       }
       final rawItem = (box as Box<Map<dynamic, dynamic>>).get(id);
-      return rawItem != null ? Map<String, dynamic>.from(rawItem) : null;
+      return rawItem != null ? JsonMap<dynamic>.from(rawItem) : null;
     });
   }
 
   @override
   Future<void> insert(
     String tableName,
-    Map<String, dynamic> item,
+    JsonMap<dynamic> item,
     String idField,
   ) async {
     final box = await _getBox(tableName);
@@ -185,7 +185,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   Future<void> update(
     String tableName,
     String id,
-    Map<String, dynamic> item,
+    JsonMap<dynamic> item,
   ) async {
     final box = await _getBox(tableName);
 
@@ -206,9 +206,11 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
   // --- Event log API using a dedicated box ---
   @override
-  Future<void> insertEvent(Map<String, dynamic> event) async {
+  Future<void> insertEvent(JsonMap<dynamic> event) async {
     if (!_initialized) {
-      throw StateError('HiveLocalFirstStorage not initialized. Call initialize() first.');
+      throw StateError(
+        'HiveLocalFirstStorage not initialized. Call initialize() first.',
+      );
     }
     final eventId = event['event_id'] as String?;
     if (eventId == null || eventId.isEmpty) {
@@ -218,30 +220,38 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<Map<String, dynamic>?> getEventById(String eventId) async {
+  Future<JsonMap<dynamic>?> getEventById(String eventId) async {
     if (!_initialized) {
-      throw StateError('HiveLocalFirstStorage not initialized. Call initialize() first.');
+      throw StateError(
+        'HiveLocalFirstStorage not initialized. Call initialize() first.',
+      );
     }
     final value = _eventsBox.get(eventId);
-    return value is Map ? Map<String, dynamic>.from(value) : null;
+    return value is Map ? JsonMap<dynamic>.from(value) : null;
   }
 
   @override
-  Future<List<Map<String, dynamic>>> getEvents({String? repositoryName}) async {
+  Future<List<JsonMap<dynamic>>> getEvents({String? repositoryName}) async {
     if (!_initialized) {
-      throw StateError('HiveLocalFirstStorage not initialized. Call initialize() first.');
+      throw StateError(
+        'HiveLocalFirstStorage not initialized. Call initialize() first.',
+      );
     }
     return _eventsBox.values
         .whereType<Map>()
-        .map((e) => Map<String, dynamic>.from(e))
-        .where((e) => repositoryName == null || e['repository'] == repositoryName)
+        .map((e) => JsonMap<dynamic>.from(e))
+        .where(
+          (e) => repositoryName == null || e['repository'] == repositoryName,
+        )
         .toList();
   }
 
   @override
   Future<void> deleteEvent(String eventId) async {
     if (!_initialized) {
-      throw StateError('HiveLocalFirstStorage not initialized. Call initialize() first.');
+      throw StateError(
+        'HiveLocalFirstStorage not initialized. Call initialize() first.',
+      );
     }
     await _eventsBox.delete(eventId);
   }
@@ -249,7 +259,9 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   @override
   Future<void> clearEvents() async {
     if (!_initialized) {
-      throw StateError('HiveLocalFirstStorage not initialized. Call initialize() first.');
+      throw StateError(
+        'HiveLocalFirstStorage not initialized. Call initialize() first.',
+      );
     }
     await _eventsBox.clear();
   }
@@ -257,7 +269,9 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   @override
   Future<void> pruneEvents(DateTime before) async {
     if (!_initialized) {
-      throw StateError('HiveLocalFirstStorage not initialized. Call initialize() first.');
+      throw StateError(
+        'HiveLocalFirstStorage not initialized. Call initialize() first.',
+      );
     }
     final cutoff = before.toUtc().millisecondsSinceEpoch;
     final keysToDelete = _eventsBox.keys.where((key) {
@@ -294,7 +308,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   @override
   Future<void> ensureSchema(
     String tableName,
-    Map<String, LocalFieldType> schema, {
+    JsonMap<LocalFieldType> schema, {
     required String idFieldName,
   }) async {
     // Hive stores Map payloads; no schema enforcement required.
@@ -357,7 +371,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   // ============================================
 
   @override
-  Future<List<Map<String, dynamic>>> query(LocalFirstQuery query) async {
+  Future<List<JsonMap<dynamic>>> query(LocalFirstQuery query) async {
     if (!_initialized) {
       throw StateError(
         'HiveLocalFirstStorage not initialized. Call initialize() first.',
@@ -367,7 +381,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     final box = await _getBox(query.repositoryName);
 
     // Optimization: iterate lazily instead of loading everything at once
-    final results = <Map<String, dynamic>>[];
+    final results = <JsonMap<dynamic>>[];
 
     // Collect items that match filters
     for (var key in box.keys) {
@@ -376,8 +390,8 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
           : (box as Box<Map<dynamic, dynamic>>).get(key);
       if (rawItem == null) continue;
 
-      // Convert Map<dynamic, dynamic> to Map<String, dynamic>
-      final item = Map<String, dynamic>.from(rawItem);
+      // Convert Map<dynamic, dynamic> to JsonMap<dynamic>
+      final item = JsonMap<dynamic>.from(rawItem);
 
       // Apply filters
       bool matches = true;
@@ -428,14 +442,14 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Stream<List<Map<String, dynamic>>> watchQuery(LocalFirstQuery query) {
+  Stream<List<JsonMap<dynamic>>> watchQuery(LocalFirstQuery query) {
     if (!_initialized) {
       throw StateError(
         'HiveLocalFirstStorage not initialized. Call initialize() first.',
       );
     }
 
-    final controller = StreamController<List<Map<String, dynamic>>>.broadcast();
+    final controller = StreamController<List<JsonMap<dynamic>>>.broadcast();
     StreamSubscription? sub;
 
     Future<void> emitCurrent() async {

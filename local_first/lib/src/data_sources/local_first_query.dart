@@ -11,12 +11,12 @@ class LocalFirstQuery<T> {
   final int? limit;
   final int? offset;
   final LocalFirstStorage _delegate;
-  final LocalFirstEvent<T> Function(Map<String, dynamic>) _fromEvent;
+  final LocalFirstEvent<T> Function(JsonMap<dynamic>) _fromEvent;
 
   LocalFirstQuery({
     required this.repositoryName,
     required LocalFirstStorage delegate,
-    required LocalFirstEvent<T> Function(Map<String, dynamic>) fromEvent,
+    required LocalFirstEvent<T> Function(JsonMap<dynamic>) fromEvent,
     this.filters = const [],
     this.sorts = const [],
     this.limit,
@@ -139,7 +139,7 @@ class LocalFirstQuery<T> {
     return _delegate.watchQuery(this).map(_mapResults).asBroadcastStream();
   }
 
-  List<T> _mapResults(List<Map<String, dynamic>> results) {
+  List<T> _mapResults(List<JsonMap<dynamic>> results) {
     return results
         .map(_fromEvent)
         .where((event) => event.syncOperation != SyncOperation.delete)
@@ -177,7 +177,7 @@ class QueryFilter {
   });
 
   /// Checks if an item matches this filter (fallback for DBs without native query support).
-  bool matches(Map<String, dynamic> item) {
+  bool matches(JsonMap<dynamic> item) {
     final value = item[field];
 
     if (isNull != null) {

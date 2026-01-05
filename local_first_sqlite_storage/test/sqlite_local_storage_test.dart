@@ -17,7 +17,7 @@ class DummyModel with LocalFirstModel {
   final String username;
   final int age;
 
-  factory DummyModel.fromJson(Map<String, dynamic> json) {
+  factory DummyModel.fromJson(JsonMap<dynamic> json) {
     return DummyModel(
       json['id'] as String,
       username: json['username'] as String,
@@ -26,13 +26,11 @@ class DummyModel with LocalFirstModel {
   }
 
   @override
-  Map<String, dynamic> toJson() => {'id': id, 'username': username, 'age': age};
+  JsonMap<dynamic> toJson() => {'id': id, 'username': username, 'age': age};
 }
 
 abstract class QueryBehavior {
-  Future<List<Map<String, dynamic>>> call(
-    LocalFirstQuery<LocalFirstModel> query,
-  );
+  Future<List<JsonMap<dynamic>>> call(LocalFirstQuery<LocalFirstModel> query);
 }
 
 class MockableSqliteLocalFirstStorage extends SqliteLocalFirstStorage {
@@ -46,9 +44,7 @@ class MockableSqliteLocalFirstStorage extends SqliteLocalFirstStorage {
   final QueryBehavior behavior;
 
   @override
-  Future<List<Map<String, dynamic>>> query(
-    LocalFirstQuery<LocalFirstModel> query,
-  ) {
+  Future<List<JsonMap<dynamic>>> query(LocalFirstQuery<LocalFirstModel> query) {
     return behavior(query);
   }
 }
@@ -95,7 +91,7 @@ void main() {
       );
     }
 
-    Future<void> insertRow(Map<String, dynamic> item) {
+    Future<void> insertRow(JsonMap<dynamic> item) {
       final now = DateTime.now().millisecondsSinceEpoch;
       return storage.insert('users', {
         ...item,
@@ -255,7 +251,7 @@ void main() {
         stream,
         emitsInOrder([
           isEmpty,
-          predicate<List<Map<String, dynamic>>>(
+          predicate<List<JsonMap<dynamic>>>(
             (items) => items.any((m) => m['id'] == 'w1'),
           ),
         ]),
@@ -320,7 +316,7 @@ void main() {
       final behavior = MockQueryBehavior();
       final failingQuery = buildQuery();
       when(behavior.call(failingQuery)).thenAnswer(
-        (_) => Future<List<Map<String, dynamic>>>.error(StateError('boom')),
+        (_) => Future<List<JsonMap<dynamic>>>.error(StateError('boom')),
       );
 
       final toggle = MockableSqliteLocalFirstStorage(
@@ -335,7 +331,7 @@ void main() {
       final controllerStream = toggle.watchQuery(failingQuery);
       // Consume initial emission/error.
       await controllerStream.first.catchError(
-        (_) => <Map<String, dynamic>>[],
+        (_) => <JsonMap<dynamic>>[],
         test: (_) => true,
       );
 
@@ -361,9 +357,7 @@ void main() {
       '_notifyWatchers reruns query when observers exist for repository',
       () async {
         final behavior = MockQueryBehavior();
-        when(
-          behavior.call(any),
-        ).thenAnswer((_) async => <Map<String, dynamic>>[]);
+        when(behavior.call(any)).thenAnswer((_) async => <JsonMap<dynamic>>[]);
 
         final observing = MockableSqliteLocalFirstStorage(
           dbFactory: databaseFactoryFfi,
@@ -705,7 +699,7 @@ void main() {
       when(mockDb.rawQuery(any, any)).thenAnswer((_) {
         callCount += 1;
         if (callCount == 1) {
-          return Future.value(<Map<String, Object?>>[]);
+          return Future.value(<JsonMap<Object?>>[]);
         }
         throw StateError('boom');
       });
@@ -750,7 +744,7 @@ void main() {
 
         final stream = throwing.watchQuery(failingQuery);
         await stream.first.catchError(
-          (_) => <Map<String, dynamic>>[],
+          (_) => <JsonMap<dynamic>>[],
           test: (_) => true,
         );
 
@@ -771,7 +765,7 @@ void main() {
     );
 
     test('insert encodes numeric boolean for boolean field', () async {
-      final captured = <Map<String, Object?>>[];
+      final captured = <JsonMap<Object?>>[];
       when(
         mockDb.insert(
           any,
@@ -780,7 +774,7 @@ void main() {
         ),
       ).thenAnswer((invocation) async {
         captured.add(
-          Map<String, Object?>.from(invocation.positionalArguments[1] as Map),
+          JsonMap<Object?>.from(invocation.positionalArguments[1] as Map),
         );
         return 1;
       });
