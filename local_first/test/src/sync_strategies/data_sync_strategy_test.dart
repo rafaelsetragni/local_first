@@ -4,11 +4,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:local_first/local_first.dart';
 import 'package:mocktail/mocktail.dart';
 
-class _DummyModel with LocalFirstModel {
+class _DummyModel {
   _DummyModel(this.id);
   final String id;
 
-  @override
   JsonMap<dynamic> toJson() => {'id': id};
 }
 
@@ -24,7 +23,7 @@ class _TestStrategy extends DataSyncStrategy {
   }
 
   @override
-  Future<SyncStatus> onPushToRemote(LocalFirstModel localData) async {
+  Future<SyncStatus> onPushToRemote(LocalFirstEvent localData) async {
     return SyncStatus.ok;
   }
 }
@@ -91,12 +90,6 @@ class _FakeStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<DateTime?> getLastSyncAt(String repositoryName) async => null;
-
-  @override
-  Future<void> setLastSyncAt(String repositoryName, DateTime time) async {}
-
-  @override
   Future<void> setMeta(String key, String value) async {
     _meta[key] = value;
   }
@@ -108,13 +101,14 @@ class _FakeStorage implements LocalFirstStorage {
   final JsonMap<JsonMap<dynamic>> events = {};
 
   @override
-  Future<void> insertEvent(JsonMap<dynamic> event) async {
-    events[event['event_id'] as String] = event;
+  Future<void> pullRemoteEvent(JsonMap<dynamic> event) async {
+    events[event['event_id'] as String] = Map.of(event);
   }
 
   @override
   Future<JsonMap<dynamic>?> getEventById(String eventId) async {
-    return events[eventId];
+    final e = events[eventId];
+    return e == null ? null : Map.of(e);
   }
 
   @override
@@ -140,7 +134,7 @@ class _FakeStorage implements LocalFirstStorage {
   @override
   Future<void> pruneEvents(DateTime before) async {
     events.removeWhere((_, e) {
-      final ts = e['_sync_created_at'];
+      final ts = e['created_at'];
       return ts is int && ts < before.toUtc().millisecondsSinceEpoch;
     });
   }
@@ -167,10 +161,6 @@ class _FakeStorage implements LocalFirstStorage {
 }
 
 void main() {
-  setUpAll(() {
-    registerFallbackValue(<LocalFirstModel>[]);
-  });
-
   group('DataSyncStrategy', () {
     test('attach stores client', () {
       final strategy = _TestStrategy();
@@ -193,7 +183,15 @@ void main() {
     test('getPendingObjects delegates to client', () async {
       final strategy = _TestStrategy();
       final client = _MockClient();
-      final pending = [_DummyModel('1')];
+      final pending = [
+        LocalFirstEvent.createLocalInsert(
+          repositoryName: 'users',
+          recordId: '1',
+          data: _DummyModel('1'),
+          createdAt: DateTime.utc(2024, 1, 1),
+          eventId: 'e1',
+        ),
+      ];
 
       when(
         () => client.getAllPendingObjects(),
@@ -224,13 +222,15 @@ void main() {
       await client.initialize();
 
       await strategy.pullChangesToLocal({
-        'timestamp': DateTime.now().toIso8601String(),
-        'changes': {},
+        'users': {
+          'server_sequence': 1,
+          'events': <JsonMap<dynamic>>[],
+        },
       });
 
-      final metaKey = '__last_sync__users';
+      final metaKey = '_last_sync_seq_users';
       final value = await storage.getMeta(metaKey);
-      expect(value, isNotNull);
+      expect(value, equals('1'));
     });
   });
 }
