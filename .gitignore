@@ -8,3 +8,5 @@ pubspec.lock
 # Melos
 pubspec_overrides.yaml
 build/
+
+local_first/.flutter-plugins-dependencies
