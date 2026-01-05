@@ -19,9 +19,9 @@ abstract class DataSyncStrategy {
   @protected
   LocalFirstClient get client => _client;
 
-  Future<SyncStatus> onPushToRemote(LocalFirstModel localData);
+  Future<SyncStatus> onPushToRemote(LocalFirstEvent localData);
 
-  Future<List<LocalFirstModel>> getPendingObjects() {
+  Future<List<LocalFirstEvent>> getPendingObjects() {
     return _client.getAllPendingObjects();
   }
 

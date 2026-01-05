@@ -4,28 +4,25 @@ part of '../../local_first.dart';
 ///
 /// Provides a fluent API for building complex queries with filtering,
 /// ordering, and pagination capabilities.
-class LocalFirstQuery<T extends LocalFirstModel> {
+class LocalFirstQuery<T> {
   final String repositoryName;
   final List<QueryFilter> filters;
   final List<QuerySort> sorts;
   final int? limit;
   final int? offset;
   final LocalFirstStorage _delegate;
-  final T Function(Map<String, dynamic>) _fromJson;
-  final LocalFirstRepository<T> _repository;
+  final LocalFirstEvent<T> Function(Map<String, dynamic>) _fromEvent;
 
   LocalFirstQuery({
     required this.repositoryName,
     required LocalFirstStorage delegate,
-    required T Function(Map<String, dynamic>) fromJson,
-    required LocalFirstRepository<T> repository,
+    required LocalFirstEvent<T> Function(Map<String, dynamic>) fromEvent,
     this.filters = const [],
     this.sorts = const [],
     this.limit,
     this.offset,
   }) : _delegate = delegate,
-       _fromJson = fromJson,
-       _repository = repository;
+       _fromEvent = fromEvent;
 
   LocalFirstQuery<T> copyWith({
     List<QueryFilter>? filters,
@@ -36,8 +33,7 @@ class LocalFirstQuery<T extends LocalFirstModel> {
     return LocalFirstQuery<T>(
       repositoryName: repositoryName,
       delegate: _delegate,
-      fromJson: _fromJson,
-      repository: _repository,
+      fromEvent: _fromEvent,
       filters: filters ?? this.filters,
       sorts: sorts ?? this.sorts,
       limit: limit ?? this.limit,
@@ -145,33 +141,9 @@ class LocalFirstQuery<T extends LocalFirstModel> {
 
   List<T> _mapResults(List<Map<String, dynamic>> results) {
     return results
-        .map((json) {
-          final itemJson = Map<String, dynamic>.from(json);
-          final item = _fromJson(
-            itemJson..removeWhere((key, _) => key.startsWith('_sync_')),
-          );
-
-          // Extract sync metadata stored alongside the model
-          final syncStatus = json['_sync_status'] != null
-              ? SyncStatus.values[json['_sync_status'] as int]
-              : SyncStatus.ok;
-
-          final syncOperation = json['_sync_operation'] != null
-              ? SyncOperation.values[json['_sync_operation'] as int]
-              : SyncOperation.insert;
-
-          item._setSyncStatus(syncStatus);
-          item._setSyncOperation(syncOperation);
-          final createdAt = json['_sync_created_at'] as int?;
-          item._setSyncCreatedAt(
-            createdAt != null
-                ? DateTime.fromMillisecondsSinceEpoch(createdAt, isUtc: true)
-                : null,
-          );
-          item._setRepositoryName(repositoryName);
-          return item;
-        })
-        .where((obj) => !obj.isDeleted)
+        .map(_fromEvent)
+        .where((event) => event.syncOperation != SyncOperation.delete)
+        .map((event) => event.data)
         .toList();
   }
 }

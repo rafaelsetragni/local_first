@@ -1,423 +1,280 @@
 part of '../../local_first.dart';
 
-/// Supported primitive field types for schema-aware storage backends.
-enum LocalFieldType { text, integer, real, boolean, datetime, blob }
+/// Convenience alias for lists of events.
+typedef LocalFirstEvents<T> = List<LocalFirstEvent<T>>;
+typedef LocalFirstEventsDynamic = List<LocalFirstEvent>;
 
-/// Represents a data collection (similar to a table).
-///
-/// Each repository manages a specific type of object and handles CRUD operations
-/// independently. Repositories can be used standalone or by inheritance.
-///
-/// Example:
-/// ```dart
-/// class ChatService extends LocalFirstRepository<Chat> {
-///   ChatService()
-///     : super(
-///         'chat',
-///         getId: (chat) => chat.id,
-///         toJson: (chat) => chat.toJson(),
-///         fromJson: Chat.fromJson,
-///         onConflict: (local, remote) => remote,
-///       );
-/// }
-/// ```
-abstract class LocalFirstRepository<T extends LocalFirstModel> {
-  /// The unique name identifier for this repository.
-  final String name;
-
-  /// Serialization helpers for the repository items.
-  final String Function(T item) _getId;
-  final Map<String, dynamic> Function(T item) _toJson;
-  final T Function(Map<String, dynamic> json) _fromJson;
-  final T Function(T local, T remote) _resolveConflict;
-
-  /// Field name used as identifier in persisted maps.
-  final String idFieldName;
-
-  /// Schema definition for native storage backends (e.g. SQLite).
-  final Map<String, LocalFieldType> schema;
-
-  late LocalFirstClient _client;
-
-  late List<DataSyncStrategy> _syncStrategies;
-
-  /// Creates a new LocalFirstRepository.
-  ///
-  /// Parameters:
-  /// - [name]: Unique identifier for this repository
-  /// - [getId]: Returns the primary key of the model
-  /// - [toJson]: Serializes the model to Map
-  /// - [fromJson]: Deserializes the model from Map
-  /// - [onConflict]: Resolves conflicts between local/remote models
-  /// - [idFieldName]: Key used to persist the model id (default: `id`)
-  /// - [schema]: Optional schema used by SQL backends for column creation
-  LocalFirstRepository({
+/// Repository responsible for persisting domain objects and emitting events.
+class LocalFirstRepository<T extends Object> {
+  LocalFirstRepository._({
     required this.name,
-    required String Function(T item) getId,
-    required Map<String, dynamic> Function(T item) toJson,
-    required T Function(Map<String, dynamic>) fromJson,
-    required T Function(T local, T remote) onConflict,
-    this.idFieldName = 'id',
-    Map<String, LocalFieldType> schema = const {},
-  }) : _getId = getId,
-       _toJson = toJson,
-       _fromJson = fromJson,
-       _resolveConflict = onConflict,
-       schema = Map.unmodifiable(schema);
+    required this.getId,
+    required this.toJson,
+    required this.fromJson,
+    required this.onConflict,
+    required this.schema,
+    required this.idFieldName,
+  });
 
-  /// Creates a configured instance of LocalFirstRepository.
-  ///
-  /// Use this factory when you prefer not to use inheritance.
-  ///
-  /// Example:
-  /// ```dart
-  /// final userRepo = LocalFirstRepository.create(
-  ///   'users',
-  ///   getId: (user) => user.id,
-  ///   toJson: (user) => user.toJson(),
-  ///   fromJson: User.fromJson,
-  ///   onConflict: (local, remote) => local,
-  /// );
-  /// ```
   factory LocalFirstRepository.create({
     required String name,
-    required String Function(T item) getId,
-    required Map<String, dynamic> Function(T item) toJson,
-    required T Function(Map<String, dynamic>) fromJson,
+    required String Function(T model) getId,
+    required Map<String, dynamic> Function(T model) toJson,
+    required T Function(Map<String, dynamic> json) fromJson,
     required T Function(T local, T remote) onConflict,
-    String idFieldName,
-    Map<String, LocalFieldType> schema,
-  }) = _LocalFirstRepository;
-
-  String getId(T item) => _getId(item);
-  Map<String, dynamic> toJson(T item) => _toJson(item);
-  T fromJson(Map<String, dynamic> json) => _fromJson(json);
-  T resolveConflict(T local, T remote) => _resolveConflict(local, remote);
-
-  bool _isInitialized = false;
-
-  /// Initializes the repository.
-  ///
-  /// This is called automatically by [LocalFirstClient.initialize].
-  Future<void> initialize() async {
-    if (_isInitialized) return;
-    await _client.localStorage.ensureSchema(
-      name,
-      schema,
+    Map<String, LocalFieldType> schema = const {},
+    String idFieldName = 'id',
+  }) {
+    return LocalFirstRepository._(
+      name: name,
+      getId: getId,
+      toJson: toJson,
+      fromJson: fromJson,
+      onConflict: onConflict,
+      schema: schema,
       idFieldName: idFieldName,
     );
-    _isInitialized = true;
   }
 
-  /// Resets the repository's initialization state.
-  ///
-  /// Used internally when clearing all data.
+  final String name;
+  final String Function(T model) getId;
+  final Map<String, dynamic> Function(T model) toJson;
+  final T Function(Map<String, dynamic> json) fromJson;
+  final T Function(T local, T remote) onConflict;
+  final Map<String, LocalFieldType> schema;
+  final String idFieldName;
+
+  LocalFirstClient? _client;
+  List<DataSyncStrategy> _syncStrategies = [];
+  bool _initialized = false;
+
+  LocalFirstStorage get _storage {
+    final client = _client;
+    if (client == null) {
+      throw StateError('Repository is not attached to a LocalFirstClient.');
+    }
+    return client.localStorage;
+  }
+
+  /// Ensures schema exists.
+  Future<void> initialize() async {
+    if (_initialized) return;
+    await _storage.ensureSchema(name, schema, idFieldName: idFieldName);
+    _initialized = true;
+  }
+
+  /// Resets initialization flag.
   void reset() {
-    _isInitialized = false;
+    _initialized = false;
   }
 
-  Future<void> _pushLocalObject(T object) async {
-    final results = await Future.wait(
-      _syncStrategies.map((strategy) async {
-        try {
-          return await strategy.onPushToRemote(object);
-        } catch (_) {
-          return SyncStatus.failed;
-        }
-      }),
-    );
-
-    final bestStatus = results.fold<SyncStatus>(
-      object.syncStatus,
-      (best, current) => current.index > best.index ? current : best,
-    );
-
-    object._setSyncStatus(bestStatus);
-    await _updateObjectStatus(object);
-  }
-
-  /// Inserts or updates an item (upsert operation).
-  ///
-  /// If an item with the same ID already exists, it will be updated.
-  /// Otherwise, a new item will be inserted.
-  ///
-  /// The operation is marked as pending and will be synced on next [LocalFirstClient.sync].
-  Future<void> upsert(T item) async {
-    final json = await _client.localStorage.getById(name, getId(item));
-    if (json != null) {
-      final existing = _modelFromJson(json);
-      await _update(_prepareForUpdate(_copyModel(existing, item)));
-    } else {
-      await _insert(item);
-    }
-  }
-
-  Future<void> _insert(T item) async {
-    final model = _prepareForInsert(item);
-
-    await _saveEvent(model);
-    final insertFuture = _client.localStorage.insert(
-      name,
-      _toStorageJson(model),
-      idFieldName,
-    );
-
-    final pushFuture = _pushLocalObject(model);
-    await Future.wait([pushFuture, insertFuture]);
-  }
-
-  Future<void> _update(T object) async {
-    final operation =
-        object.needSync && object.syncOperation == SyncOperation.insert
-        ? SyncOperation.insert
-        : SyncOperation.update;
-    object._setSyncStatus(SyncStatus.pending);
-    object._setSyncOperation(operation);
-
-    await _saveEvent(object);
-    await _client.localStorage.update(
-      name,
-      getId(object),
-      _toStorageJson(object),
-    );
-
-    await _pushLocalObject(object);
-  }
-
-  /// Deletes an item by its ID (soft delete).
-  ///
-  /// The item is marked as deleted and will be synced on next [LocalFirstClient.sync].
-  /// If the item was inserted locally and not yet synced, it will be permanently
-  /// removed from local storage.
-  ///
-  /// Parameters:
-  /// - [id]: The unique identifier of the item to delete
-  Future<void> delete(String id) async {
-    final json = await _client.localStorage.getById(name, id);
-    if (json == null) {
-      return;
-    }
-
-    final object = _modelFromJson(json);
-
-    if (object.needSync && object.syncOperation == SyncOperation.insert) {
-      await _client.localStorage.delete(name, id);
-      return;
-    }
-
-    object._setSyncStatus(SyncStatus.pending);
-    object._setSyncOperation(SyncOperation.delete);
-
-    await _saveEvent(object);
-    await _client.localStorage.update(
-      name,
-      getId(object),
-      _toStorageJson(object),
-    );
-  }
-
-  Map<String, dynamic> _toStorageJson(T model) {
-    return {
-      ...toJson(model),
-      '_sync_status': model.syncStatus.index,
-      '_sync_operation': model.syncOperation.index,
-      '_sync_created_at':
-          model.syncCreatedAt?.millisecondsSinceEpoch ??
-          DateTime.now().toUtc().millisecondsSinceEpoch,
-    };
-  }
-
-  Future<void> _saveEvent(T model) async {
-    final eventId = UuidUtil.generateUuidV7();
-    final event = {
-      'event_id': eventId,
-      'repository': name,
-      'record_id': getId(model),
-      ..._toStorageJson(model),
-    };
-    await _client.localStorage.insertEvent(event);
-  }
-
-  T _prepareForInsert(T model) {
-    model._setSyncStatus(SyncStatus.pending);
-    model._setSyncOperation(SyncOperation.insert);
-    model._setSyncCreatedAt(DateTime.now().toUtc());
-    model._setRepositoryName(name);
-    return model;
-  }
-
-  T _prepareForUpdate(T model) {
-    final wasPendingInsert =
-        model.needSync && model.syncOperation == SyncOperation.insert;
-    final existingCreatedAt = model.syncCreatedAt;
-
-    model._setSyncStatus(SyncStatus.pending);
-    final operation = wasPendingInsert
-        ? SyncOperation.insert
-        : SyncOperation.update;
-    model._setSyncOperation(operation);
-    model._setRepositoryName(name);
-    model._setSyncCreatedAt(existingCreatedAt ?? DateTime.now().toUtc());
-    return model;
-  }
-
-  /// Creates a query for this node.
-  ///
-  /// Use this to perform filtered, ordered, and paginated queries.
-  ///
-  /// Example:
-  /// ```dart
-  /// final activeUsers = await userRepository
-  ///   .query()
-  ///   .where('status', isEqualTo: 'active')
-  ///   .getAll();
-  /// ```
+  /// Builds a query for this repository.
   LocalFirstQuery<T> query() {
     return LocalFirstQuery<T>(
       repositoryName: name,
-      delegate: _client.localStorage,
-      fromJson: fromJson,
-      repository: this,
+      delegate: _storage,
+      fromEvent: _mapToEvent,
     );
   }
 
-  Future<void> _mergeRemoteItems(List<dynamic> remoteObjects) async {
-    final typedRemote = remoteObjects.cast<T>();
-    final LocalFirstModels<T> allLocal = await _getAll(includeDeleted: true);
-    final Map<String, T> localMap = {for (var obj in allLocal) getId(obj): obj};
+  /// Inserts or updates a record locally, marking it for sync.
+  Future<void> upsert(T model) async {
+    await initialize();
+    final id = getId(model);
+    final existing = await _storage.getById(name, id);
+    final now = DateTime.now().toUtc();
 
-    for (final T remoteObj in typedRemote) {
-      final remoteId = getId(remoteObj);
-      final localObj = localMap[remoteId];
+    final createdAt = _decodeDate(existing?['created_at']) ?? now;
+    final eventId =
+        (existing?['event_id'] as String?) ?? UuidUtil.generateUuidV7();
 
-      if (remoteObj.isDeleted) {
-        await _saveEvent(remoteObj.._setSyncStatus(SyncStatus.ok));
-        if (localObj != null && !localObj.needSync) {
-          await _client.localStorage.delete(name, remoteId);
-        }
-        continue;
-      }
-
-      if (localObj == null) {
-        await _saveEvent(remoteObj.._setSyncStatus(SyncStatus.ok));
-        await _client.localStorage.insert(
-          name,
-          _toStorageJson(remoteObj),
-          idFieldName,
-        );
-        continue;
-      }
-
-      final resolved = resolveConflict(localObj, remoteObj);
-      resolved._setSyncStatus(SyncStatus.ok);
-      resolved._setSyncOperation(SyncOperation.update);
-      await _saveEvent(resolved);
-      await _client.localStorage.update(
-        name,
-        remoteId,
-        _toStorageJson(resolved),
+    if (existing == null) {
+      final event = LocalFirstEvent.createLocalInsert<T>(
+        repositoryName: name,
+        recordId: id,
+        data: model,
+        createdAt: now,
+        eventId: eventId,
       );
-    }
-  }
-
-  Future<List<T>> getPendingObjects() async {
-    final eventMaps =
-        await _client.localStorage.getEvents(repositoryName: name);
-    if (eventMaps.isNotEmpty) {
-      final events = eventMaps
-          .map(_modelFromEvent)
-          .where((obj) => obj.needSync)
-          .toList();
-      return events;
+      await _saveEventAndData(event, existingExists: false);
+      return;
     }
 
-    // Fallback to legacy data-table scan if no event log present.
-    final allObjects = await _getAll(includeDeleted: true);
-    return allObjects.where((obj) => obj.needSync).toList();
+    final existingOperation = _decodeOperation(existing['operation']);
+    final existingStatus = _decodeStatus(existing['status']);
+
+    final event = (existingStatus == SyncStatus.pending &&
+            existingOperation == SyncOperation.insert)
+        ? LocalFirstEvent.createLocalInsert<T>(
+            repositoryName: name,
+            recordId: id,
+            data: model,
+            createdAt: createdAt,
+            eventId: eventId,
+          )
+        : LocalFirstEvent.createLocalUpdate<T>(
+            repositoryName: name,
+            recordId: id,
+            data: model,
+            createdAt: createdAt,
+            eventId: eventId,
+          );
+
+    await _saveEventAndData(event, existingExists: true);
   }
 
-  Future<List<T>> _getAll({bool includeDeleted = false}) async {
-    final maps = await _client.localStorage.getAll(name);
-    return maps //
-        .map(_modelFromJson)
-        .where((obj) => includeDeleted || !obj.isDeleted)
+  /// Deletes a record. Pending inserts are removed; otherwise marked as delete.
+  Future<void> delete(String id) async {
+    await initialize();
+    final existing = await _storage.getById(name, id);
+    if (existing == null) return;
+
+    final status = _decodeStatus(existing['status']);
+    final operation = _decodeOperation(existing['operation']);
+
+    if (status == SyncStatus.pending && operation == SyncOperation.insert) {
+      await _storage.delete(name, id);
+      return;
+    }
+
+    final createdAt =
+        _decodeDate(existing['created_at']) ?? DateTime.now().toUtc();
+    final eventId =
+        (existing['event_id'] as String?) ?? UuidUtil.generateUuidV7();
+
+    final event = LocalFirstEvent.createLocalDelete<T>(
+      repositoryName: name,
+      recordId: id,
+      data: fromJson(existing),
+      createdAt: createdAt,
+      eventId: eventId,
+    );
+    await _saveEventAndData(event, existingExists: true);
+  }
+
+  /// Pending events to push.
+  Future<List<LocalFirstEvent<T>>> getPendingObjects() async {
+    await initialize();
+    final all = await _storage.getAll(name);
+    return all
+        .where((map) => _decodeStatus(map['status']) != SyncStatus.ok)
+        .map(_mapToEvent)
         .toList();
   }
 
-  Future<void> _updateObjectStatus(T obj) async {
-    await _client.localStorage.update(name, getId(obj), _toStorageJson(obj));
-  }
+  /// Resolves conflict using provided resolver.
+  T resolveConflict(T local, T remote) => onConflict(local, remote);
 
-  T _modelFromJson(Map<String, dynamic> json) {
-    final itemJson = Map<String, dynamic>.from(json);
-    final statusIndex = itemJson.remove('_sync_status') as int?;
-    final opIndex = itemJson.remove('_sync_operation') as int?;
-    final createdAtMs = itemJson.remove('_sync_created_at') as int?;
+  /// Applies incoming remote events.
+  Future<void> _mergeRemoteItems(LocalFirstEvents<T> remote) async {
+    await initialize();
+    for (final event in remote) {
+      final existing = await _storage.getById(name, event.recordId);
 
-    final model = fromJson(itemJson);
-    model._setSyncStatus(
-      statusIndex != null ? SyncStatus.values[statusIndex] : SyncStatus.ok,
-    );
-    model._setSyncOperation(
-      opIndex != null ? SyncOperation.values[opIndex] : SyncOperation.insert,
-    );
-    model._setSyncCreatedAt(
-      createdAtMs != null
-          ? DateTime.fromMillisecondsSinceEpoch(createdAtMs, isUtc: true)
-          : null,
-    );
-    model._setRepositoryName(name);
-    return model;
-  }
+      if (event.syncOperation == SyncOperation.delete) {
+        if (existing == null) continue;
+        final status = _decodeStatus(existing['status']);
+        final op = _decodeOperation(existing['operation']);
+        if (status != SyncStatus.ok && op == SyncOperation.insert) {
+          // Keep local pending insert
+          continue;
+        }
+        await _storage.delete(name, event.recordId);
+        await _storage.insertEvent(event.toJson(toJson: toJson));
+        continue;
+      }
 
-  T _modelFromEvent(Map<String, dynamic> json) {
-    final itemJson = Map<String, dynamic>.from(json);
-    itemJson.remove('event_id');
-    itemJson.remove('repository');
-    itemJson.remove('record_id');
-    return _modelFromJson(itemJson);
-  }
+      // Insert/update
+      if (existing == null) {
+        final applied = LocalFirstEvent.createRemote<T>(
+          repositoryName: event.repositoryName,
+          recordId: event.recordId,
+          operation: event.syncOperation,
+          data: event.data,
+          createdAt: event.syncCreatedAt,
+          eventId: event.eventId,
+        );
+        await _saveEventAndData(applied, existingExists: false);
+        continue;
+      }
 
-  T _copyModel(T target, T source) {
-    // Shallow copy via JSON round-trip using existing serializers.
-    final merged = _fromJson({..._toJson(target), ..._toJson(source)});
-    merged._setSyncStatus(target.syncStatus);
-    merged._setSyncOperation(target.syncOperation);
-    merged._setSyncCreatedAt(target.syncCreatedAt);
-    merged._setRepositoryName(target.repositoryName);
-    return merged;
-  }
+      final localStatus = _decodeStatus(existing['status']);
+      if (localStatus != SyncStatus.ok) {
+        // keep local pending change
+        continue;
+      }
 
-  T _buildRemoteObject(
-    Map<String, dynamic> json, {
-    required SyncOperation operation,
-  }) {
-    final model = _fromJson(json);
-    model._setSyncStatus(SyncStatus.ok);
-    model._setSyncOperation(operation);
-    model._setRepositoryName(name);
-    model._setSyncCreatedAt(model.syncCreatedAt ?? DateTime.now().toUtc());
-    return model;
-  }
+      final localModel = fromJson(existing);
+      final mergedModel = onConflict(localModel, event.data);
+      final createdAt =
+          _decodeDate(existing['created_at']) ?? event.syncCreatedAt;
 
-  Future<T?> _getById(String id) async {
-    final json = await _client.localStorage.getById(name, id);
-    if (json == null) {
-      return null;
+      final applied = LocalFirstEvent.createRemote<T>(
+        repositoryName: name,
+        recordId: event.recordId,
+        operation: event.syncOperation,
+        data: mergedModel,
+        createdAt: createdAt,
+        eventId: event.eventId,
+      );
+      await _saveEventAndData(applied, existingExists: true);
     }
-    return _modelFromJson(json);
   }
-}
 
-final class _LocalFirstRepository<T extends LocalFirstModel>
-    extends LocalFirstRepository<T> {
-  _LocalFirstRepository({
-    required super.name,
-    required super.getId,
-    required super.toJson,
-    required super.fromJson,
-    required super.onConflict,
-    super.idFieldName = 'id',
-    super.schema = const {},
-  });
+  LocalFirstEvent<T> _mapToEvent(Map<String, dynamic> map) {
+    final model = fromJson(map);
+    final event = LocalFirstEvent.createRemote<T>(
+      repositoryName: name,
+      recordId: getId(model),
+      operation: _decodeOperation(map['operation']),
+      data: model,
+      createdAt: _decodeDate(map['created_at']) ?? DateTime.now().toUtc(),
+      eventId: map['event_id'] as String?,
+    );
+
+    return event;
+  }
+
+  Future<void> _saveEventAndData(
+    LocalFirstEvent<T> event, {
+    required bool existingExists,
+  }) async {
+    final map = {
+      ...toJson(event.data),
+      'status': event.syncStatus.index,
+      'operation': event.syncOperation.index,
+      'created_at': event.syncCreatedAt.millisecondsSinceEpoch,
+      'event_id': event.eventId,
+    };
+
+    if (existingExists) {
+      await _storage.update(name, event.recordId, map);
+    } else {
+      await _storage.insert(name, map, idFieldName);
+    }
+
+    await _storage.insertEvent(event.toJson(toJson: toJson));
+  }
+
+  SyncStatus _decodeStatus(dynamic value) {
+    if (value is int && value >= 0 && value < SyncStatus.values.length) {
+      return SyncStatus.values[value];
+    }
+    return SyncStatus.pending;
+  }
+
+  SyncOperation _decodeOperation(dynamic value) {
+    if (value is int && value >= 0 && value < SyncOperation.values.length) {
+      return SyncOperation.values[value];
+    }
+    return SyncOperation.insert;
+  }
+
+  DateTime? _decodeDate(dynamic value) {
+    if (value is int) {
+      return DateTime.fromMillisecondsSinceEpoch(value, isUtc: true);
+    }
+    if (value is DateTime) return value.toUtc();
+    return null;
+  }
 }

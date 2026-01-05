@@ -1,5 +1,15 @@
 part of '../../local_first.dart';
 
+/// Basic field type hints for schema-aware backends.
+enum LocalFieldType {
+  text,
+  integer,
+  real,
+  boolean,
+  datetime,
+  blob,
+}
+
 /// Abstract interface for local database operations.
 ///
 /// Implement this interface to support different local storage backends
