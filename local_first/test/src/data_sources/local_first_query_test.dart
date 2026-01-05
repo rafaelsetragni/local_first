@@ -20,7 +20,6 @@ class _FakeStorage extends LocalFirstStorage {
   _FakeStorage(this.items);
 
   List<JsonMap<dynamic>> items;
-  final JsonMap<dynamic> _meta = {};
   final Map<String, JsonMap<dynamic>> _events = {};
 
   @override
@@ -112,14 +111,6 @@ class _FakeStorage extends LocalFirstStorage {
         .map((e) => Map<String, dynamic>.from(e))
         .toList();
   }
-
-  @override
-  Future<void> setMeta(String key, String value) async {
-    _meta[key] = value;
-  }
-
-  @override
-  Future<String?> getMeta(String key) async => _meta[key];
 
   @override
   Future<void> ensureSchema(

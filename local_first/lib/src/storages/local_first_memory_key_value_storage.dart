@@ -2,7 +2,7 @@ part of '../../local_first.dart';
 
 /// In-memory implementation of [LocalFirstKeyValueStorage] for tests/dev.
 class LocalFirstMemoryKeyValueStorage implements LocalFirstKeyValueStorage {
-  final Map<String, Map<String, dynamic>> _store = {};
+  final JsonMap<JsonMap> _store = {};
   String? _namespace;
 
   @override
@@ -50,10 +50,7 @@ class LocalFirstMemoryKeyValueStorage implements LocalFirstKeyValueStorage {
   }
 
   void _assertSupported(dynamic value) {
-    if (value == null ||
-        value is String ||
-        value is num ||
-        value is bool) {
+    if (value == null || value is String || value is num || value is bool) {
       return;
     }
     if (value is List<String>) return;

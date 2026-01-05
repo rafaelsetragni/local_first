@@ -30,7 +30,6 @@ class _TestStrategy extends DataSyncStrategy {
 
 class _FakeStorage implements LocalFirstStorage {
   final JsonMap<JsonMap<JsonMap<dynamic>>> _tables = {};
-  final JsonMap<String> _meta = {};
   bool initialized = false;
 
   @override
@@ -46,7 +45,6 @@ class _FakeStorage implements LocalFirstStorage {
   @override
   Future<void> clearAllData() async {
     _tables.clear();
-    _meta.clear();
   }
 
   @override
@@ -90,13 +88,6 @@ class _FakeStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<void> setMeta(String key, String value) async {
-    _meta[key] = value;
-  }
-
-  @override
-  Future<String?> getMeta(String key) async => _meta[key];
-
   // Event log stubs
   final JsonMap<JsonMap<dynamic>> events = {};
 
@@ -214,10 +205,12 @@ void main() {
         fromJson: (json) => _DummyModel(json['id'] as String),
         onConflictEvent: (l, r) => l,
       );
+      final kv = LocalFirstMemoryKeyValueStorage();
       final client = LocalFirstClient(
         repositories: [repo],
         localStorage: storage,
         syncStrategies: [strategy],
+        keyValueStorage: kv,
       );
       await client.initialize();
 
@@ -229,7 +222,7 @@ void main() {
       });
 
       final metaKey = '_last_sync_seq_users';
-      final value = await storage.getMeta(metaKey);
+      final value = await kv.get<String>(metaKey);
       expect(value, equals('1'));
     });
   });

@@ -4,7 +4,6 @@ part of '../../local_first.dart';
 /// or lightweight scenarios without persistence.
 class LocalFirstMemoryStorage implements LocalFirstStorage {
   final JsonMap<JsonMap<JsonMap<dynamic>>> _tables = {};
-  final JsonMap<String> _meta = {};
   final JsonMap<List<JsonMap<dynamic>>> _events = {};
 
   @override
@@ -16,7 +15,6 @@ class LocalFirstMemoryStorage implements LocalFirstStorage {
   @override
   Future<void> clearAllData() async {
     _tables.clear();
-    _meta.clear();
     _events.clear();
   }
 
@@ -63,14 +61,6 @@ class LocalFirstMemoryStorage implements LocalFirstStorage {
   Future<void> deleteAll(String tableName) async {
     _tables[tableName]?.clear();
   }
-
-  @override
-  Future<void> setMeta(String key, String value) async {
-    _meta[key] = value;
-  }
-
-  @override
-  Future<String?> getMeta(String key) async => _meta[key];
 
   @override
   Future<void> pullRemoteEvent(JsonMap<dynamic> event) async {

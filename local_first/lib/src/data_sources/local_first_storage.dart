@@ -77,12 +77,6 @@ abstract class LocalFirstStorage {
   /// Prunes events older than the given UTC cutoff.
   Future<void> pruneEvents(DateTime before);
 
-  /// Stores arbitrary metadata as string by key.
-  Future<void> setMeta(String key, String value);
-
-  /// Reads arbitrary metadata stored by key.
-  Future<String?> getMeta(String key);
-
   /// Ensures the storage backend has an up-to-date schema for a repository.
   ///
   /// Backends that do not use schemas can ignore this call.

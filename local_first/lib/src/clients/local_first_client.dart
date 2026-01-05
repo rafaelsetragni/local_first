@@ -10,6 +10,7 @@ part of '../../local_first.dart';
 class LocalFirstClient {
   final List<LocalFirstRepository> _repositories = [];
   final LocalFirstStorage _localStorage;
+  final LocalFirstKeyValueStorage _kvStorage;
   final List<DataSyncStrategy> syncStrategies = [];
   final Completer<void> _onInitialize = Completer<void>();
   Future<void>? _initializeFuture;
@@ -29,8 +30,10 @@ class LocalFirstClient {
   LocalFirstClient({
     List<LocalFirstRepository> repositories = const [],
     required LocalFirstStorage localStorage,
+    required LocalFirstKeyValueStorage keyValueStorage,
     List<DataSyncStrategy> syncStrategies = const [],
-  }) : _localStorage = localStorage {
+  })  : _localStorage = localStorage,
+        _kvStorage = keyValueStorage {
     if (repositories.isNotEmpty) {
       registerRepositories(repositories);
     }
@@ -106,6 +109,7 @@ class LocalFirstClient {
         'You need to provide at least one sync strategy.',
       );
 
+      await _kvStorage.open();
       await _localStorage.initialize();
       for (var repository in _repositories) {
         repository.reset();
@@ -138,6 +142,7 @@ class LocalFirstClient {
   /// Call this when you're done using the LocalFirstClient instance.
   Future<void> dispose() async {
     await _localStorage.close();
+    await _kvStorage.close();
   }
 
   /// Applies remote changes grouped by repository name.
@@ -212,11 +217,11 @@ class LocalFirstClient {
   }
 
   Future<String?> getMeta(String key) async {
-    return await localStorage.getMeta(key);
+    return await _kvStorage.get(key);
   }
 
   Future<void> setKeyValue(String key, String value) async {
-    await localStorage.setMeta(key, value);
+    await _kvStorage.set(key, value);
   }
 
   String _getServerSequenceKey({required String repositoryName}) =>
@@ -224,7 +229,7 @@ class LocalFirstClient {
 
   /// Returns the last server sequence stored for a repository, if any.
   Future<int?> getLastServerSequence(String repositoryName) async {
-    final raw = await localStorage.getMeta(
+    final raw = await _kvStorage.get<String>(
       _getServerSequenceKey(repositoryName: repositoryName),
     );
     return raw == null ? null : int.tryParse(raw);
