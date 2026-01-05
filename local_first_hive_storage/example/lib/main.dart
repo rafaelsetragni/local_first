@@ -553,6 +553,7 @@ class RepositoryService {
     final localFirst = this.localFirst ??= LocalFirstClient(
       repositories: [userRepository, counterLogRepository],
       localStorage: HiveLocalFirstStorage(),
+      keyValueStorage: LocalFirstMemoryKeyValueStorage(),
       syncStrategies: [syncStrategy],
     );
 

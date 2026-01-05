@@ -591,6 +591,7 @@ class RepositoryService {
     final localFirst = this.localFirst ??= LocalFirstClient(
       repositories: [userRepository, counterLogRepository],
       localStorage: SqliteLocalFirstStorage(),
+      keyValueStorage: LocalFirstMemoryKeyValueStorage(),
       syncStrategies: [syncStrategy],
     );
 
@@ -741,6 +742,7 @@ class RepositoryService {
     localFirst = LocalFirstClient(
       repositories: [userRepository, counterLogRepository],
       localStorage: SqliteLocalFirstStorage(namespace: namespace),
+      keyValueStorage: LocalFirstMemoryKeyValueStorage(),
       syncStrategies: [syncStrategy],
     );
     await localFirst!.initialize();
