@@ -10,7 +10,7 @@ class LocalFirstRepository<T extends Object> {
     required this.getId,
     required this.toJson,
     required this.fromJson,
-    required this.onConflict,
+    required this.onConflictEvent,
     required this.schema,
     required this.idFieldName,
   });
@@ -20,7 +20,11 @@ class LocalFirstRepository<T extends Object> {
     required String Function(T model) getId,
     required JsonMap<dynamic> Function(T model) toJson,
     required T Function(JsonMap<dynamic> json) fromJson,
-    required T Function(T local, T remote) onConflict,
+    required LocalFirstEvent<T> Function(
+      LocalFirstEvent<T> local,
+      LocalFirstEvent<T> remote,
+    )
+    onConflictEvent,
     JsonMap<LocalFieldType> schema = const {},
     String idFieldName = 'id',
   }) {
@@ -29,7 +33,7 @@ class LocalFirstRepository<T extends Object> {
       getId: getId,
       toJson: toJson,
       fromJson: fromJson,
-      onConflict: onConflict,
+      onConflictEvent: onConflictEvent,
       schema: schema,
       idFieldName: idFieldName,
     );
@@ -39,13 +43,19 @@ class LocalFirstRepository<T extends Object> {
   final String Function(T model) getId;
   final JsonMap<dynamic> Function(T model) toJson;
   final T Function(JsonMap<dynamic> json) fromJson;
-  final T Function(T local, T remote) onConflict;
+  final LocalFirstEvent<T> Function(
+    LocalFirstEvent<T> local,
+    LocalFirstEvent<T> remote,
+  )
+  onConflictEvent;
   final JsonMap<LocalFieldType> schema;
   final String idFieldName;
 
   LocalFirstClient? _client;
   bool _initialized = false;
 
+  // Reserved for future sync strategy integration.
+  // ignore: unused_field
   List<dynamic> _syncStrategies = [];
 
   LocalFirstStorage get _storage {
@@ -175,7 +185,10 @@ class LocalFirstRepository<T extends Object> {
   }
 
   /// Resolves conflict using provided resolver.
-  T resolveConflict(T local, T remote) => onConflict(local, remote);
+  LocalFirstEvent<T> resolveConflict(
+    LocalFirstEvent<T> local,
+    LocalFirstEvent<T> remote,
+  ) => onConflictEvent(local, remote);
 
   /// Applies incoming remote events.
   Future<void> _mergeRemoteItems(LocalFirstEvents<T> remote) async {
@@ -183,7 +196,7 @@ class LocalFirstRepository<T extends Object> {
     for (final event in remote) {
       final existing = await _storage.getById(name, event.recordId);
       final latestLocalEvent = await _latestEventFor(event.recordId);
-      final serverSequence = _requireRemoteServerSequence(event);
+      _requireRemoteServerSequence(event);
 
       if (event.syncOperation == SyncOperation.delete) {
         final status = latestLocalEvent?.syncStatus ?? SyncStatus.ok;
@@ -217,32 +230,24 @@ class LocalFirstRepository<T extends Object> {
           data: event.data,
           createdAt: event.syncCreatedAt,
           eventId: event.eventId,
-          serverSequence: serverSequence,
+          serverSequence: _requireRemoteServerSequence(event),
         );
         await _saveEventAndData(applied, existingExists: false);
         continue;
       }
 
-      final localStatus = latestLocalEvent?.syncStatus ?? SyncStatus.ok;
-      if (localStatus != SyncStatus.ok) {
-        // keep local pending change
-        continue;
-      }
+      final localEvent =
+          latestLocalEvent ??
+          LocalFirstEvent.createLocalUpdate<T>(
+            repositoryName: name,
+            recordId: event.recordId,
+            data: fromJson(existing),
+            createdAt:
+                _decodeDate(existing['created_at']) ?? event.syncCreatedAt,
+            eventId: existing['event_id'] as String?,
+          );
 
-      final localModel = fromJson(existing);
-      final mergedModel = onConflict(localModel, event.data);
-      final createdAt =
-          _decodeDate(existing['created_at']) ?? event.syncCreatedAt;
-
-      final applied = LocalFirstEvent.createFromRemote<T>(
-        repositoryName: name,
-        recordId: event.recordId,
-        operation: event.syncOperation,
-        data: mergedModel,
-        createdAt: createdAt,
-        eventId: event.eventId,
-        serverSequence: serverSequence,
-      );
+      final applied = resolveConflict(localEvent, event);
       await _saveEventAndData(applied, existingExists: true);
     }
   }

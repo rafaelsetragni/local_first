@@ -4,7 +4,7 @@ import 'package:local_first/local_first.dart';
 class _FakeStorage extends LocalFirstStorage {
   bool ensureCalled = false;
   String? lastTable;
-  Map<String, LocalFieldType>? lastSchema;
+  JsonMap<LocalFieldType>? lastSchema;
   String? lastIdField;
 
   @override
@@ -17,16 +17,15 @@ class _FakeStorage extends LocalFirstStorage {
   Future<void> clearAllData() async {}
 
   @override
-  Future<List<Map<String, dynamic>>> getAll(String tableName) async => const [];
+  Future<List<JsonMap<dynamic>>> getAll(String tableName) async => const [];
 
   @override
-  Future<Map<String, dynamic>?> getById(String tableName, String id) async =>
-      null;
+  Future<JsonMap<dynamic>?> getById(String tableName, String id) async => null;
 
   @override
   Future<void> insert(
     String tableName,
-    Map<String, dynamic> item,
+    JsonMap<dynamic> item,
     String idField,
   ) async {}
 
@@ -34,7 +33,7 @@ class _FakeStorage extends LocalFirstStorage {
   Future<void> update(
     String tableName,
     String id,
-    Map<String, dynamic> item,
+    JsonMap<dynamic> item,
   ) async {}
 
   @override
@@ -52,7 +51,7 @@ class _FakeStorage extends LocalFirstStorage {
   @override
   Future<void> ensureSchema(
     String tableName,
-    Map<String, LocalFieldType> schema, {
+    JsonMap<LocalFieldType> schema, {
     required String idFieldName,
   }) async {
     ensureCalled = true;

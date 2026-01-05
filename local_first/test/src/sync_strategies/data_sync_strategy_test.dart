@@ -9,7 +9,7 @@ class _DummyModel with LocalFirstModel {
   final String id;
 
   @override
-  Map<String, dynamic> toJson() => {'id': id};
+  JsonMap<dynamic> toJson() => {'id': id};
 }
 
 class _MockClient extends Mock implements LocalFirstClient {}
@@ -30,8 +30,8 @@ class _TestStrategy extends DataSyncStrategy {
 }
 
 class _FakeStorage implements LocalFirstStorage {
-  final Map<String, Map<String, Map<String, dynamic>>> _tables = {};
-  final Map<String, String> _meta = {};
+  final JsonMap<JsonMap<JsonMap<dynamic>>> _tables = {};
+  final JsonMap<String> _meta = {};
   bool initialized = false;
 
   @override
@@ -51,19 +51,19 @@ class _FakeStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> getAll(String tableName) async {
+  Future<List<JsonMap<dynamic>>> getAll(String tableName) async {
     return _tables[tableName]?.values.map((e) => Map.of(e)).toList() ?? [];
   }
 
   @override
-  Future<Map<String, dynamic>?> getById(String tableName, String id) async {
+  Future<JsonMap<dynamic>?> getById(String tableName, String id) async {
     return _tables[tableName]?[id];
   }
 
   @override
   Future<void> insert(
     String tableName,
-    Map<String, dynamic> item,
+    JsonMap<dynamic> item,
     String idField,
   ) async {
     _tables.putIfAbsent(tableName, () => {});
@@ -74,7 +74,7 @@ class _FakeStorage implements LocalFirstStorage {
   Future<void> update(
     String tableName,
     String id,
-    Map<String, dynamic> item,
+    JsonMap<dynamic> item,
   ) async {
     _tables.putIfAbsent(tableName, () => {});
     _tables[tableName]![id] = item;
@@ -105,23 +105,25 @@ class _FakeStorage implements LocalFirstStorage {
   Future<String?> getMeta(String key) async => _meta[key];
 
   // Event log stubs
-  final Map<String, Map<String, dynamic>> events = {};
+  final JsonMap<JsonMap<dynamic>> events = {};
 
   @override
-  Future<void> insertEvent(Map<String, dynamic> event) async {
+  Future<void> insertEvent(JsonMap<dynamic> event) async {
     events[event['event_id'] as String] = event;
   }
 
   @override
-  Future<Map<String, dynamic>?> getEventById(String eventId) async {
+  Future<JsonMap<dynamic>?> getEventById(String eventId) async {
     return events[eventId];
   }
 
   @override
-  Future<List<Map<String, dynamic>>> getEvents({String? repositoryName}) async {
+  Future<List<JsonMap<dynamic>>> getEvents({String? repositoryName}) async {
     return events.values
-        .where((e) => repositoryName == null || e['repository'] == repositoryName)
-        .map((e) => Map<String, dynamic>.from(e))
+        .where(
+          (e) => repositoryName == null || e['repository'] == repositoryName,
+        )
+        .map((e) => JsonMap<dynamic>.from(e))
         .toList();
   }
 
@@ -144,7 +146,7 @@ class _FakeStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> query(LocalFirstQuery query) async {
+  Future<List<JsonMap<dynamic>>> query(LocalFirstQuery query) async {
     return _tables[query.repositoryName]?.values
             .map((e) => Map.of(e))
             .toList() ??
@@ -152,14 +154,14 @@ class _FakeStorage implements LocalFirstStorage {
   }
 
   @override
-  Stream<List<Map<String, dynamic>>> watchQuery(LocalFirstQuery query) async* {
+  Stream<List<JsonMap<dynamic>>> watchQuery(LocalFirstQuery query) async* {
     yield await this.query(query);
   }
 
   @override
   Future<void> ensureSchema(
     String tableName,
-    Map<String, LocalFieldType> schema, {
+    JsonMap<LocalFieldType> schema, {
     required String idFieldName,
   }) async {}
 }
@@ -212,7 +214,7 @@ void main() {
         getId: (m) => m.id,
         toJson: (m) => m.toJson(),
         fromJson: (json) => _DummyModel(json['id'] as String),
-        onConflict: (l, r) => l,
+        onConflictEvent: (l, r) => l,
       );
       final client = LocalFirstClient(
         repositories: [repo],

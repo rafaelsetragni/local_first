@@ -865,7 +865,9 @@ LocalFirstRepository<UserModel> _buildUserRepository() {
     getId: (user) => user.id,
     toJson: (user) => user.toJson(),
     fromJson: (json) => UserModel.fromJson(json),
-    onConflict: UserModel.resolveConflict,
+    onConflictEvent: (local, remote) => remote.copyWith(
+      data: UserModel.resolveConflict(local.data, remote.data),
+    ),
   );
 }
 
@@ -875,7 +877,9 @@ LocalFirstRepository<CounterLogModel> _buildCounterLogRepository() {
     getId: (log) => log.id,
     toJson: (log) => log.toJson(),
     fromJson: (json) => CounterLogModel.fromJson(json),
-    onConflict: CounterLogModel.resolveConflict,
+    onConflictEvent: (local, remote) => remote.copyWith(
+      data: CounterLogModel.resolveConflict(local.data, remote.data),
+    ),
   );
 }
 

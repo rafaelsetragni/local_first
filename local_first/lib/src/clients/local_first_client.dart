@@ -205,7 +205,9 @@ class LocalFirstClient {
     for (final repository in _repositories) {
       final repoEvents = grouped[repository.name];
       if (repoEvents == null || repoEvents.isEmpty) continue;
-      await repository.markEventsAsSynced(repoEvents);
+      await repository.markEventsAsSynced(
+        repoEvents.cast<LocalFirstEvent<Object?>>(),
+      );
     }
   }
 

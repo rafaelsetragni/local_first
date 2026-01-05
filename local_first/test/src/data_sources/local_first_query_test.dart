@@ -15,7 +15,7 @@ class _DummyModel with LocalFirstModel {
   final String? note;
 
   @override
-  Map<String, dynamic> toJson() => {
+  JsonMap<dynamic> toJson() => {
     'id': id,
     'name': name,
     'score': score,
@@ -35,15 +35,15 @@ class _DummyRepo extends LocalFirstRepository<_DummyModel> {
           score: json['score'] as int,
           note: json['note'] as String?,
         ),
-        onConflict: (l, r) => l,
+        onConflictEvent: (l, r) => l,
       );
 }
 
 class _FakeStorage extends LocalFirstStorage {
   _FakeStorage(this.items);
 
-  List<Map<String, dynamic>> items;
-  final Map<String, String> _meta = {};
+  List<JsonMap<dynamic>> items;
+  final JsonMap<String> _meta = {};
 
   @override
   Future<void> initialize() async {}
@@ -57,12 +57,12 @@ class _FakeStorage extends LocalFirstStorage {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> getAll(String tableName) async {
+  Future<List<JsonMap<dynamic>>> getAll(String tableName) async {
     return items;
   }
 
   @override
-  Future<Map<String, dynamic>?> getById(String tableName, String id) async {
+  Future<JsonMap<dynamic>?> getById(String tableName, String id) async {
     return items.firstWhere((e) => e['id'] == id, orElse: () => {}).isEmpty
         ? null
         : items.firstWhere((e) => e['id'] == id);
@@ -71,7 +71,7 @@ class _FakeStorage extends LocalFirstStorage {
   @override
   Future<void> insert(
     String tableName,
-    Map<String, dynamic> item,
+    JsonMap<dynamic> item,
     String idField,
   ) async {}
 
@@ -79,7 +79,7 @@ class _FakeStorage extends LocalFirstStorage {
   Future<void> update(
     String tableName,
     String id,
-    Map<String, dynamic> item,
+    JsonMap<dynamic> item,
   ) async {}
 
   @override
@@ -99,7 +99,7 @@ class _FakeStorage extends LocalFirstStorage {
   @override
   Future<void> ensureSchema(
     String tableName,
-    Map<String, LocalFieldType> schema, {
+    JsonMap<LocalFieldType> schema, {
     required String idFieldName,
   }) async {}
 }
