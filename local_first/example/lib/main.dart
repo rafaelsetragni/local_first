@@ -1,9 +1,7 @@
 import 'dart:async';
 import 'dart:developer' as dev;
-
 import 'package:flutter/material.dart';
 import 'package:local_first/local_first.dart';
-import 'package:local_first_hive_storage/local_first_hive_storage.dart';
 import 'package:mongo_dart/mongo_dart.dart' hide State, Center;
 
 // To use this example, first you need to start a MongoDB service, and
@@ -260,43 +258,86 @@ class _MyHomePageState extends State<MyHomePage> {
         final currentUserAvatar =
             avatarMap[user.username] ?? user.avatarUrl ?? '';
 
-        return Column(
-          children: [
-            GestureDetector(
-              onTap: () => _onAvatarTap(context, currentUserAvatar),
-              child: AvatarPreview(
-                avatarUrl: currentUserAvatar,
-                showEditIndicator: true,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'Hello, ${user.username}!',
-              textAlign: TextAlign.center,
-              style: Theme.of(
-                context,
-              ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 48),
-            const Text('Global counter updated by all users:'),
-            StreamBuilder<int>(
-              stream: _counterStream,
-              builder: (context, counterSnapshot) {
-                final total = counterSnapshot.data ?? 0;
-                if (counterSnapshot.connectionState ==
-                    ConnectionState.waiting) {
-                  return const Padding(
-                    padding: EdgeInsets.all(8.0),
-                    child: CircularProgressIndicator(),
-                  );
-                }
-                return Text(
-                  '$total',
-                  style: Theme.of(context).textTheme.headlineLarge,
-                );
-              },
-            ),
-          ],
+        return StreamBuilder<bool>(
+          stream: RepositoryService().connectionState.stream,
+          initialData: RepositoryService().connectionState.latestOrNull,
+          builder: (context, connectionSnapshot) {
+            final isConnected = connectionSnapshot.data ?? false;
+            return Column(
+              children: [
+                Column(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      margin: const EdgeInsets.only(bottom: 8),
+                      decoration: BoxDecoration(
+                        color: isConnected
+                            ? Colors.green.shade100
+                            : Colors.red.shade100,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        isConnected ? 'Connected' : 'Disconnected',
+                        style: TextStyle(
+                          color: isConnected
+                              ? Colors.green.shade800
+                              : Colors.red.shade800,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: () => _onAvatarTap(context, currentUserAvatar),
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: isConnected ? Colors.green : Colors.red,
+                            width: 4,
+                          ),
+                        ),
+                        child: AvatarPreview(
+                          avatarUrl: currentUserAvatar,
+                          showEditIndicator: true,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Hello, ${user.username}!',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 48),
+                const Text('Global counter updated by all users:'),
+                StreamBuilder<int>(
+                  stream: _counterStream,
+                  builder: (context, counterSnapshot) {
+                    final total = counterSnapshot.data ?? 0;
+                    if (counterSnapshot.connectionState ==
+                        ConnectionState.waiting) {
+                      return const Padding(
+                        padding: EdgeInsets.all(8.0),
+                        child: CircularProgressIndicator(),
+                      );
+                    }
+                    return Text(
+                      '$total',
+                      style: Theme.of(context).textTheme.headlineLarge,
+                    );
+                  },
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -537,32 +578,35 @@ class RepositoryService {
   UserModel? authenticatedUser;
   String _currentNamespace = 'default';
   final _lastUsernameKey = '__last_username__';
+  final ValueStream<bool> connectionState = ValueStream(initial: false);
 
   final LocalFirstRepository<UserModel> userRepository;
   final LocalFirstRepository<CounterLogModel> counterLogRepository;
-  final MongoPeriodicSyncStrategy syncStrategy;
+  late final MongoPeriodicSyncStrategy syncStrategy;
 
   RepositoryService._internal()
     : userRepository = _buildUserRepository(),
-      counterLogRepository = _buildCounterLogRepository(),
-      syncStrategy = MongoPeriodicSyncStrategy();
+      counterLogRepository = _buildCounterLogRepository() {
+    syncStrategy = MongoPeriodicSyncStrategy(
+      onConnectionChange: (connected) => connectionState.add(connected),
+    );
+  }
 
   Future<UserModel?> initialize() async {
     final localFirst = this.localFirst ??= LocalFirstClient(
       repositories: [userRepository, counterLogRepository],
-      localStorage: HiveLocalFirstStorage(),
+      localStorage: LocalFirstMemoryStorage(),
       keyValueStorage: LocalFirstMemoryKeyValueStorage(),
       syncStrategies: [syncStrategy],
     );
 
     await localFirst.initialize();
+    syncStrategy.start();
     return await restoreLastUser();
   }
 
   Future<void> signIn({required String username}) async {
-    syncStrategy.stop();
     await _switchUserDatabase('');
-    await _syncRemoteUsersToLocal();
     final existing = await userRepository
         .query()
         .where('username', isEqualTo: username)
@@ -576,24 +620,10 @@ class RepositoryService {
     );
     await userRepository.upsert(user);
     await _persistLastUsername(username);
-    syncStrategy.start();
     NavigatorService().navigateToHome();
   }
 
-  Future<void> _syncRemoteUsersToLocal() async {
-    final remote = await syncStrategy.fetchUsers();
-    for (final data in remote) {
-      try {
-        final user = userRepository.fromJson(data);
-        await userRepository.upsert(user);
-      } catch (_) {
-        // ignore malformed user entries
-      }
-    }
-  }
-
   Future<void> signOut() async {
-    syncStrategy.stop();
     authenticatedUser = null;
     await _switchUserDatabase('');
     await localFirst?.setKeyValue(_lastUsernameKey, '');
@@ -608,7 +638,6 @@ class RepositoryService {
         .getAll();
     if (results.isEmpty) return null;
     authenticatedUser = results.first;
-    syncStrategy.start();
     return authenticatedUser;
   }
 
@@ -699,6 +728,8 @@ class RepositoryService {
     _currentNamespace = namespace;
     await db.openKeyValueDatabase(namespace: namespace);
     await db.openDocumentDatabase(namespace: namespace);
+    // Assume disconnected until first successful tick after switching DB.
+    connectionState.add(false);
   }
 
   String _sanitizeNamespace(String username) {
@@ -884,10 +915,14 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     uri: mongoConnectionString,
     repositoryNames: const ['counter_log', 'user'],
   );
+  final void Function(bool) onConnectionChange;
 
   Timer? _timer;
   final JsonMap<DateTime?> lastSyncedAt = {};
   final JsonMap<List<LocalFirstEvent>> pendingChanges = {};
+
+  MongoPeriodicSyncStrategy({void Function(bool)? onConnectionChange})
+    : onConnectionChange = onConnectionChange ?? _noop;
 
   void start() {
     stop();
@@ -898,9 +933,12 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
         _addPending(object);
       }
       for (final repository in mongoApi.repositoryNames) {
-        final value =
-            await client.getKeyValue<String>('__last_sync__$repository');
-        lastSyncedAt[repository] = value != null ? DateTime.tryParse(value) : null;
+        final value = await client.getKeyValue<String>(
+          '__last_sync__$repository',
+        );
+        lastSyncedAt[repository] = value != null
+            ? DateTime.tryParse(value)
+            : null;
       }
       _timer = Timer.periodic(period, _onTimerTick);
     });
@@ -918,7 +956,15 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   }
 
   void _addPending(LocalFirstEvent event) {
-    pendingChanges.putIfAbsent(event.repositoryName, () => []).add(event);
+    pendingChanges
+        .putIfAbsent(event.repositoryName, () => [])
+        .add(
+          event.copyWith(
+            serverSequence:
+                event.serverSequence ??
+                DateTime.now().toUtc().millisecondsSinceEpoch,
+          ),
+        );
   }
 
   @override
@@ -928,27 +974,36 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   }
 
   Future<void> _onTimerTick(_) async {
-    if (pendingChanges.isNotEmpty) {
-      final changes = JsonMap<List<LocalFirstEvent>>.from(pendingChanges);
-      pendingChanges.clear();
+    try {
+      if (pendingChanges.isNotEmpty) {
+        final changes = JsonMap<List<LocalFirstEvent>>.from(pendingChanges);
+        pendingChanges.clear();
 
-      await _pushToRemote(changes);
-    }
-    final remoteChanges = await mongoApi.pull(lastSyncedAt);
-    if (remoteChanges['changes']?.isNotEmpty) {
-      await pullChangesToLocal(remoteChanges);
+        await _pushToRemote(changes).timeout(period);
+      }
+      final remoteChanges = await mongoApi.pull(lastSyncedAt).timeout(period);
+      if (remoteChanges.isNotEmpty) {
+        await pullChangesToLocal(remoteChanges);
 
-      // Use the latest updated_at seen in this pull as the new lastSyncedAt
-      final latest = mongoApi.latestUpdatedAt(remoteChanges);
-      if (latest != null) {
-        for (final repo in mongoApi.repositoryNames) {
-          lastSyncedAt[repo] = latest;
-          await client.setKeyValue(
-            '__last_sync__$repo',
-            latest.toIso8601String(),
-          );
+        // Use the latest updated_at seen in this pull as the new lastSyncedAt
+        final latest = mongoApi.latestUpdatedAt(remoteChanges);
+        if (latest != null) {
+          for (final repo in mongoApi.repositoryNames) {
+            lastSyncedAt[repo] = latest;
+            await client.setKeyValue(
+              '__last_sync__$repo',
+              latest.toIso8601String(),
+            );
+          }
         }
       }
+      _emitConnection(true);
+    } on TimeoutException catch (e, s) {
+      _emitConnection(false);
+      dev.log('Mongo sync timeout: $e', name: logTag, error: e, stackTrace: s);
+    } catch (e, s) {
+      _emitConnection(false);
+      dev.log('Mongo sync error: $e', name: logTag, error: e, stackTrace: s);
     }
   }
 
@@ -963,7 +1018,6 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
 
   JsonMap<dynamic> _buildUploadPayload(JsonMap<List<LocalFirstEvent>> changes) {
     return {
-      'lastSyncedAt': DateTime.now().toIso8601String(),
       'changes': {
         for (final entry in changes.entries)
           entry.key: entry.value.map((e) => e.toJson()).toList(),
@@ -974,6 +1028,14 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   Future<List<JsonMap<dynamic>>> fetchUsers() {
     return mongoApi.fetchUsers();
   }
+
+  void _emitConnection(bool connected) {
+    try {
+      onConnectionChange(connected);
+    } catch (_) {}
+  }
+
+  static void _noop(bool _) {}
 }
 
 /// Low-level helper to push/pull changes against MongoDB.
@@ -1016,73 +1078,43 @@ class MongoApi {
   }
 
   Future<void> push(JsonMap<dynamic> payload) async {
-    final operationsByNode = payload['changes'];
-    if (operationsByNode is! JsonMap<dynamic>) return;
+    final changesByRepo = payload['changes'];
+    if (changesByRepo is! JsonMap<dynamic>) return;
 
-    final now = DateTime.now();
-    final hasChanges = operationsByNode.values.any((op) {
-      if (op is! JsonMap) return false;
-      return (op['insert'] as List?)?.isNotEmpty == true ||
-          (op['update'] as List?)?.isNotEmpty == true ||
-          (op['delete'] as List?)?.isNotEmpty == true;
-    });
+    final now = DateTime.now().toUtc();
+    final hasChanges = changesByRepo.values.any(
+      (value) => value is List && value.isNotEmpty,
+    );
     if (!hasChanges) return;
 
     dev.log('Uploading changes to Mongo', name: logTag);
-    for (final entry in operationsByNode.entries) {
+    for (final entry in changesByRepo.entries) {
       final repositoryName = entry.key;
-      final operations = entry.value;
-      if (operations is! JsonMap<dynamic>) continue;
+      final events = entry.value;
+      if (events is! List) continue;
       final collection = await _collection(repositoryName);
 
-      final insertItems = operations['insert'];
-      if (insertItems is List) {
-        for (final item in insertItems) {
-          if (item is! JsonMap<dynamic>) continue;
-          final id = item['id']?.toString();
-          if (id == null) continue;
-          final doc = {
-            ..._toMongoDateFields(item),
-            'operation': 'insert',
-            'updated_at': now,
-          };
-          await collection.replaceOne(where.eq('id', id), doc, upsert: true);
-        }
-      }
-
-      final updateItems = operations['update'];
-      if (updateItems is List) {
-        for (final item in updateItems) {
-          if (item is! JsonMap<dynamic>) continue;
-          final id = item['id']?.toString();
-          if (id == null) continue;
-          final doc = {
-            ..._toMongoDateFields(item),
-            'operation': 'update',
-            'updated_at': now,
-          };
-          await collection.replaceOne(where.eq('id', id), doc, upsert: true);
-        }
-      }
-
-      final deleteItems = operations['delete'];
-      if (deleteItems is List) {
-        for (final id in deleteItems) {
-          if (id == null) continue;
-          await collection.replaceOne(where.eq('id', id.toString()), {
-            'id': id.toString(),
-            'operation': 'delete',
-            'updated_at': now,
-          }, upsert: true);
-        }
+      for (final item in events) {
+        if (item is! JsonMap<dynamic>) continue;
+        final eventId = item['event_id']?.toString();
+        if (eventId == null || eventId.isEmpty) continue;
+        final serverSeq = item['server_sequence'] ?? now.millisecondsSinceEpoch;
+        final doc = {
+          ..._toMongoDateFields(item),
+          'server_sequence': serverSeq,
+          'updated_at': now,
+        };
+        await collection.replaceOne(
+          where.eq('event_id', eventId),
+          doc,
+          upsert: true,
+        );
       }
     }
   }
 
   Future<JsonMap<dynamic>> pull(JsonMap<DateTime?> lastSyncByNode) async {
-    final timestamp = DateTime.now();
-
-    final changes = <String, JsonMap<List<dynamic>>>{};
+    final changes = <String, JsonMap<dynamic>>{};
 
     for (final repositoryName in repositoryNames) {
       final cutoff =
@@ -1093,41 +1125,34 @@ class MongoApi {
         where.gt('updated_at', cutoff).sortBy('updated_at'),
       );
 
-      final inserts = <dynamic>[];
-      final updates = <dynamic>[];
-      final deletes = <dynamic>[];
+      final events = <JsonMap<dynamic>>[];
+      int? latestSeq;
 
       await cursor.forEach((doc) {
-        final op = doc['operation'];
-        if (op == 'delete') {
-          if (doc['id'] != null) deletes.add(doc['id']);
-          return;
+        final map = JsonMap<dynamic>.from(doc)..remove('_id');
+        final seq = map['server_sequence'];
+        if (seq is int) {
+          latestSeq = latestSeq == null
+              ? seq
+              : (seq > latestSeq! ? seq : latestSeq);
         }
-        final item = JsonMap<dynamic>.from(doc)
-          ..remove('operation')
-          ..remove('_id');
-        if (op == 'insert') {
-          inserts.add(_fromMongoDateFields(item));
-        } else {
-          updates.add(_fromMongoDateFields(item));
-        }
+        events.add(_fromMongoDateFields(map));
       });
 
-      final finalChanges = {
-        if (inserts.isNotEmpty) 'insert': inserts,
-        if (updates.isNotEmpty) 'update': updates,
-        if (deletes.isNotEmpty) 'delete': deletes,
-      };
-      if (finalChanges.isNotEmpty) {
+      if (events.isNotEmpty) {
+        changes[repositoryName] = {
+          'server_sequence':
+              latestSeq ?? DateTime.now().toUtc().millisecondsSinceEpoch,
+          'events': events,
+        };
         dev.log(
-          'Pulling changes for $repositoryName since ${lastSyncByNode[repositoryName]}',
+          'Pulling ${events.length} change(s) for $repositoryName since $cutoff',
           name: logTag,
         );
-        changes[repositoryName] = finalChanges;
       }
     }
 
-    return {'timestamp': timestamp.toIso8601String(), 'changes': changes};
+    return changes;
   }
 
   Future<List<JsonMap<dynamic>>> fetchUsers() async {
@@ -1150,30 +1175,24 @@ class MongoApi {
   }
 
   DateTime? latestUpdatedAt(JsonMap<dynamic> pullResult) {
-    final changes = pullResult['changes'];
-    if (changes is! JsonMap) return null;
     DateTime? latest;
-
-    for (final repositoryEntry in changes.entries) {
-      final repositoryChanges = repositoryEntry.value;
-      if (repositoryChanges is! JsonMap) continue;
-
-      for (final key in ['insert', 'update']) {
-        final list = repositoryChanges[key];
-        if (list is! List) continue;
-        for (final item in list) {
-          if (item is! JsonMap<dynamic>) continue;
-          final updatedValue = item['updated_at'];
-          DateTime? candidate;
-          if (updatedValue is DateTime) {
-            candidate = updatedValue;
-          } else if (updatedValue is String) {
-            candidate = DateTime.tryParse(updatedValue);
-          }
-          if (candidate != null &&
-              (latest == null || candidate.isAfter(latest))) {
-            latest = candidate;
-          }
+    for (final entry in pullResult.entries) {
+      final repoPayload = entry.value;
+      if (repoPayload is! JsonMap) continue;
+      final events = repoPayload['events'];
+      if (events is! List) continue;
+      for (final item in events) {
+        if (item is! JsonMap<dynamic>) continue;
+        final updatedValue = item['updated_at'];
+        DateTime? candidate;
+        if (updatedValue is DateTime) {
+          candidate = updatedValue;
+        } else if (updatedValue is String) {
+          candidate = DateTime.tryParse(updatedValue);
+        }
+        if (candidate != null &&
+            (latest == null || candidate.isAfter(latest))) {
+          latest = candidate;
         }
       }
     }

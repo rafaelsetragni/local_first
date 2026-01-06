@@ -2,14 +2,20 @@ part of '../../local_first.dart';
 
 /// A simple broadcast stream that replays the latest value to new listeners.
 class ValueStream<T> {
-  ValueStream()
+  ValueStream({T? initial})
       : _controller = StreamController<T>.broadcast(
           onListen: () {},
-        );
+        ) {
+    if (initial != null) {
+      add(initial);
+    }
+  }
 
   final StreamController<T> _controller;
   T? _latest;
   bool _hasValue = false;
+
+  T? get latestOrNull => _hasValue ? _latest as T : null;
 
   Stream<T> get stream {
     return _controller.stream.transform(
