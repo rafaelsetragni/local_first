@@ -371,7 +371,7 @@ class LocalFirstRepository<T extends Object> {
     if (events.isEmpty) return;
     if (!_initialized) {
       throw StateError(
-        'Repository $name is not initialized. Call initialize/openStorage first.',
+        'Repository $name is not initialized. Call initialize/openDocumentDatabase first.',
       );
     }
     for (final event in events) {

@@ -6,8 +6,6 @@ import 'package:local_first/local_first.dart';
 import 'package:local_first_hive_storage/local_first_hive_storage.dart';
 import 'package:mongo_dart/mongo_dart.dart' hide State, Center;
 
-typedef JsonMap<T> = JsonMap<T>;
-
 // To use this example, first you need to start a MongoDB service, and
 // you can do it easily creating an container instance using Docker.
 // First, install docker desktop on your machine, then copy and
@@ -615,7 +613,7 @@ class RepositoryService {
   }
 
   Future<UserModel?> restoreLastUser() async {
-    final username = await localFirst?.getMeta(_lastUsernameKey);
+    final username = await localFirst?.getKeyValue<String>(_lastUsernameKey);
     if (username == null || username.isEmpty) return null;
     return restoreUser(username);
   }
@@ -699,11 +697,8 @@ class RepositoryService {
     final namespace = _sanitizeNamespace(username);
     if (_currentNamespace == namespace) return;
     _currentNamespace = namespace;
-
-    final storage = db.localStorage;
-    if (storage is HiveLocalFirstStorage) {
-      await storage.useNamespace(namespace);
-    }
+    await db.openKeyValueDatabase(namespace: namespace);
+    await db.openDocumentDatabase(namespace: namespace);
   }
 
   String _sanitizeNamespace(String username) {
@@ -717,7 +712,7 @@ class RepositoryService {
 }
 
 /// Domain model for a user with avatar metadata.
-class UserModel with LocalFirstModel {
+class UserModel {
   final String id;
   final String username;
   final String? avatarUrl;
@@ -749,8 +744,6 @@ class UserModel with LocalFirstModel {
     );
   }
 
-  @override
-  @override
   JsonMap<dynamic> toJson() {
     return {
       'id': id,
@@ -790,7 +783,7 @@ class UserModel with LocalFirstModel {
   }
 }
 
-class CounterLogModel with LocalFirstModel {
+class CounterLogModel {
   final String id;
   final String username;
   final int increment;
@@ -822,7 +815,6 @@ class CounterLogModel with LocalFirstModel {
     );
   }
 
-  @override
   JsonMap<dynamic> toJson() {
     return {
       'id': id,
@@ -895,7 +887,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
 
   Timer? _timer;
   final JsonMap<DateTime?> lastSyncedAt = {};
-  final JsonMap<List<LocalFirstModel>> pendingChanges = {};
+  final JsonMap<List<LocalFirstEvent>> pendingChanges = {};
 
   void start() {
     stop();
@@ -906,10 +898,9 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
         _addPending(object);
       }
       for (final repository in mongoApi.repositoryNames) {
-        final value = await client.getMeta('__last_sync__$repository');
-        lastSyncedAt[repository] = value != null
-            ? DateTime.tryParse(value)
-            : null;
+        final value =
+            await client.getKeyValue<String>('__last_sync__$repository');
+        lastSyncedAt[repository] = value != null ? DateTime.tryParse(value) : null;
       }
       _timer = Timer.periodic(period, _onTimerTick);
     });
@@ -926,19 +917,19 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     stop();
   }
 
-  void _addPending(LocalFirstModel object) {
-    pendingChanges.putIfAbsent(object.repositoryName, () => []).add(object);
+  void _addPending(LocalFirstEvent event) {
+    pendingChanges.putIfAbsent(event.repositoryName, () => []).add(event);
   }
 
   @override
-  Future<SyncStatus> onPushToRemote(LocalFirstModel object) async {
+  Future<SyncStatus> onPushToRemote(LocalFirstEvent object) async {
     _addPending(object);
     return SyncStatus.pending;
   }
 
   Future<void> _onTimerTick(_) async {
     if (pendingChanges.isNotEmpty) {
-      final changes = JsonMap<List<LocalFirstModel>>.from(pendingChanges);
+      final changes = JsonMap<List<LocalFirstEvent>>.from(pendingChanges);
       pendingChanges.clear();
 
       await _pushToRemote(changes);
@@ -961,7 +952,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     }
   }
 
-  Future<void> _pushToRemote(JsonMap<List<LocalFirstModel>> changes) async {
+  Future<void> _pushToRemote(JsonMap<List<LocalFirstEvent>> changes) async {
     if (changes.isEmpty) return;
     dev.log(
       'Pushing changes for ${changes.length} repository(ies)',
@@ -970,11 +961,12 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     await mongoApi.push(_buildUploadPayload(changes));
   }
 
-  JsonMap<dynamic> _buildUploadPayload(JsonMap<List<LocalFirstModel>> changes) {
+  JsonMap<dynamic> _buildUploadPayload(JsonMap<List<LocalFirstEvent>> changes) {
     return {
       'lastSyncedAt': DateTime.now().toIso8601String(),
       'changes': {
-        for (final entry in changes.entries) entry.key: entry.value.toJson(),
+        for (final entry in changes.entries)
+          entry.key: entry.value.map((e) => e.toJson()).toList(),
       },
     };
   }

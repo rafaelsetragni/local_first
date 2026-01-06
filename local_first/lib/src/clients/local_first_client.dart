@@ -15,6 +15,10 @@ class LocalFirstClient {
   final Completer<void> _onInitialize = Completer<void>();
   Future<void>? _initializeFuture;
 
+  static const _defaultNamespace = 'default';
+  String _currentDocNamespace = _defaultNamespace;
+  String _currentKvNamespace = _defaultNamespace;
+
   bool get _initialized => _onInitialize.isCompleted;
 
   Future get awaitInitialization => _onInitialize.future;
@@ -32,8 +36,8 @@ class LocalFirstClient {
     required LocalFirstStorage localStorage,
     required LocalFirstKeyValueStorage keyValueStorage,
     List<DataSyncStrategy> syncStrategies = const [],
-  })  : _localStorage = localStorage,
-        _kvStorage = keyValueStorage {
+  }) : _localStorage = localStorage,
+       _kvStorage = keyValueStorage {
     if (repositories.isNotEmpty) {
       registerRepositories(repositories);
     }
@@ -145,6 +149,56 @@ class LocalFirstClient {
     await _kvStorage.close();
   }
 
+  /// Opens storages for a namespace (defaults to client's default).
+  ///
+  /// This closes, re-applies namespace (when supported) and re-opens.
+  Future<void> openDocumentDatabase({
+    String namespace = _defaultNamespace,
+  }) async {
+    if (!_initialized) {
+      throw StateError(
+        'LocalFirstClient.initialize must be called before opening storage',
+      );
+    }
+    if (_currentDocNamespace == namespace &&
+        _localStorage is! LocalFirstMemoryStorage) {
+      return;
+    }
+    _currentDocNamespace = namespace;
+
+    await _localStorage.close();
+    if (_localStorage is LocalFirstMemoryStorage) {
+      (_localStorage as LocalFirstMemoryStorage).useNamespace(namespace);
+    }
+    await _localStorage.initialize();
+
+    for (final repository in _repositories) {
+      repository.reset();
+      await repository.initialize();
+    }
+  }
+
+  /// Opens the key/value database for a namespace.
+  Future<void> openKeyValueDatabase({
+    String namespace = _defaultNamespace,
+  }) async {
+    if (!_initialized) {
+      throw StateError(
+        'LocalFirstClient.initialize must be called before opening storage',
+      );
+    }
+    if (_currentKvNamespace == namespace) return;
+    _currentKvNamespace = namespace;
+    await _kvStorage.close();
+    await _kvStorage.open(namespace: namespace);
+  }
+
+  /// Closes both storages without disposing the client.
+  Future<void> closeStorage() async {
+    await _localStorage.close();
+    await _kvStorage.close();
+  }
+
   /// Applies remote changes grouped by repository name.
   ///
   /// Expected shape:
@@ -216,12 +270,12 @@ class LocalFirstClient {
     }
   }
 
-  Future<String?> getMeta(String key) async {
-    return await _kvStorage.get(key);
+  Future<T?> getKeyValue<T>(String key) async {
+    return await _kvStorage.get<T>(key);
   }
 
-  Future<void> setKeyValue(String key, String value) async {
-    await _kvStorage.set(key, value);
+  Future<void> setKeyValue<T>(String key, T value) async {
+    await _kvStorage.set<T>(key, value);
   }
 
   String _getServerSequenceKey({required String repositoryName}) =>

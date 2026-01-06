@@ -15,6 +15,25 @@ void main() {
       expect(all.map((e) => e['id']), contains('1'));
     });
 
+    test('namespaces keep data isolated', () async {
+      await storage.insert('repo', {'id': '1', 'name': 'a'}, 'id');
+      await storage.pullRemoteEvent({
+        'repository': 'repo',
+        'event_id': 'e1',
+        'record_id': '1',
+        'payload': {'id': '1'},
+        'created_at': 0,
+      });
+
+      storage.useNamespace('other');
+      expect(await storage.getAll('repo'), isEmpty);
+      expect(await storage.getEvents(repositoryName: 'repo'), isEmpty);
+
+      storage.useNamespace('default');
+      expect((await storage.getAll('repo')).single['id'], '1');
+      expect((await storage.getEvents(repositoryName: 'repo')).single['event_id'], 'e1');
+    });
+
     test('getById returns inserted item', () async {
       await storage.insert('repo', {'id': '1', 'name': 'a'}, 'id');
       final item = await storage.getById('repo', '1');

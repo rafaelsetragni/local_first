@@ -3,8 +3,26 @@ part of '../../local_first.dart';
 /// Simple in-memory implementation of [LocalFirstStorage] useful for tests
 /// or lightweight scenarios without persistence.
 class LocalFirstMemoryStorage implements LocalFirstStorage {
-  final JsonMap<JsonMap<JsonMap<dynamic>>> _tables = {};
-  final JsonMap<List<JsonMap<dynamic>>> _events = {};
+  /// namespace -> table -> id -> row
+  final JsonMap<JsonMap<JsonMap<JsonMap<dynamic>>>> _tables = {};
+
+  /// namespace -> repository -> events
+  final JsonMap<JsonMap<List<JsonMap<dynamic>>>> _events = {};
+
+  String _namespace = 'default';
+
+  /// Switches the active namespace (similar to selecting a database).
+  void useNamespace(String namespace) {
+    _namespace = namespace;
+    _tables.putIfAbsent(_namespace, () => {});
+    _events.putIfAbsent(_namespace, () => {});
+  }
+
+  JsonMap<JsonMap<dynamic>> _tablesForNamespace() =>
+      _tables.putIfAbsent(_namespace, () => {});
+
+  JsonMap<List<JsonMap<dynamic>>> _eventsForNamespace() =>
+      _events.putIfAbsent(_namespace, () => {});
 
   @override
   Future<void> initialize() async {}
@@ -20,12 +38,17 @@ class LocalFirstMemoryStorage implements LocalFirstStorage {
 
   @override
   Future<List<JsonMap<dynamic>>> getAll(String tableName) async {
-    return _tables[tableName]?.values.map((e) => Map.of(e)).toList() ?? [];
+    final tables = _tablesForNamespace();
+    return tables[tableName]
+            ?.values
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList() ??
+        [];
   }
 
   @override
   Future<JsonMap<dynamic>?> getById(String tableName, String id) async {
-    final table = _tables[tableName];
+    final table = _tablesForNamespace()[tableName];
     if (table == null) return null;
     final item = table[id];
     return item == null ? null : Map.of(item);
@@ -38,7 +61,7 @@ class LocalFirstMemoryStorage implements LocalFirstStorage {
     String idField,
   ) async {
     final id = item[idField] as String;
-    final table = _tables.putIfAbsent(tableName, () => {});
+    final table = _tablesForNamespace().putIfAbsent(tableName, () => {});
     table[id] = Map.of(item);
   }
 
@@ -48,24 +71,24 @@ class LocalFirstMemoryStorage implements LocalFirstStorage {
     String id,
     JsonMap<dynamic> item,
   ) async {
-    final table = _tables.putIfAbsent(tableName, () => {});
+    final table = _tablesForNamespace().putIfAbsent(tableName, () => {});
     table[id] = Map.of(item);
   }
 
   @override
   Future<void> delete(String repositoryName, String id) async {
-    _tables[repositoryName]?.remove(id);
+    _tablesForNamespace()[repositoryName]?.remove(id);
   }
 
   @override
   Future<void> deleteAll(String tableName) async {
-    _tables[tableName]?.clear();
+    _tablesForNamespace()[tableName]?.clear();
   }
 
   @override
   Future<void> pullRemoteEvent(JsonMap<dynamic> event) async {
     final repo = event['repository'] as String? ?? '__default__';
-    final list = _events.putIfAbsent(repo, () => []);
+    final list = _eventsForNamespace().putIfAbsent(repo, () => []);
     final existingIndex = list.indexWhere(
       (e) => e['event_id'] == event['event_id'],
     );
@@ -78,7 +101,7 @@ class LocalFirstMemoryStorage implements LocalFirstStorage {
 
   @override
   Future<JsonMap<dynamic>?> getEventById(String eventId) async {
-    for (final list in _events.values) {
+    for (final list in _eventsForNamespace().values) {
       final match = list.firstWhere(
         (e) => e['event_id'] == eventId,
         orElse: () => {},
@@ -90,13 +113,14 @@ class LocalFirstMemoryStorage implements LocalFirstStorage {
 
   @override
   Future<List<JsonMap<dynamic>>> getEvents({String? repositoryName}) async {
+    final events = _eventsForNamespace();
     if (repositoryName != null) {
-      return _events[repositoryName]
+      return events[repositoryName]
               ?.map((e) => Map.of(e))
               .toList(growable: false) ??
           [];
     }
-    return _events.values
+    return events.values
         .expand((e) => e)
         .map((e) => Map.of(e))
         .toList(growable: false);
@@ -104,20 +128,20 @@ class LocalFirstMemoryStorage implements LocalFirstStorage {
 
   @override
   Future<void> deleteEvent(String eventId) async {
-    for (final list in _events.values) {
+    for (final list in _eventsForNamespace().values) {
       list.removeWhere((e) => e['event_id'] == eventId);
     }
   }
 
   @override
   Future<void> clearEvents() async {
-    _events.clear();
+    _eventsForNamespace().clear();
   }
 
   @override
   Future<void> pruneEvents(DateTime before) async {
     final cutoff = before.toUtc().millisecondsSinceEpoch;
-    for (final list in _events.values) {
+    for (final list in _eventsForNamespace().values) {
       list.removeWhere((e) {
         final ts = e['created_at'];
         return ts is int && ts < cutoff;
