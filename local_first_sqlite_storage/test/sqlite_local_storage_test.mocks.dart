@@ -58,7 +58,7 @@ class MockQueryBehavior extends _i1.Mock implements _i4.QueryBehavior {
 
   @override
   _i3.Future<List<Map<String, dynamic>>> call(
-    _i5.LocalFirstQuery<_i5.LocalFirstModel>? query,
+    _i5.LocalFirstQuery? query,
   ) =>
       (super.noSuchMethod(
             Invocation.method(#call, [query]),
