@@ -3,12 +3,11 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_first/local_first.dart';
 
-class _TestModel with LocalFirstModel {
+class _TestModel {
   _TestModel(this.id, {this.value});
   final String id;
   final String? value;
 
-  @override
   Map<String, dynamic> toJson() => {
     'id': id,
     if (value != null) 'value': value,
@@ -20,7 +19,7 @@ class _TestModel with LocalFirstModel {
 
 class _OkStrategy extends DataSyncStrategy {
   @override
-  Future<SyncStatus> onPushToRemote(LocalFirstModel localData) async {
+  Future<SyncStatus> onPushToRemote(LocalFirstEvent localData) async {
     return SyncStatus.ok;
   }
 }
@@ -229,7 +228,7 @@ void main() {
         syncStrategies: [_OkStrategy()],
       );
       await clientWithProbe.initialize();
-      await probeRepo.upsert(_TestModel('1'));
+      await probeRepo.upsert(LocalFirstEvent(payload: _TestModel('1')));
 
       expect(await storage.getById('probe', '1'), isNotNull);
       expect(probeRepo.initialized, isTrue);
@@ -258,8 +257,8 @@ void main() {
 
       final pending = await client.getAllPendingObjects();
       expect(pending.length, 1);
-      expect(pending.first, isA<_TestModel>());
-      expect((pending.first as _TestModel).id, 'p1');
+      expect(pending.first.payload, isA<_TestModel>());
+      expect(pending.first.payload.id, 'p1');
     });
 
     test('dispose closes storage', () async {

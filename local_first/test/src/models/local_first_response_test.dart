@@ -2,11 +2,10 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:local_first/local_first.dart';
 
-class _DummyModel with LocalFirstModel {
+class _DummyModel {
   _DummyModel(this.id);
   final String id;
 
-  @override
   Map<String, dynamic> toJson() => {'id': id};
 }
 
@@ -25,7 +24,7 @@ void main() {
   group('LocalFirstResponse', () {
     test('stores changes map and timestamp', () {
       final repo = _DummyRepo();
-      final model = _DummyModel('1');
+      final model = LocalFirstEvent(payload: _DummyModel('1'));
 
       final response = LocalFirstResponse(
         changes: {
