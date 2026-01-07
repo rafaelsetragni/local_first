@@ -132,11 +132,11 @@ class LocalFirstClient {
 
     final timestamp = DateTime.parse(json['timestamp'] as String);
     final changesJson = json['changes'] as Map;
-    final repositoryObjects = <LocalFirstRepository, List<LocalFirstModel>>{};
+    final repositoryObjects = <LocalFirstRepository, List<LocalFirstEvent>>{};
 
     for (var repositoryName in changesJson.keys) {
       final repository = getRepositoryByName(repositoryName as String);
-      final objects = <LocalFirstModel>[];
+      final objects = <LocalFirstEvent>[];
 
       final repositoryChangeJson =
           changesJson[repositoryName] as Map<String, dynamic>;
@@ -164,9 +164,12 @@ class LocalFirstClient {
         for (var id in deleteIds) {
           final object = await repository._getById(id);
           if (object != null) {
-            object._setSyncStatus(SyncStatus.ok);
-            object._setSyncOperation(SyncOperation.delete);
-            objects.add(object);
+            objects.add(
+              object.copyWith(
+                syncStatus: SyncStatus.ok,
+                syncOperation: SyncOperation.delete,
+              ),
+            );
           }
         }
       }

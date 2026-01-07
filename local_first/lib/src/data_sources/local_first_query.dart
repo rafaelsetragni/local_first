@@ -4,7 +4,7 @@ part of '../../local_first.dart';
 ///
 /// Provides a fluent API for building complex queries with filtering,
 /// ordering, and pagination capabilities.
-class LocalFirstQuery<T extends LocalFirstModel> {
+class LocalFirstQuery<T> {
   final String repositoryName;
   final List<QueryFilter> filters;
   final List<QuerySort> sorts;
@@ -123,7 +123,7 @@ class LocalFirstQuery<T extends LocalFirstModel> {
   /// Executes the query and returns all matching results.
   ///
   /// Returns a list of models with sync metadata.
-  Future<List<T>> getAll() async {
+  Future<List<LocalFirstEvent<T>>> getAll() async {
     final results = await _delegate.query(this);
     return _mapResults(results);
   }
@@ -139,11 +139,11 @@ class LocalFirstQuery<T extends LocalFirstModel> {
   ///   .watch()
   ///   .listen((items) => print('Active items: ${items.length}'));
   /// ```
-  Stream<List<T>> watch() {
+  Stream<List<LocalFirstEvent<T>>> watch() {
     return _delegate.watchQuery(this).map(_mapResults).asBroadcastStream();
   }
 
-  List<T> _mapResults(List<Map<String, dynamic>> results) {
+  List<LocalFirstEvent<T>> _mapResults(List<Map<String, dynamic>> results) {
     return results
         .map((json) {
           final itemJson = Map<String, dynamic>.from(json);
@@ -160,16 +160,18 @@ class LocalFirstQuery<T extends LocalFirstModel> {
               ? SyncOperation.values[json['_sync_operation'] as int]
               : SyncOperation.insert;
 
-          item._setSyncStatus(syncStatus);
-          item._setSyncOperation(syncOperation);
           final createdAt = json['_sync_created_at'] as int?;
-          item._setSyncCreatedAt(
-            createdAt != null
-                ? DateTime.fromMillisecondsSinceEpoch(createdAt, isUtc: true)
-                : null,
+          final createdAtDate = createdAt != null
+              ? DateTime.fromMillisecondsSinceEpoch(createdAt, isUtc: true)
+              : null;
+
+          return LocalFirstEvent<T>(
+            payload: item,
+            syncStatus: syncStatus,
+            syncOperation: syncOperation,
+            syncCreatedAt: createdAtDate,
+            repositoryName: repositoryName,
           );
-          item._setRepositoryName(repositoryName);
-          return item;
         })
         .where((obj) => !obj.isDeleted)
         .toList();

@@ -21,7 +21,7 @@ enum LocalFieldType { text, integer, real, boolean, datetime, blob }
 ///       );
 /// }
 /// ```
-abstract class LocalFirstRepository<T extends LocalFirstModel> {
+abstract class LocalFirstRepository<T> {
   /// The unique name identifier for this repository.
   final String name;
 
@@ -116,17 +116,24 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
     _isInitialized = false;
   }
 
-  Future<void> _pushLocalObject(T object) async {
+  Future<LocalFirstEvent<T>> _pushLocalObject(LocalFirstEvent<T> event) async {
+    var current = event;
+
     for (var strategy in _syncStrategies) {
       try {
-        final syncResult = await strategy.onPushToRemote(object);
-        object._setSyncStatus(syncResult);
-        if (syncResult == SyncStatus.ok) return;
+        final syncResult = await strategy.onPushToRemote(current);
+        current = current.copyWith(syncStatus: syncResult);
+        if (syncResult == SyncStatus.ok) {
+          await _updateObjectStatus(current);
+          return current;
+        }
       } catch (e) {
-        object._setSyncStatus(SyncStatus.failed);
+        current = current.copyWith(syncStatus: SyncStatus.failed);
       }
     }
-    await _updateObjectStatus(object);
+
+    await _updateObjectStatus(current);
+    return current;
   }
 
   /// Inserts or updates an item (upsert operation).
@@ -135,44 +142,44 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
   /// Otherwise, a new item will be inserted.
   ///
   /// The operation is marked as pending and will be synced on next [LocalFirstClient.sync].
-  Future<void> upsert(T item) async {
-    final json = await _client.localStorage.getById(name, getId(item));
+  Future<void> upsert(dynamic item) async {
+    final LocalFirstEvent<T> event = item is LocalFirstEvent<T>
+        ? item
+        : LocalFirstEvent<T>(payload: item as T);
+
+    final json = await _client.localStorage.getById(
+      name,
+      getId(event.payload),
+    );
     if (json != null) {
-      final existing = _modelFromJson(json);
-      await _update(_prepareForUpdate(_copyModel(existing, item)));
+      final existing = _eventFromJson(json);
+      await _update(_prepareForUpdate(_copyEvent(existing, event)));
     } else {
-      await _insert(item);
+      await _insert(_prepareForInsert(event));
     }
   }
 
-  Future<void> _insert(T item) async {
+  Future<void> _insert(LocalFirstEvent<T> item) async {
     final model = _prepareForInsert(item);
 
-    final insertFuture = _client.localStorage.insert(
+    await _client.localStorage.insert(
       name,
       _toStorageJson(model),
       idFieldName,
     );
 
-    final pushFuture = _pushLocalObject(model);
-    await Future.wait([pushFuture, insertFuture]);
+    await _pushLocalObject(model);
   }
 
-  Future<void> _update(T object) async {
-    final operation =
-        object.needSync && object.syncOperation == SyncOperation.insert
-        ? SyncOperation.insert
-        : SyncOperation.update;
-    object._setSyncStatus(SyncStatus.pending);
-    object._setSyncOperation(operation);
-
+  Future<void> _update(LocalFirstEvent<T> object) async {
+    final model = _prepareForUpdate(object);
     await _client.localStorage.update(
       name,
-      getId(object),
-      _toStorageJson(object),
+      getId(model.payload),
+      _toStorageJson(model),
     );
 
-    await _pushLocalObject(object);
+    await _pushLocalObject(model);
   }
 
   /// Deletes an item by its ID (soft delete).
@@ -189,55 +196,58 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
       return;
     }
 
-    final object = _modelFromJson(json);
+    final object = _eventFromJson(json);
 
     if (object.needSync && object.syncOperation == SyncOperation.insert) {
       await _client.localStorage.delete(name, id);
       return;
     }
 
-    object._setSyncStatus(SyncStatus.pending);
-    object._setSyncOperation(SyncOperation.delete);
+    final deleted = object.copyWith(
+      syncStatus: SyncStatus.pending,
+      syncOperation: SyncOperation.delete,
+    );
 
     await _client.localStorage.update(
       name,
-      getId(object),
-      _toStorageJson(object),
+      getId(deleted.payload),
+      _toStorageJson(deleted),
     );
   }
 
-  Map<String, dynamic> _toStorageJson(T model) {
+  Map<String, dynamic> _toStorageJson(LocalFirstEvent<T> model) {
+    final createdAt = model.syncCreatedAt?.toUtc() ?? DateTime.now().toUtc();
     return {
-      ...toJson(model),
+      ...toJson(model.payload),
       '_sync_status': model.syncStatus.index,
       '_sync_operation': model.syncOperation.index,
-      '_sync_created_at':
-          model.syncCreatedAt?.millisecondsSinceEpoch ??
-          DateTime.now().toUtc().millisecondsSinceEpoch,
+      '_sync_created_at': createdAt.millisecondsSinceEpoch,
     };
   }
 
-  T _prepareForInsert(T model) {
-    model._setSyncStatus(SyncStatus.pending);
-    model._setSyncOperation(SyncOperation.insert);
-    model._setSyncCreatedAt(DateTime.now().toUtc());
-    model._setRepositoryName(name);
-    return model;
+  LocalFirstEvent<T> _prepareForInsert(LocalFirstEvent<T> model) {
+    return model.copyWith(
+      syncStatus: SyncStatus.pending,
+      syncOperation: SyncOperation.insert,
+      syncCreatedAt: model.syncCreatedAt ?? DateTime.now().toUtc(),
+      repositoryName: name,
+    );
   }
 
-  T _prepareForUpdate(T model) {
+  LocalFirstEvent<T> _prepareForUpdate(LocalFirstEvent<T> model) {
     final wasPendingInsert =
         model.needSync && model.syncOperation == SyncOperation.insert;
     final existingCreatedAt = model.syncCreatedAt;
 
-    model._setSyncStatus(SyncStatus.pending);
     final operation = wasPendingInsert
         ? SyncOperation.insert
         : SyncOperation.update;
-    model._setSyncOperation(operation);
-    model._setRepositoryName(name);
-    model._setSyncCreatedAt(existingCreatedAt ?? DateTime.now().toUtc());
-    return model;
+    return model.copyWith(
+      syncStatus: SyncStatus.pending,
+      syncOperation: operation,
+      repositoryName: name,
+      syncCreatedAt: existingCreatedAt ?? DateTime.now().toUtc(),
+    );
   }
 
   /// Creates a query for this node.
@@ -261,12 +271,14 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
   }
 
   Future<void> _mergeRemoteItems(List<dynamic> remoteObjects) async {
-    final typedRemote = remoteObjects.cast<T>();
+    final typedRemote = remoteObjects.cast<LocalFirstEvent<T>>();
     final LocalFirstModels<T> allLocal = await _getAll(includeDeleted: true);
-    final Map<String, T> localMap = {for (var obj in allLocal) getId(obj): obj};
+    final Map<String, LocalFirstEvent<T>> localMap = {
+      for (var obj in allLocal) getId(obj.payload): obj,
+    };
 
-    for (final T remoteObj in typedRemote) {
-      final remoteId = getId(remoteObj);
+    for (final LocalFirstEvent<T> remoteObj in typedRemote) {
+      final remoteId = getId(remoteObj.payload);
       final localObj = localMap[remoteId];
 
       if (remoteObj.isDeleted) {
@@ -285,9 +297,17 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
         continue;
       }
 
-      final resolved = resolveConflict(localObj, remoteObj);
-      resolved._setSyncStatus(SyncStatus.ok);
-      resolved._setSyncOperation(SyncOperation.update);
+      final resolvedPayload = resolveConflict(
+        localObj.payload,
+        remoteObj.payload,
+      );
+      final resolved = LocalFirstEvent<T>(
+        payload: resolvedPayload,
+        syncStatus: SyncStatus.ok,
+        syncOperation: SyncOperation.update,
+        repositoryName: name,
+        syncCreatedAt: localObj.syncCreatedAt ?? remoteObj.syncCreatedAt,
+      );
       await _client.localStorage.update(
         name,
         remoteId,
@@ -296,77 +316,93 @@ abstract class LocalFirstRepository<T extends LocalFirstModel> {
     }
   }
 
-  Future<List<T>> getPendingObjects() async {
+  Future<List<LocalFirstEvent<T>>> getPendingObjects() async {
     final allObjects = await _getAll(includeDeleted: true);
     return allObjects.where((obj) => obj.needSync).toList();
   }
 
-  Future<List<T>> _getAll({bool includeDeleted = false}) async {
+  Future<List<LocalFirstEvent<T>>> _getAll({bool includeDeleted = false}) async {
     final maps = await _client.localStorage.getAll(name);
     return maps //
-        .map(_modelFromJson)
+        .map(_eventFromJson)
         .where((obj) => includeDeleted || !obj.isDeleted)
         .toList();
   }
 
-  Future<void> _updateObjectStatus(T obj) async {
-    await _client.localStorage.update(name, getId(obj), _toStorageJson(obj));
+  Future<void> _updateObjectStatus(LocalFirstEvent<T> obj) async {
+    await _client.localStorage.update(
+      name,
+      getId(obj.payload),
+      _toStorageJson(obj),
+    );
   }
 
-  T _modelFromJson(Map<String, dynamic> json) {
+  LocalFirstEvent<T> _eventFromJson(Map<String, dynamic> json) {
     final itemJson = Map<String, dynamic>.from(json);
     final statusIndex = itemJson.remove('_sync_status') as int?;
     final opIndex = itemJson.remove('_sync_operation') as int?;
     final createdAtMs = itemJson.remove('_sync_created_at') as int?;
 
     final model = fromJson(itemJson);
-    model._setSyncStatus(
-      statusIndex != null ? SyncStatus.values[statusIndex] : SyncStatus.ok,
-    );
-    model._setSyncOperation(
-      opIndex != null ? SyncOperation.values[opIndex] : SyncOperation.insert,
-    );
-    model._setSyncCreatedAt(
-      createdAtMs != null
+    return LocalFirstEvent<T>(
+      payload: model,
+      syncStatus:
+          statusIndex != null ? SyncStatus.values[statusIndex] : SyncStatus.ok,
+      syncOperation: opIndex != null
+          ? SyncOperation.values[opIndex]
+          : SyncOperation.insert,
+      syncCreatedAt: createdAtMs != null
           ? DateTime.fromMillisecondsSinceEpoch(createdAtMs, isUtc: true)
           : null,
+      repositoryName: name,
     );
-    model._setRepositoryName(name);
-    return model;
   }
 
-  T _copyModel(T target, T source) {
+  LocalFirstEvent<T> _copyEvent(
+    LocalFirstEvent<T> target,
+    LocalFirstEvent<T> source,
+  ) {
     // Shallow copy via JSON round-trip using existing serializers.
-    final merged = _fromJson({..._toJson(target), ..._toJson(source)});
-    merged._setSyncStatus(target.syncStatus);
-    merged._setSyncOperation(target.syncOperation);
-    merged._setSyncCreatedAt(target.syncCreatedAt);
-    merged._setRepositoryName(target.repositoryName);
-    return merged;
+    final mergedPayload = _fromJson({
+      ..._toJson(target.payload),
+      ..._toJson(source.payload),
+    });
+
+    return LocalFirstEvent<T>(
+      payload: mergedPayload,
+      syncStatus: target.syncStatus,
+      syncOperation: target.syncOperation,
+      syncCreatedAt: target.syncCreatedAt ?? source.syncCreatedAt,
+      repositoryName: target.repositoryName.isNotEmpty
+          ? target.repositoryName
+          : source.repositoryName,
+    );
   }
 
-  T _buildRemoteObject(
+  LocalFirstEvent<T> _buildRemoteObject(
     Map<String, dynamic> json, {
     required SyncOperation operation,
   }) {
     final model = _fromJson(json);
-    model._setSyncStatus(SyncStatus.ok);
-    model._setSyncOperation(operation);
-    model._setRepositoryName(name);
-    model._setSyncCreatedAt(model.syncCreatedAt ?? DateTime.now().toUtc());
-    return model;
+    return LocalFirstEvent<T>(
+      payload: model,
+      syncStatus: SyncStatus.ok,
+      syncOperation: operation,
+      repositoryName: name,
+      syncCreatedAt: DateTime.now().toUtc(),
+    );
   }
 
-  Future<T?> _getById(String id) async {
+  Future<LocalFirstEvent<T>?> _getById(String id) async {
     final json = await _client.localStorage.getById(name, id);
     if (json == null) {
       return null;
     }
-    return _modelFromJson(json);
+    return _eventFromJson(json);
   }
 }
 
-final class _LocalFirstRepository<T extends LocalFirstModel>
+final class _LocalFirstRepository<T>
     extends LocalFirstRepository<T> {
   _LocalFirstRepository({
     required super.name,
