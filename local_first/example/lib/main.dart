@@ -683,7 +683,7 @@ class RepositoryService {
       username: user.username,
       avatarUrl: avatarUrl.isEmpty ? null : avatarUrl,
       createdAt: user.createdAt,
-      updatedAt: DateTime.now(),
+      updatedAt: DateTime.now().toUtc(),
     );
 
     await userRepository.upsert(updated);
@@ -751,7 +751,7 @@ class UserModel {
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
-    final now = DateTime.now();
+    final now = DateTime.now().toUtc();
     final normalizedId = (id ?? username).trim().toLowerCase();
     return UserModel._(
       id: normalizedId,
@@ -767,8 +767,8 @@ class UserModel {
       'id': id,
       'username': username,
       'avatar_url': avatarUrl,
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
+      'created_at': createdAt.toUtc().toIso8601String(),
+      'updated_at': updatedAt.toUtc().toIso8601String(),
     };
   }
 
@@ -778,8 +778,8 @@ class UserModel {
       id: (json['id'] ?? username).toString().trim().toLowerCase(),
       username: username,
       avatarUrl: json['avatar_url'],
-      createdAt: DateTime.parse(json['created_at']),
-      updatedAt: DateTime.parse(json['updated_at']),
+      createdAt: DateTime.parse(json['created_at']).toUtc(),
+      updatedAt: DateTime.parse(json['updated_at']).toUtc(),
     );
   }
 
@@ -823,7 +823,7 @@ class CounterLogModel {
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
-    final now = DateTime.now();
+    final now = DateTime.now().toUtc();
     return CounterLogModel._(
       id: id ?? '${username}_${now.millisecondsSinceEpoch}',
       username: username,
@@ -838,8 +838,8 @@ class CounterLogModel {
       'id': id,
       'username': username,
       'increment': increment,
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
+      'created_at': createdAt.toUtc().toIso8601String(),
+      'updated_at': updatedAt.toUtc().toIso8601String(),
     };
   }
 
@@ -848,8 +848,8 @@ class CounterLogModel {
       id: json['id'],
       username: json['username'],
       increment: json['increment'],
-      createdAt: DateTime.parse(json['created_at']),
-      updatedAt: DateTime.parse(json['updated_at']),
+      createdAt: DateTime.parse(json['created_at']).toUtc(),
+      updatedAt: DateTime.parse(json['updated_at']).toUtc(),
     );
   }
 
@@ -866,8 +866,11 @@ class CounterLogModel {
   }
 
   String toFormattedDate() =>
-      '${createdAt.day.toString().padLeft(2, '0')}/${createdAt.month.toString().padLeft(2, '0')}/${createdAt.year} '
-      '${createdAt.hour.toString().padLeft(2, '0')}:${createdAt.minute.toString().padLeft(2, '0')}';
+      () {
+        final local = createdAt.toLocal();
+        return '${local.day.toString().padLeft(2, '0')}/${local.month.toString().padLeft(2, '0')}/${local.year} '
+            '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+      }();
 }
 
 LocalFirstRepository<UserModel> _buildUserRepository() {
@@ -978,7 +981,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
 
   JsonMap<dynamic> _buildUploadPayload(JsonMap<List<LocalFirstEvent>> changes) {
     return {
-      'lastSyncedAt': DateTime.now().toIso8601String(),
+      'lastSyncedAt': DateTime.now().toUtc().toIso8601String(),
       'changes': {
         for (final entry in changes.entries)
           entry.key: entry.value.toJson(
@@ -1036,7 +1039,7 @@ class MongoApi {
     final operationsByNode = payload['changes'];
     if (operationsByNode is! JsonMap<dynamic>) return;
 
-    final now = DateTime.now();
+    final now = DateTime.now().toUtc();
     final hasChanges = operationsByNode.values.any((op) {
       if (op is! JsonMap) return false;
       return (op['insert'] as List?)?.isNotEmpty == true ||
@@ -1097,7 +1100,7 @@ class MongoApi {
   }
 
   Future<JsonMap<dynamic>> pull(JsonMap<DateTime?> lastSyncByNode) async {
-    final timestamp = DateTime.now();
+    final timestamp = DateTime.now().toUtc();
 
     final changes = <String, JsonMap<List<dynamic>>>{};
 

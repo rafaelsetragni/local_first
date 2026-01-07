@@ -130,7 +130,7 @@ class LocalFirstClient {
       throw FormatException('Invalid offline response format');
     }
 
-    final timestamp = DateTime.parse(json['timestamp'] as String);
+    final timestamp = DateTime.parse(json['timestamp'] as String).toUtc();
     final changesJson = json['changes'] as Map;
     final repositoryObjects = <LocalFirstRepository, List<LocalFirstEvent>>{};
 
