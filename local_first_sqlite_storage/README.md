@@ -33,24 +33,28 @@ dependencies:
 import 'package:local_first/local_first.dart';
 import 'package:local_first_sqlite_storage/local_first_sqlite_storage.dart';
 
-class Todo with LocalFirstModel {
-  Todo({required this.id, required this.title})
-      : updatedAt = DateTime.now();
+// Keep your model immutable; LocalFirstEvent wraps it with sync metadata.
+class Todo {
+  const Todo({
+    required this.id,
+    required this.title,
+    required this.updatedAt,
+  });
 
   final String id;
   final String title;
   final DateTime updatedAt;
 
-  @override
   Map<String, dynamic> toJson() => {
         'id': id,
         'title': title,
-        'updated_at': updatedAt.toIso8601String(),
+        'updated_at': updatedAt.toUtc().toIso8601String(),
       };
 
   factory Todo.fromJson(Map<String, dynamic> json) => Todo(
         id: json['id'] as String,
         title: json['title'] as String,
+        updatedAt: DateTime.parse(json['updated_at']).toUtc(),
       );
 
   static Todo resolveConflict(Todo local, Todo remote) =>
@@ -79,7 +83,13 @@ Future<void> main() async {
   );
 
   await client.initialize();
-  await todoRepository.upsert(Todo(id: '1', title: 'Buy milk'));
+  await todoRepository.upsert(
+    Todo(
+      id: '1',
+      title: 'Buy milk',
+      updatedAt: DateTime.now().toUtc(),
+    ),
+  );
 }
 ```
 
