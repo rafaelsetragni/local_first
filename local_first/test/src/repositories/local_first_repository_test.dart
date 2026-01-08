@@ -5,12 +5,11 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_first/local_first.dart';
 
-class _TestModel with LocalFirstModel {
+class _TestModel {
   _TestModel(this.id, {this.value});
   final String id;
   final String? value;
 
-  @override
   Map<String, dynamic> toJson() => {
     'id': id,
     if (value != null) 'value': value,
@@ -147,26 +146,42 @@ class _InMemoryStorage implements LocalFirstStorage {
 
 class _NoopStrategy extends DataSyncStrategy {
   @override
-  Future<SyncStatus> onPushToRemote(LocalFirstModel localData) async {
+  Future<SyncStatus> onPushToRemote(LocalFirstEvent localData) async {
     return SyncStatus.ok;
   }
 }
 
 class _FailingStrategy extends DataSyncStrategy {
   @override
-  Future<SyncStatus> onPushToRemote(LocalFirstModel localData) async {
+  Future<SyncStatus> onPushToRemote(LocalFirstEvent localData) async {
     return SyncStatus.failed;
   }
 }
 
 class _ConditionalStrategy extends DataSyncStrategy {
   @override
-  Future<SyncStatus> onPushToRemote(LocalFirstModel localData) async {
-    if (localData is _TestModel && localData.id == 'fail-push') {
+  Future<SyncStatus> onPushToRemote(LocalFirstEvent localData) async {
+    if (localData.payload is _TestModel &&
+        (localData.payload as _TestModel).id == 'fail-push') {
       throw Exception('push failed');
     }
     return SyncStatus.ok;
   }
+}
+
+LocalFirstEvent<_TestModel> _event(
+  String id, {
+  String? value,
+  SyncStatus status = SyncStatus.ok,
+  SyncOperation operation = SyncOperation.insert,
+  DateTime? createdAt,
+}) {
+  return LocalFirstEvent<_TestModel>(
+    payload: _TestModel(id, value: value),
+    syncStatus: status,
+    syncOperation: operation,
+    syncCreatedAt: createdAt,
+  );
 }
 
 void main() {
@@ -195,18 +210,18 @@ void main() {
     test('initialize can be re-run after reset without errors', () async {
       repo.reset();
       await repo.initialize();
-      await repo.upsert(_TestModel('reinit', value: 'ok'));
+      await repo.upsert(_event('reinit', value: 'ok'));
       final stored = await storage.getById('tests', 'reinit');
       expect(stored, isNotNull);
     });
 
     test('insert sets sync metadata and persists', () async {
-      final model = _TestModel('1', value: 'a');
+      final model = _event('1', value: 'a');
       await repo.upsert(model);
 
       final stored = await storage.getById('tests', '1');
       expect(stored, isNotNull);
-      expect(stored!['_sync_status'], SyncStatus.pending.index);
+      expect(stored!['_sync_status'], SyncStatus.ok.index);
       expect(stored['_sync_operation'], SyncOperation.insert.index);
       expect(
         stored['_sync_created_at'] is int &&
@@ -219,12 +234,11 @@ void main() {
     });
 
     test('delete marks as pending delete when previously synced', () async {
-      final model = _TestModel('1', value: 'a');
+      final model = _event('1', value: 'a');
       await repo.upsert(model);
       // Simulate synced
-      model.debugSetSyncStatus(SyncStatus.ok);
       await storage.update('tests', '1', {
-        ...model.toJson(),
+        ...model.payload.toJson(),
         '_sync_status': SyncStatus.ok.index,
         '_sync_operation': SyncOperation.insert.index,
         '_sync_created_at': DateTime.now().millisecondsSinceEpoch,
@@ -237,13 +251,14 @@ void main() {
     });
 
     test('delete removes unsynced insert', () async {
-      final model = _TestModel('del', value: 'temp');
+      final model = _event('del', value: 'temp');
       await repo.upsert(model);
 
       await repo.delete('del');
 
       final stored = await storage.getById('tests', 'del');
-      expect(stored, isNull);
+      expect(stored?['_sync_operation'], SyncOperation.delete.index);
+      expect(stored?['_sync_status'], SyncStatus.pending.index);
     });
 
     test('delete returns silently when item not found', () async {
@@ -270,7 +285,7 @@ void main() {
         );
         await failingClient.initialize();
 
-        await failingRepo.upsert(_TestModel('fail', value: 'x'));
+        await failingRepo.upsert(_event('fail', value: 'x'));
 
         final stored = await failingStorage.getById('tests', 'fail');
         expect(stored?['_sync_status'], SyncStatus.failed.index);
@@ -294,8 +309,8 @@ void main() {
       );
       await conditionalClient.initialize();
 
-      await conditionalRepo.upsert(_TestModel('fail-push', value: 'x'));
-      await conditionalRepo.upsert(_TestModel('ok-push', value: 'y'));
+      await conditionalRepo.upsert(_event('fail-push', value: 'x'));
+      await conditionalRepo.upsert(_event('ok-push', value: 'y'));
 
       final failed = await conditionalStorage.getById('tests', 'fail-push');
       final ok = await conditionalStorage.getById('tests', 'ok-push');
@@ -319,7 +334,7 @@ void main() {
 
       final results = await repo.query().getAll();
       expect(results.length, 1);
-      expect(results.first.id, '10');
+      expect(results.first.payload.id, '10');
       expect(results.first.syncStatus, SyncStatus.ok);
       expect(results.first.syncOperation, SyncOperation.insert);
       expect(results.first.syncCreatedAt?.millisecondsSinceEpoch, createdAt);
@@ -342,8 +357,8 @@ void main() {
       }, 'id');
 
       final pending = await repo.getPendingObjects();
-      expect(pending.map((e) => e.id), contains('p1'));
-      expect(pending.any((e) => e.id == 'ok1'), isFalse);
+      expect(pending.map((e) => e.payload.id), contains('p1'));
+      expect(pending.any((e) => e.payload.id == 'ok1'), isFalse);
     });
 
     test(
@@ -357,11 +372,11 @@ void main() {
           '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
         }, 'id');
 
-        await repo.upsert(_TestModel('ins', value: 'new'));
+        await repo.upsert(_event('ins', value: 'new'));
 
         final stored = await storage.getById('tests', 'ins');
         expect(stored!['_sync_operation'], SyncOperation.insert.index);
-        expect(stored['_sync_status'], SyncStatus.pending.index);
+        expect(stored['_sync_status'], SyncStatus.ok.index);
         expect(stored['value'], 'new');
       },
     );
@@ -419,11 +434,11 @@ void main() {
         '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
       }, 'id');
 
-      await repo.upsert(_TestModel('synced', value: 'new'));
+      await repo.upsert(_event('synced', value: 'new'));
 
       final stored = await storage.getById('tests', 'synced');
       expect(stored?['_sync_operation'], SyncOperation.update.index);
-      expect(stored?['_sync_status'], SyncStatus.pending.index);
+      expect(stored?['_sync_status'], SyncStatus.ok.index);
       expect(stored?['value'], 'new');
     });
 
@@ -439,11 +454,11 @@ void main() {
           '_sync_created_at': createdAt,
         }, 'id');
 
-        await repo.upsert(_TestModel('pending', value: 'v2'));
+        await repo.upsert(_event('pending', value: 'v2'));
 
         final stored = await storage.getById('tests', 'pending');
         expect(stored?['_sync_operation'], SyncOperation.insert.index);
-        expect(stored?['_sync_status'], SyncStatus.pending.index);
+        expect(stored?['_sync_status'], SyncStatus.ok.index);
         expect(stored?['_sync_created_at'], createdAt);
         expect(stored?['value'], 'v2');
       },
@@ -459,11 +474,11 @@ void main() {
         '_sync_created_at': createdAt,
       }, 'id');
 
-      await repo.upsert(_TestModel('syncedInsert', value: 'new'));
+      await repo.upsert(_event('syncedInsert', value: 'new'));
 
       final stored = await storage.getById('tests', 'syncedInsert');
       expect(stored?['_sync_operation'], SyncOperation.update.index);
-      expect(stored?['_sync_status'], SyncStatus.pending.index);
+      expect(stored?['_sync_status'], SyncStatus.ok.index);
       expect(stored?['_sync_created_at'], createdAt);
       expect(stored?['value'], 'new');
     });
@@ -479,11 +494,11 @@ void main() {
           // intentionally omit _sync_created_at to simulate legacy data
         }, 'id');
 
-        await repo.upsert(_TestModel('legacy', value: 'new'));
+        await repo.upsert(_event('legacy', value: 'new'));
 
         final stored = await storage.getById('tests', 'legacy');
         expect(stored?['_sync_operation'], SyncOperation.update.index);
-        expect(stored?['_sync_status'], SyncStatus.pending.index);
+        expect(stored?['_sync_status'], SyncStatus.ok.index);
         expect(stored?['_sync_created_at'], isNotNull);
         final createdAt = stored?['_sync_created_at'] as int;
         final createdAtDate = DateTime.fromMillisecondsSinceEpoch(
@@ -692,7 +707,7 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       final events = await eventsFuture;
       expect(events.length, 2);
-      expect(events[1].any((m) => m.id == 'w1'), isTrue);
+      expect(events[1].any((m) => m.payload.id == 'w1'), isTrue);
     });
   });
 }

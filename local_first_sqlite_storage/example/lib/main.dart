@@ -543,6 +543,15 @@ class RepositoryService {
   final LocalFirstRepository<UserModel> userRepository;
   final LocalFirstRepository<CounterLogModel> counterLogRepository;
   final MongoPeriodicSyncStrategy syncStrategy;
+  List<UserModel> _usersFromEvents(
+    List<LocalFirstEvent<UserModel>> events,
+  ) =>
+      events.map((e) => e.payload).toList();
+
+  List<CounterLogModel> _logsFromEvents(
+    List<LocalFirstEvent<CounterLogModel>> events,
+  ) =>
+      events.map((e) => e.payload).toList();
 
   RepositoryService._internal()
     : userRepository = _buildUserRepository(),
@@ -569,7 +578,7 @@ class RepositoryService {
         .where('username', isEqualTo: username)
         .getAll();
     final preservedAvatar = existing.isNotEmpty
-        ? existing.first.avatarUrl
+        ? existing.first.payload.avatarUrl
         : null;
     final user = authenticatedUser = UserModel(
       username: username,
@@ -607,8 +616,9 @@ class RepositoryService {
         .query()
         .where('username', isEqualTo: username)
         .getAll();
-    if (results.isEmpty) return null;
-    authenticatedUser = results.first;
+    final payloads = _usersFromEvents(results);
+    if (payloads.isEmpty) return null;
+    authenticatedUser = payloads.first;
     syncStrategy.start();
     return authenticatedUser;
   }
@@ -622,17 +632,22 @@ class RepositoryService {
   Future<void> _persistLastUsername(String username) =>
       localFirst?.setKeyValue(_lastUsernameKey, username) ?? Future.value();
 
-  Future<List<UserModel>> getUsers() => userRepository.query().getAll();
+  Future<List<UserModel>> getUsers() async =>
+      _usersFromEvents(await userRepository.query().getAll());
 
-  Future<List<CounterLogModel>> getLogs() => counterLogRepository
-      .query()
-      .orderBy('created_at', descending: true)
-      .getAll();
+  Future<List<CounterLogModel>> getLogs() async =>
+      _logsFromEvents(
+        await counterLogRepository
+            .query()
+            .orderBy('created_at', descending: true)
+            .getAll(),
+      );
 
   Stream<List<CounterLogModel>> watchLogs() => counterLogRepository
       .query()
       .orderBy('created_at', descending: true)
-      .watch();
+      .watch()
+      .map(_logsFromEvents);
 
   Stream<int> watchCounter() => watchLogs().map(
     (logs) => logs.fold<int>(0, (sum, log) => sum + log.increment),
@@ -642,7 +657,11 @@ class RepositoryService {
       watchLogs().map((logs) => logs.take(limit).toList());
 
   Stream<List<UserModel>> watchUsers() =>
-      userRepository.query().orderBy('username').watch();
+      userRepository
+          .query()
+          .orderBy('username')
+          .watch()
+          .map(_usersFromEvents);
 
   Future<JsonMap<String?>> getAvatarsForUsers(Set<String> usernames) async {
     if (usernames.isEmpty) return {};
@@ -652,7 +671,8 @@ class RepositoryService {
         .getAll();
 
     final map = <String, String?>{
-      for (final user in results) user.username: user.avatarUrl,
+      for (final user in _usersFromEvents(results))
+        user.username: user.avatarUrl,
     };
 
     for (final username in usernames) {
@@ -670,7 +690,7 @@ class RepositoryService {
       username: user.username,
       avatarUrl: avatarUrl.isEmpty ? null : avatarUrl,
       createdAt: user.createdAt,
-      updatedAt: DateTime.now(),
+      updatedAt: DateTime.now().toUtc(),
     );
 
     await userRepository.upsert(updated);
@@ -719,7 +739,7 @@ class RepositoryService {
 }
 
 /// Domain model for a user with avatar metadata.
-class UserModel with LocalFirstModel {
+class UserModel {
   final String id;
   final String username;
   final String? avatarUrl;
@@ -741,9 +761,10 @@ class UserModel with LocalFirstModel {
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
-    final now = DateTime.now();
+    final now = DateTime.now().toUtc();
+    final normalizedId = (id ?? username).trim().toLowerCase();
     return UserModel._(
-      id: id ?? username,
+      id: normalizedId,
       username: username,
       avatarUrl: avatarUrl,
       createdAt: createdAt ?? now,
@@ -758,19 +779,19 @@ class UserModel with LocalFirstModel {
       'id': id,
       'username': username,
       'avatar_url': avatarUrl,
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
+      'created_at': createdAt.toUtc().toIso8601String(),
+      'updated_at': updatedAt.toUtc().toIso8601String(),
     };
   }
 
   factory UserModel.fromJson(JsonMap<dynamic> json) {
     final username = json['username'] ?? json['id'];
     return UserModel(
-      id: json['id'] ?? username,
+      id: (json['id'] ?? username).toString().trim().toLowerCase(),
       username: username,
       avatarUrl: json['avatar_url'],
-      createdAt: DateTime.parse(json['created_at']),
-      updatedAt: DateTime.parse(json['updated_at']),
+      createdAt: DateTime.parse(json['created_at']).toUtc(),
+      updatedAt: DateTime.parse(json['updated_at']).toUtc(),
     );
   }
 
@@ -792,7 +813,7 @@ class UserModel with LocalFirstModel {
   }
 }
 
-class CounterLogModel with LocalFirstModel {
+class CounterLogModel {
   final String id;
   final String username;
   final int increment;
@@ -814,7 +835,7 @@ class CounterLogModel with LocalFirstModel {
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
-    final now = DateTime.now();
+    final now = DateTime.now().toUtc();
     return CounterLogModel._(
       id: id ?? '${username}_${now.millisecondsSinceEpoch}',
       username: username,
@@ -830,8 +851,8 @@ class CounterLogModel with LocalFirstModel {
       'id': id,
       'username': username,
       'increment': increment,
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
+      'created_at': createdAt.toUtc().toIso8601String(),
+      'updated_at': updatedAt.toUtc().toIso8601String(),
     };
   }
 
@@ -840,8 +861,8 @@ class CounterLogModel with LocalFirstModel {
       id: json['id'],
       username: json['username'],
       increment: json['increment'],
-      createdAt: DateTime.parse(json['created_at']),
-      updatedAt: DateTime.parse(json['updated_at']),
+      createdAt: DateTime.parse(json['created_at']).toUtc(),
+      updatedAt: DateTime.parse(json['updated_at']).toUtc(),
     );
   }
 
@@ -905,7 +926,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
 
   Timer? _timer;
   final JsonMap<DateTime?> lastSyncedAt = {};
-  final JsonMap<List<LocalFirstModel>> pendingChanges = {};
+  final JsonMap<List<LocalFirstEvent>> pendingChanges = {};
 
   void start() {
     stop();
@@ -936,19 +957,19 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     stop();
   }
 
-  void _addPending(LocalFirstModel object) {
+  void _addPending(LocalFirstEvent object) {
     pendingChanges.putIfAbsent(object.repositoryName, () => []).add(object);
   }
 
   @override
-  Future<SyncStatus> onPushToRemote(LocalFirstModel object) async {
+  Future<SyncStatus> onPushToRemote(LocalFirstEvent object) async {
     _addPending(object);
     return SyncStatus.pending;
   }
 
   Future<void> _onTimerTick(_) async {
     if (pendingChanges.isNotEmpty) {
-      final changes = JsonMap<List<LocalFirstModel>>.from(pendingChanges);
+      final changes = JsonMap<List<LocalFirstEvent>>.from(pendingChanges);
       pendingChanges.clear();
 
       await _pushToRemote(changes);
@@ -971,7 +992,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     }
   }
 
-  Future<void> _pushToRemote(JsonMap<List<LocalFirstModel>> changes) async {
+  Future<void> _pushToRemote(JsonMap<List<LocalFirstEvent>> changes) async {
     if (changes.isEmpty) return;
     dev.log(
       'Pushing changes for ${changes.length} repository(ies)',
@@ -980,11 +1001,15 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     await mongoApi.push(_buildUploadPayload(changes));
   }
 
-  JsonMap<dynamic> _buildUploadPayload(JsonMap<List<LocalFirstModel>> changes) {
+  JsonMap<dynamic> _buildUploadPayload(JsonMap<List<LocalFirstEvent>> changes) {
     return {
-      'lastSyncedAt': DateTime.now().toIso8601String(),
+      'lastSyncedAt': DateTime.now().toUtc().toIso8601String(),
       'changes': {
-        for (final entry in changes.entries) entry.key: entry.value.toJson(),
+        for (final entry in changes.entries)
+          entry.key: entry.value.toJson(
+            (payload) =>
+                client.getRepositoryByName(entry.key).toJson(payload),
+          ),
       },
     };
   }
@@ -1037,7 +1062,7 @@ class MongoApi {
     final operationsByNode = payload['changes'];
     if (operationsByNode is! JsonMap<dynamic>) return;
 
-    final now = DateTime.now();
+    final now = DateTime.now().toUtc();
     final hasChanges = operationsByNode.values.any((op) {
       if (op is! JsonMap) return false;
       return (op['insert'] as List?)?.isNotEmpty == true ||
@@ -1098,7 +1123,7 @@ class MongoApi {
   }
 
   Future<JsonMap<dynamic>> pull(JsonMap<DateTime?> lastSyncByNode) async {
-    final timestamp = DateTime.now();
+    final timestamp = DateTime.now().toUtc();
 
     final changes = <String, JsonMap<List<dynamic>>>{};
 

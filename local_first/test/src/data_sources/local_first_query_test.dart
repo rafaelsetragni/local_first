@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_first/local_first.dart';
 
-class _DummyModel with LocalFirstModel {
+class _DummyModel {
   _DummyModel({
     required this.id,
     required this.name,
@@ -14,7 +14,6 @@ class _DummyModel with LocalFirstModel {
   final int score;
   final String? note;
 
-  @override
   Map<String, dynamic> toJson() => {
     'id': id,
     'name': name,
@@ -162,9 +161,9 @@ void main() {
       final results = await query.getAll();
       expect(results.length, 3); // delete filtered out
 
-      final alice = results.firstWhere((m) => m.id == '1');
-      expect(alice.name, 'alice');
-      expect(alice.score, 10);
+      final alice = results.firstWhere((m) => m.payload.id == '1');
+      expect(alice.payload.name, 'alice');
+      expect(alice.payload.score, 10);
       expect(alice.syncStatus, SyncStatus.ok);
       expect(alice.syncOperation, SyncOperation.insert);
       expect(alice.repositoryName, 'dummy');
@@ -180,54 +179,54 @@ void main() {
               .getAll();
 
       expect(results.length, 1);
-      expect(results.single.name, 'dave');
+      expect(results.single.payload.name, 'dave');
     });
 
     test('supports where equal and not equal', () async {
       final eq = await query.where('name', isEqualTo: 'alice').getAll();
-      expect(eq.map((e) => e.name), ['alice']);
+      expect(eq.map((e) => e.payload.name), ['alice']);
 
       final neq = await query.where('name', isNotEqualTo: 'alice').getAll();
-      expect(neq.every((e) => e.name != 'alice'), isTrue);
+      expect(neq.every((e) => e.payload.name != 'alice'), isTrue);
     });
 
     test('supports greater/less comparisons', () async {
       final gt = await query.where('score', isGreaterThan: 10).getAll();
-      expect(gt.map((e) => e.id), containsAll(['2', '4']));
+      expect(gt.map((e) => e.payload.id), containsAll(['2', '4']));
 
       final gte = await query
           .where('score', isGreaterThanOrEqualTo: 20)
           .getAll();
-      expect(gte.map((e) => e.id), contains('2'));
+      expect(gte.map((e) => e.payload.id), contains('2'));
 
       final lt = await query.where('score', isLessThan: 20).getAll();
-      expect(lt.map((e) => e.id), containsAll(['1', '4']));
+      expect(lt.map((e) => e.payload.id), containsAll(['1', '4']));
 
       final lte = await query.where('score', isLessThanOrEqualTo: 10).getAll();
-      expect(lte.map((e) => e.id), ['1']);
+      expect(lte.map((e) => e.payload.id), ['1']);
     });
 
     test('supports whereIn / whereNotIn', () async {
       final inList = await query
           .where('name', whereIn: ['alice', 'dave'])
           .getAll();
-      expect(inList.map((e) => e.id), containsAll(['1', '4']));
+      expect(inList.map((e) => e.payload.id), containsAll(['1', '4']));
 
       final notInList = await query
           .where('name', whereNotIn: ['alice', 'bob'])
           .getAll();
       expect(
-        notInList.map((e) => e.name),
+        notInList.map((e) => e.payload.name),
         everyElement(isNot(anyOf('alice', 'bob'))),
       );
     });
 
     test('supports isNull filter', () async {
       final nullNotes = await query.where('note', isNull: true).getAll();
-      expect(nullNotes.map((e) => e.id), containsAll(['1', '4']));
+      expect(nullNotes.map((e) => e.payload.id), containsAll(['1', '4']));
 
       final notNullNotes = await query.where('note', isNull: false).getAll();
-      expect(notNullNotes.map((e) => e.id), ['2']);
+      expect(notNullNotes.map((e) => e.payload.id), ['2']);
     });
 
     test('supports offset pagination', () async {
@@ -237,7 +236,7 @@ void main() {
           .limitTo(2)
           .getAll();
       expect(page.length, 2);
-      expect(page.first.id, '4'); // scores: 10,15,20 (charlie is deleted)
+      expect(page.first.payload.id, '4'); // scores: 10,15,20 (charlie is deleted)
     });
 
     test('watch emits initial mapped results', () async {
@@ -245,8 +244,8 @@ void main() {
       final first = await stream.first;
 
       expect(first.length, 3);
-      expect(first.any((m) => m.id == '1'), isTrue);
-      expect(first.any((m) => m.id == '2'), isTrue);
+      expect(first.any((m) => m.payload.id == '1'), isTrue);
+      expect(first.any((m) => m.payload.id == '2'), isTrue);
     });
   });
 }

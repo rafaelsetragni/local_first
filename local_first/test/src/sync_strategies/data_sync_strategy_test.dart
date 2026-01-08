@@ -4,11 +4,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:local_first/local_first.dart';
 import 'package:mocktail/mocktail.dart';
 
-class _DummyModel with LocalFirstModel {
+class _DummyModel {
   _DummyModel(this.id);
   final String id;
 
-  @override
   Map<String, dynamic> toJson() => {'id': id};
 }
 
@@ -24,7 +23,7 @@ class _TestStrategy extends DataSyncStrategy {
   }
 
   @override
-  Future<SyncStatus> onPushToRemote(LocalFirstModel localData) async {
+  Future<SyncStatus> onPushToRemote(LocalFirstEvent localData) async {
     return SyncStatus.ok;
   }
 }
@@ -127,7 +126,7 @@ class _FakeStorage implements LocalFirstStorage {
 
 void main() {
   setUpAll(() {
-    registerFallbackValue(<LocalFirstModel>[]);
+    registerFallbackValue(<LocalFirstEvent<_DummyModel>>[]);
   });
 
   group('DataSyncStrategy', () {
@@ -152,7 +151,7 @@ void main() {
     test('getPendingObjects delegates to client', () async {
       final strategy = _TestStrategy();
       final client = _MockClient();
-      final pending = [_DummyModel('1')];
+      final pending = [LocalFirstEvent(payload: _DummyModel('1'))];
 
       when(
         () => client.getAllPendingObjects(),

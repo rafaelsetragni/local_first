@@ -57,32 +57,33 @@ The API is evolving, but the intended flow looks like this:
 ```dart
 import 'package:local_first/local_first.dart';
 
-// 1) Describe your model and add LocalFirstModel to get sync metadata.
-class Todo with LocalFirstModel {
-  Todo({
+// 1) Describe your model (no mixin needed). LocalFirstEvent will wrap it with
+//    sync metadata. Keep your dates in UTC.
+class Todo {
+  const Todo({
     required this.id,
     required this.title,
     this.completed = false,
-  }) : updatedAt = DateTime.now();
+    required this.updatedAt,
+  });
 
   final String id;
   final String title;
   final bool completed;
   final DateTime updatedAt;
 
-  @override
   Map<String, dynamic> toJson() => {
         'id': id,
         'title': title,
         'completed': completed,
-        'updated_at': updatedAt.toIso8601String(),
+        'updated_at': updatedAt.toUtc().toIso8601String(),
       };
 
   factory Todo.fromJson(Map<String, dynamic> json) => Todo(
         id: json['id'] as String,
         title: json['title'] as String,
         completed: json['completed'] as bool? ?? false,
-        updatedAt: DateTime.parse(json['updated_at']),
+        updatedAt: DateTime.parse(json['updated_at']).toUtc(),
       );
 
   // Last write wins.
@@ -116,7 +117,10 @@ Future<void> main() async {
   await client.initialize();
 
   // 4) Use the repository as if you were online the whole time.
-  await todoRepository.upsert(Todo(id: '1', title: 'Buy milk'));
+  //    LocalFirstEvent is created internally and keeps sync metadata immutable.
+  await todoRepository.upsert(
+    Todo(id: '1', title: 'Buy milk', updatedAt: DateTime.now().toUtc()),
+  );
 
   // served instantly from local cache
   final todoStream = todoRepository.query().orderBy('title').watch();
