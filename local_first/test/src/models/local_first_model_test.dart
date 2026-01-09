@@ -15,7 +15,7 @@ void main() {
   group('LocalFirstEvent', () {
     test('defaults to ok/insert and createdAt set to now UTC', () {
       final event = LocalFirstEvent(
-        payload: _DummyModel(id: '1', value: 'a'),
+        state: _DummyModel(id: '1', value: 'a'),
       );
 
       expect(event.syncStatus, SyncStatus.ok);
@@ -28,7 +28,7 @@ void main() {
     });
 
     test('needSync reflects pending or failed states', () {
-      final base = LocalFirstEvent(payload: _DummyModel(id: '1', value: 'a'));
+      final base = LocalFirstEvent(state: _DummyModel(id: '1', value: 'a'));
       final pending = base.copyWith(syncStatus: SyncStatus.pending);
       final failed = base.copyWith(syncStatus: SyncStatus.failed);
 
@@ -38,7 +38,7 @@ void main() {
 
     test('isDeleted reflects delete operation', () {
       final model = LocalFirstEvent(
-        payload: _DummyModel(id: '1', value: 'a'),
+        state: _DummyModel(id: '1', value: 'a'),
         syncOperation: SyncOperation.delete,
       );
 
@@ -47,32 +47,42 @@ void main() {
 
     test('LocalFirstModelsX.toJson groups by operation', () {
       final insert = LocalFirstEvent(
-        payload: _DummyModel(id: '1', value: 'one'),
+        state: _DummyModel(id: '1', value: 'one'),
         syncOperation: SyncOperation.insert,
       );
       final update = LocalFirstEvent(
-        payload: _DummyModel(id: '2', value: 'two'),
+        state: _DummyModel(id: '2', value: 'two'),
         syncOperation: SyncOperation.update,
       );
       final delete = LocalFirstEvent(
-        payload: _DummyModel(id: '3', value: 'three'),
+        state: _DummyModel(id: '3', value: 'three'),
         syncOperation: SyncOperation.delete,
       );
 
       final payload = [insert, update, delete].toJson((p) => p.toJson());
 
       expect(payload['insert'], [
-        {'id': '1', 'value': 'one'},
+        {
+          'id': '1',
+          'value': 'one',
+          'event_id': insert.eventId,
+        },
       ]);
       expect(payload['update'], [
-        {'id': '2', 'value': 'two'},
+        {
+          'id': '2',
+          'value': 'two',
+          'event_id': update.eventId,
+        },
       ]);
-      expect(payload['delete'], ['3']);
+      expect(payload['delete'], [
+        {'id': '3', 'event_id': delete.eventId}
+      ]);
     });
 
     test('copyWith updates sync metadata immutably', () {
       final model = LocalFirstEvent(
-        payload: _DummyModel(id: '1', value: 'x'),
+        state: _DummyModel(id: '1', value: 'x'),
       ).copyWith(
         syncStatus: SyncStatus.failed,
         syncOperation: SyncOperation.update,

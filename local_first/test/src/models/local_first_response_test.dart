@@ -24,7 +24,7 @@ void main() {
   group('LocalFirstResponse', () {
     test('stores changes map and timestamp', () {
       final repo = _DummyRepo();
-      final model = LocalFirstEvent(payload: _DummyModel('1'));
+      final model = LocalFirstEvent(state: _DummyModel('1'));
 
       final response = LocalFirstResponse(
         changes: {
