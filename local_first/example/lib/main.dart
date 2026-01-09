@@ -529,6 +529,7 @@ class NavigatorService {
 }
 
 /// Central orchestrator for auth, persistence, and sync.
+/// Coordinates repositories, storage, sync strategy, and session/namespace handling.
 class RepositoryService {
   static const tag = 'RepositoryService';
 
@@ -544,6 +545,8 @@ class RepositoryService {
   final LocalFirstRepository<CounterLogModel> counterLogRepository;
   final MongoPeriodicSyncStrategy syncStrategy;
 
+  // Central orchestrator for the demo: wires repositories, storage, sync
+  // strategy and handles auth/session (namespace) switching.
   RepositoryService._internal()
     : userRepository = _buildUserRepository(),
       counterLogRepository = _buildCounterLogRepository(),
@@ -568,6 +571,7 @@ class RepositoryService {
   ) => events.map((e) => e.state).toList();
 
   Future<void> signIn({required String username}) async {
+    // On sign in, swap namespace, prefetch users from remote, and persist the new user.
     syncStrategy.stop();
     await _switchUserDatabase('');
     await _syncRemoteUsersToLocal();
@@ -601,6 +605,7 @@ class RepositoryService {
   }
 
   Future<void> signOut() async {
+    // Stops sync and resets session-specific state.
     syncStrategy.stop();
     authenticatedUser = null;
     await _switchUserDatabase('');
@@ -893,7 +898,8 @@ LocalFirstRepository<CounterLogModel> _buildCounterLogRepository() {
   );
 }
 
-/// Periodically syncs pending changes with MongoDB and pulls updates.
+/// Periodic sync strategy: batches pending events to MongoDB and pulls remote events.
+/// Demonstrates the classic local-first loop (push pending, pull remote, merge).
 class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   static const logTag = 'MongoPeriodicSyncStrategy';
   final Duration period = const Duration(milliseconds: 500);
@@ -911,8 +917,8 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     client.awaitInitialization.then((_) async {
       dev.log('Starting periodic sync', name: logTag);
       final pendingEvents = await getPendingEvents();
-      for (final object in pendingEvents) {
-        _addPending(object);
+      for (final event in pendingEvents) {
+        _addPending(event);
       }
       for (final repository in mongoApi.repositoryNames) {
         final value = await client.getMeta('__last_sync__$repository');
@@ -935,13 +941,13 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     stop();
   }
 
-  void _addPending(LocalFirstEvent object) {
-    pendingChanges.putIfAbsent(object.repositoryName, () => []).add(object);
+  void _addPending(LocalFirstEvent event) {
+    pendingChanges.putIfAbsent(event.repositoryName, () => []).add(event);
   }
 
   @override
-  Future<SyncStatus> onPushToRemote(LocalFirstEvent object) async {
-    _addPending(object);
+  Future<SyncStatus> onPushToRemote(LocalFirstEvent event) async {
+    _addPending(event);
     return SyncStatus.pending;
   }
 
@@ -997,6 +1003,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
 }
 
 /// Low-level helper to push/pull changes against MongoDB.
+/// Minimal MongoDB adapter used by the demo sync strategy (push/pull events).
 class MongoApi {
   static const logTag = 'MongoApi';
   final String uri;
@@ -1036,6 +1043,7 @@ class MongoApi {
   }
 
   Future<void> push(JsonMap<dynamic> payload) async {
+    // Uploads batched events grouped by repository.
     final operationsByNode = payload['changes'];
     if (operationsByNode is! JsonMap<dynamic>) return;
 
@@ -1100,6 +1108,7 @@ class MongoApi {
   }
 
   Future<JsonMap<dynamic>> pull(JsonMap<DateTime?> lastSyncByNode) async {
+    // Pulls new events since the last sync timestamp per repository.
     final timestamp = DateTime.now().toUtc();
 
     final changes = <String, JsonMap<List<dynamic>>>{};
