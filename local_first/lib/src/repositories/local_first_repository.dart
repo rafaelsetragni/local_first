@@ -219,6 +219,7 @@ abstract class LocalFirstRepository<T> {
     final createdAt = model.syncCreatedAt.toUtc();
     return {
       ...toJson(model.payload),
+      '_event_id': model.eventId,
       '_sync_status': model.syncStatus.index,
       '_sync_operation': model.syncOperation.index,
       '_sync_created_at': createdAt.millisecondsSinceEpoch,
@@ -342,10 +343,12 @@ abstract class LocalFirstRepository<T> {
     final statusIndex = itemJson.remove('_sync_status') as int?;
     final opIndex = itemJson.remove('_sync_operation') as int?;
     final createdAtMs = itemJson.remove('_sync_created_at') as int?;
+    final eventId = itemJson.remove('_event_id') as String?;
 
     final model = fromJson(itemJson);
     return LocalFirstEvent<T>(
       payload: model,
+      eventId: eventId ?? LocalFirstIdGenerator.uuidV7(),
       syncStatus:
           statusIndex != null ? SyncStatus.values[statusIndex] : SyncStatus.ok,
       syncOperation: opIndex != null
@@ -370,6 +373,7 @@ abstract class LocalFirstRepository<T> {
 
     return LocalFirstEvent<T>(
       payload: mergedPayload,
+      eventId: target.eventId,
       syncStatus: target.syncStatus,
       syncOperation: target.syncOperation,
       syncCreatedAt: target.syncCreatedAt,

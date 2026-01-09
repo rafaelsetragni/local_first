@@ -21,6 +21,7 @@ void main() {
       expect(event.syncStatus, SyncStatus.ok);
       expect(event.syncOperation, SyncOperation.insert);
       expect(event.syncCreatedAt, isA<DateTime>());
+      expect(event.eventId, isNotEmpty);
       expect(event.repositoryName, '');
       expect(event.needSync, isFalse);
       expect(event.isDeleted, isFalse);

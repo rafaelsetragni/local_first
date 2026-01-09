@@ -34,14 +34,19 @@ mixin LocalFirstModel {}
 class LocalFirstEvent<T> {
   LocalFirstEvent({
     required this.payload,
+    String? eventId,
     this.syncStatus = SyncStatus.ok,
     this.syncOperation = SyncOperation.insert,
     DateTime? syncCreatedAt,
     this.repositoryName = '',
-  }) : syncCreatedAt = (syncCreatedAt ?? DateTime.now().toUtc());
+  })  : syncCreatedAt = (syncCreatedAt ?? DateTime.now().toUtc()),
+        eventId = eventId ?? LocalFirstIdGenerator.uuidV7();
 
   /// Domain object being synced.
   final T payload;
+
+  /// Unique identifier for this sync event.
+  final String eventId;
 
   /// Current synchronization state for this payload.
   final SyncStatus syncStatus;
@@ -64,6 +69,7 @@ class LocalFirstEvent<T> {
   /// Creates a new instance with selective overrides.
   LocalFirstEvent<T> copyWith({
     T? payload,
+    String? eventId,
     SyncStatus? syncStatus,
     SyncOperation? syncOperation,
     DateTime? syncCreatedAt,
@@ -71,6 +77,7 @@ class LocalFirstEvent<T> {
   }) {
     return LocalFirstEvent<T>(
       payload: payload ?? this.payload,
+      eventId: eventId ?? this.eventId,
       syncStatus: syncStatus ?? this.syncStatus,
       syncOperation: syncOperation ?? this.syncOperation,
       syncCreatedAt: (syncCreatedAt ?? this.syncCreatedAt).toUtc(),
