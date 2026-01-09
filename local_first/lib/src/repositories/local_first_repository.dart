@@ -216,7 +216,7 @@ abstract class LocalFirstRepository<T> {
   }
 
   Map<String, dynamic> _toStorageJson(LocalFirstEvent<T> model) {
-    final createdAt = model.syncCreatedAt?.toUtc() ?? DateTime.now().toUtc();
+    final createdAt = model.syncCreatedAt.toUtc();
     return {
       ...toJson(model.payload),
       '_sync_status': model.syncStatus.index,
@@ -229,7 +229,7 @@ abstract class LocalFirstRepository<T> {
     return model.copyWith(
       syncStatus: SyncStatus.pending,
       syncOperation: SyncOperation.insert,
-      syncCreatedAt: model.syncCreatedAt ?? DateTime.now().toUtc(),
+      syncCreatedAt: model.syncCreatedAt,
       repositoryName: name,
     );
   }
@@ -246,7 +246,7 @@ abstract class LocalFirstRepository<T> {
       syncStatus: SyncStatus.pending,
       syncOperation: operation,
       repositoryName: name,
-      syncCreatedAt: existingCreatedAt ?? DateTime.now().toUtc(),
+      syncCreatedAt: existingCreatedAt,
     );
   }
 
@@ -306,7 +306,7 @@ abstract class LocalFirstRepository<T> {
         syncStatus: SyncStatus.ok,
         syncOperation: SyncOperation.update,
         repositoryName: name,
-        syncCreatedAt: localObj.syncCreatedAt ?? remoteObj.syncCreatedAt,
+        syncCreatedAt: localObj.syncCreatedAt,
       );
       await _client.localStorage.update(
         name,
@@ -353,7 +353,7 @@ abstract class LocalFirstRepository<T> {
           : SyncOperation.insert,
       syncCreatedAt: createdAtMs != null
           ? DateTime.fromMillisecondsSinceEpoch(createdAtMs, isUtc: true)
-          : null,
+          : DateTime.now().toUtc(),
       repositoryName: name,
     );
   }
@@ -372,7 +372,7 @@ abstract class LocalFirstRepository<T> {
       payload: mergedPayload,
       syncStatus: target.syncStatus,
       syncOperation: target.syncOperation,
-      syncCreatedAt: target.syncCreatedAt ?? source.syncCreatedAt,
+      syncCreatedAt: target.syncCreatedAt,
       repositoryName: target.repositoryName.isNotEmpty
           ? target.repositoryName
           : source.repositoryName,

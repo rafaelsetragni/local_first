@@ -161,9 +161,10 @@ class LocalFirstQuery<T> {
               : SyncOperation.insert;
 
           final createdAt = json['_sync_created_at'] as int?;
-          final createdAtDate = createdAt != null
-              ? DateTime.fromMillisecondsSinceEpoch(createdAt, isUtc: true)
-              : null;
+          final createdAtDate = DateTime.fromMillisecondsSinceEpoch(
+            createdAt ?? 0,
+            isUtc: true,
+          );
 
           return LocalFirstEvent<T>(
             payload: item,

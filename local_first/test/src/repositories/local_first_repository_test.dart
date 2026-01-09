@@ -337,7 +337,7 @@ void main() {
       expect(results.first.payload.id, '10');
       expect(results.first.syncStatus, SyncStatus.ok);
       expect(results.first.syncOperation, SyncOperation.insert);
-      expect(results.first.syncCreatedAt?.millisecondsSinceEpoch, createdAt);
+      expect(results.first.syncCreatedAt.millisecondsSinceEpoch, createdAt);
     });
 
     test('getPendingObjects returns only pending items', () async {

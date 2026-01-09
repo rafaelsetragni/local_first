@@ -32,13 +32,13 @@ mixin LocalFirstModel {}
 
 /// Immutable wrapper carrying sync metadata alongside a payload.
 class LocalFirstEvent<T> {
-  const LocalFirstEvent({
+  LocalFirstEvent({
     required this.payload,
     this.syncStatus = SyncStatus.ok,
     this.syncOperation = SyncOperation.insert,
-    this.syncCreatedAt,
+    DateTime? syncCreatedAt,
     this.repositoryName = '',
-  });
+  }) : syncCreatedAt = (syncCreatedAt ?? DateTime.now().toUtc());
 
   /// Domain object being synced.
   final T payload;
@@ -50,7 +50,7 @@ class LocalFirstEvent<T> {
   final SyncOperation syncOperation;
 
   /// Timestamp when the item was first created locally.
-  final DateTime? syncCreatedAt;
+  final DateTime syncCreatedAt;
 
   /// Repository that owns this event.
   final String repositoryName;
@@ -73,8 +73,7 @@ class LocalFirstEvent<T> {
       payload: payload ?? this.payload,
       syncStatus: syncStatus ?? this.syncStatus,
       syncOperation: syncOperation ?? this.syncOperation,
-      syncCreatedAt:
-          (syncCreatedAt ?? this.syncCreatedAt)?.toUtc(),
+      syncCreatedAt: (syncCreatedAt ?? this.syncCreatedAt).toUtc(),
       repositoryName: repositoryName ?? this.repositoryName,
     );
   }

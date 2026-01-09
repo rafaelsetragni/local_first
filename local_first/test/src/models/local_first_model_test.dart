@@ -13,14 +13,14 @@ class _DummyModel {
 
 void main() {
   group('LocalFirstEvent', () {
-    test('defaults to ok/insert and no createdAt', () {
+    test('defaults to ok/insert and createdAt set to now UTC', () {
       final event = LocalFirstEvent(
         payload: _DummyModel(id: '1', value: 'a'),
       );
 
       expect(event.syncStatus, SyncStatus.ok);
       expect(event.syncOperation, SyncOperation.insert);
-      expect(event.syncCreatedAt, isNull);
+      expect(event.syncCreatedAt, isA<DateTime>());
       expect(event.repositoryName, '');
       expect(event.needSync, isFalse);
       expect(event.isDeleted, isFalse);
