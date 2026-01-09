@@ -20,35 +20,35 @@ enum SyncOperation {
   /// The object was updated locally.
   update,
 
-/// The object was deleted locally (soft delete).
+  /// The object was deleted locally (soft delete).
   delete,
 }
 
 /// Type alias for a list of models with sync metadata.
-typedef LocalFirstModels<T> = List<LocalFirstEvent<T>>;
+typedef LocalFirstEvents<T> = List<LocalFirstEvent<T>>;
 
 @Deprecated('Use LocalFirstEvent instead; this mixin no longer carries state.')
 mixin LocalFirstModel {}
 
-/// Immutable wrapper carrying sync metadata alongside a payload.
+/// Immutable wrapper carrying sync metadata alongside the state object.
 class LocalFirstEvent<T> {
   LocalFirstEvent({
-    required this.payload,
+    required this.state,
     String? eventId,
     this.syncStatus = SyncStatus.ok,
     this.syncOperation = SyncOperation.insert,
     DateTime? syncCreatedAt,
     this.repositoryName = '',
-  })  : syncCreatedAt = (syncCreatedAt ?? DateTime.now().toUtc()),
-        eventId = eventId ?? LocalFirstIdGenerator.uuidV7();
+  }) : syncCreatedAt = (syncCreatedAt ?? DateTime.now().toUtc()),
+       eventId = eventId ?? LocalFirstIdGenerator.uuidV7();
 
   /// Domain object being synced.
-  final T payload;
+  final T state;
 
   /// Unique identifier for this sync event.
   final String eventId;
 
-  /// Current synchronization state for this payload.
+  /// Current synchronization state for this state object.
   final SyncStatus syncStatus;
 
   /// Last operation performed locally.
@@ -68,7 +68,7 @@ class LocalFirstEvent<T> {
 
   /// Creates a new instance with selective overrides.
   LocalFirstEvent<T> copyWith({
-    T? payload,
+    T? state,
     String? eventId,
     SyncStatus? syncStatus,
     SyncOperation? syncOperation,
@@ -76,7 +76,7 @@ class LocalFirstEvent<T> {
     String? repositoryName,
   }) {
     return LocalFirstEvent<T>(
-      payload: payload ?? this.payload,
+      state: state ?? this.state,
       eventId: eventId ?? this.eventId,
       syncStatus: syncStatus ?? this.syncStatus,
       syncOperation: syncOperation ?? this.syncOperation,
@@ -92,15 +92,13 @@ extension LocalFirstModelsX<T> on List<LocalFirstEvent<T>> {
   ///
   /// Groups objects by operation type (insert, update, delete) as expected
   /// by the push endpoint.
-  Map<String, dynamic> toJson(
-    Map<String, dynamic> Function(T payload) toJson,
-  ) {
+  Map<String, dynamic> toJson(Map<String, dynamic> Function(T state) toJson) {
     final inserts = <Map<String, dynamic>>[];
     final updates = <Map<String, dynamic>>[];
-    final deletes = <String>[];
+    final deletes = <Map<String, dynamic>>[];
 
     for (var obj in this) {
-      final itemJson = toJson(obj.payload);
+      final itemJson = {...toJson(obj.state), 'event_id': obj.eventId};
 
       switch (obj.syncOperation) {
         case SyncOperation.insert:
@@ -110,7 +108,10 @@ extension LocalFirstModelsX<T> on List<LocalFirstEvent<T>> {
           updates.add(itemJson);
           break;
         case SyncOperation.delete:
-          deletes.add(itemJson['id']?.toString() ?? '');
+          deletes.add({
+            'id': itemJson['id']?.toString() ?? '',
+            'event_id': obj.eventId,
+          });
           break;
       }
     }

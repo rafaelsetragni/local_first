@@ -93,11 +93,11 @@ class LocalFirstClient {
   Future<void> _pullRemoteChanges(Map<String, dynamic> map) async {
     final LocalFirstResponse response = await _buildOfflineResponse(map);
 
-    for (final MapEntry<LocalFirstRepository, LocalFirstModels> entry
+    for (final MapEntry<LocalFirstRepository, LocalFirstEvents> entry
         in response.changes.entries) {
       final LocalFirstRepository repository = entry.key;
-      final LocalFirstModels remoteObjects = entry.value;
-      await repository._mergeRemoteItems(remoteObjects);
+      final LocalFirstEvents remoteEvents = entry.value;
+      await repository._mergeRemoteEvents(remoteEvents);
     }
 
     for (final repository in _repositories) {
@@ -108,9 +108,9 @@ class LocalFirstClient {
     }
   }
 
-  Future<LocalFirstModels> getAllPendingObjects() async {
+  Future<LocalFirstEvents> getAllPendingEvents() async {
     final results = await Future.wait([
-      for (var repository in _repositories) repository.getPendingObjects(),
+      for (var repository in _repositories) repository.getPendingEvents(),
     ]);
     return results.expand((e) => e).toList();
   }
@@ -132,11 +132,11 @@ class LocalFirstClient {
 
     final timestamp = DateTime.parse(json['timestamp'] as String).toUtc();
     final changesJson = json['changes'] as Map;
-    final repositoryObjects = <LocalFirstRepository, List<LocalFirstEvent>>{};
+    final repositoryEvents = <LocalFirstRepository, List<LocalFirstEvent>>{};
 
     for (var repositoryName in changesJson.keys) {
       final repository = getRepositoryByName(repositoryName as String);
-      final objects = <LocalFirstEvent>[];
+      final events = <LocalFirstEvent>[];
 
       final repositoryChangeJson =
           changesJson[repositoryName] as Map<String, dynamic>;
@@ -148,7 +148,7 @@ class LocalFirstClient {
             Map<String, dynamic>.from(element),
             operation: SyncOperation.insert,
           );
-          objects.add(object);
+          events.add(object);
         }
       } else if (repositoryChangeJson.containsKey('update')) {
         final updates = (repositoryChangeJson['update'] as List);
@@ -157,14 +157,14 @@ class LocalFirstClient {
             Map<String, dynamic>.from(element),
             operation: SyncOperation.update,
           );
-          objects.add(object);
+          events.add(object);
         }
       } else if (repositoryChangeJson.containsKey('delete')) {
         final deleteIds = (repositoryChangeJson['delete'] as List<String>);
         for (var id in deleteIds) {
           final object = await repository._getById(id);
           if (object != null) {
-            objects.add(
+            events.add(
               object.copyWith(
                 syncStatus: SyncStatus.ok,
                 syncOperation: SyncOperation.delete,
@@ -174,8 +174,8 @@ class LocalFirstClient {
         }
       }
 
-      repositoryObjects[repository] = objects;
+      repositoryEvents[repository] = events;
     }
-    return LocalFirstResponse(changes: repositoryObjects, timestamp: timestamp);
+    return LocalFirstResponse(changes: repositoryEvents, timestamp: timestamp);
   }
 }

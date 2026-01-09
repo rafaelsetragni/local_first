@@ -168,7 +168,7 @@ class LocalFirstQuery<T> {
           );
 
           return LocalFirstEvent<T>(
-            payload: item,
+            state: item,
             eventId: eventId,
             syncStatus: syncStatus,
             syncOperation: syncOperation,

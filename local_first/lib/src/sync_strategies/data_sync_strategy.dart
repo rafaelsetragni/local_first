@@ -21,8 +21,8 @@ abstract class DataSyncStrategy {
 
   Future<SyncStatus> onPushToRemote(LocalFirstEvent localData);
 
-  Future<List<LocalFirstEvent>> getPendingObjects() {
-    return _client.getAllPendingObjects();
+  Future<List<LocalFirstEvent>> getPendingEvents() {
+    return _client.getAllPendingEvents();
   }
 
   Future<void> pullChangesToLocal(Map<String, dynamic> remoteChanges) {
