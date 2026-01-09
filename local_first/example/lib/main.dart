@@ -561,11 +561,11 @@ class RepositoryService {
   }
 
   List<UserModel> _usersFromEvents(List<LocalFirstEvent<UserModel>> events) =>
-      events.map((e) => e.payload).toList();
+      events.map((e) => e.state).toList();
 
   List<CounterLogModel> _logsFromEvents(
     List<LocalFirstEvent<CounterLogModel>> events,
-  ) => events.map((e) => e.payload).toList();
+  ) => events.map((e) => e.state).toList();
 
   Future<void> signIn({required String username}) async {
     syncStrategy.stop();
@@ -576,7 +576,7 @@ class RepositoryService {
         .where('username', isEqualTo: username)
         .getAll();
     final preservedAvatar = existing.isNotEmpty
-        ? existing.first.payload.avatarUrl
+        ? existing.first.state.avatarUrl
         : null;
     final user = authenticatedUser = UserModel(
       username: username,
@@ -910,8 +910,8 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     stop();
     client.awaitInitialization.then((_) async {
       dev.log('Starting periodic sync', name: logTag);
-      final pendingObjects = await getPendingObjects();
-      for (final object in pendingObjects) {
+      final pendingEvents = await getPendingEvents();
+      for (final object in pendingEvents) {
         _addPending(object);
       }
       for (final repository in mongoApi.repositoryNames) {
