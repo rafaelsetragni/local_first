@@ -219,19 +219,19 @@ class _MyHomePageState extends State<MyHomePage> {
 
     return Scaffold(
       appBar: _buildSignOutAppBar(),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _buildAvatarAndGlobalCounter(user),
-              const SizedBox(height: 24),
-              _buildUserList(context),
-              const SizedBox(height: 16),
-              _buildRecentActivities(context),
-            ],
-          ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Expanded(child: _buildAvatarAndGlobalCounter(user)),
+            Column(
+              children: [
+                _buildUserList(context),
+                _buildRecentActivities(context),
+              ],
+            ),
+          ],
         ),
       ),
       floatingActionButton: Column(
@@ -270,6 +270,7 @@ class _MyHomePageState extends State<MyHomePage> {
           builder: (context, connectionSnapshot) {
             final isConnected = connectionSnapshot.data ?? false;
             return Column(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Column(
                   children: [
@@ -303,34 +304,38 @@ class _MyHomePageState extends State<MyHomePage> {
                         connectionStatus: isConnected,
                       ),
                     ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Hello, ${user.username}!',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context)
+                          .textTheme
+                          .headlineMedium
+                          ?.copyWith(fontWeight: FontWeight.bold),
+                    ),
                   ],
                 ),
-                const SizedBox(height: 12),
-                Text(
-                  'Hello, ${user.username}!',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 48),
-                const Text('Global counter updated by all users:'),
-                StreamBuilder<int>(
-                  stream: _counterStream,
-                  builder: (context, counterSnapshot) {
-                    final total = counterSnapshot.data ?? 0;
-                    if (counterSnapshot.connectionState ==
-                        ConnectionState.waiting) {
-                      return const Padding(
-                        padding: EdgeInsets.all(8.0),
-                        child: CircularProgressIndicator(),
-                      );
-                    }
-                    return Text(
-                      '$total',
-                      style: Theme.of(context).textTheme.headlineLarge,
-                    );
-                  },
+                Column(
+                  children: [
+                    const Text('Global counter updated by all users:'),
+                    StreamBuilder<int>(
+                      stream: _counterStream,
+                      builder: (context, counterSnapshot) {
+                        final total = counterSnapshot.data ?? 0;
+                        if (counterSnapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return const Padding(
+                            padding: EdgeInsets.all(8.0),
+                            child: CircularProgressIndicator(),
+                          );
+                        }
+                        return Text(
+                          '$total',
+                          style: Theme.of(context).textTheme.headlineLarge,
+                        );
+                      },
+                    ),
+                  ],
                 ),
               ],
             );
@@ -371,27 +376,29 @@ class _MyHomePageState extends State<MyHomePage> {
               for (final u in usersSnapshot.data ?? const [])
                 u.username: u.avatarUrl,
             };
-            return Container(
-              color: ColorScheme.of(context).surfaceContainerLow,
-              padding: const EdgeInsets.all(24.0),
-              constraints:
-                  const BoxConstraints(minHeight: 320, maxHeight: 320),
-              child: StreamBuilder(
-                stream: _recentLogsStream,
-                builder: (context, logsSnapshot) {
-                  final recentLogs = logsSnapshot.data ?? const [];
-                  if (logsSnapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  return ListView.builder(
-                    itemCount: recentLogs.length,
-                    itemBuilder: (context, index) {
-                      final log = recentLogs[index];
-                      final avatar = avatarMap[log.username] ?? '';
-                      return CounterLogTile(log: log, avatarUrl: avatar);
-                    },
-                  );
-                },
+            return SizedBox(
+              height: MediaQuery.of(context).size.height * 0.35,
+              child: Container(
+                color: ColorScheme.of(context).surfaceContainerLow,
+                padding: const EdgeInsets.all(24.0),
+                child: StreamBuilder(
+                  stream: _recentLogsStream,
+                  builder: (context, logsSnapshot) {
+                    final recentLogs = logsSnapshot.data ?? const [];
+                    if (logsSnapshot.connectionState ==
+                        ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    return ListView.builder(
+                      itemCount: recentLogs.length,
+                      itemBuilder: (context, index) {
+                        final log = recentLogs[index];
+                        final avatar = avatarMap[log.username] ?? '';
+                        return CounterLogTile(log: log, avatarUrl: avatar);
+                      },
+                    );
+                  },
+                ),
               ),
             );
           },
@@ -402,7 +409,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
   SizedBox _buildUserList(BuildContext context) {
     return SizedBox(
-      height: 150,
+      height: MediaQuery.of(context).size.height * 0.15,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 8.0),
         child: StreamBuilder(
