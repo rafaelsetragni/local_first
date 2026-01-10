@@ -2,30 +2,18 @@ part of '../../local_first.dart';
 
 /// Helpers to resolve conflicts between local and remote events.
 class ConflictUtil {
-  /// Picks the event whose payload has the latest timestamp, preserving
+  /// Picks the event considered newest by the provided selector, preserving
   /// sync metadata from the chosen event.
-  static LocalFirstEvent<T> newestBy<T>(
+  static LocalFirstEvent<T> lastWriteWins<T>(
     LocalFirstEvent<T> local,
-    LocalFirstEvent<T> remote, {
-    required DateTime Function(T payload) getUpdatedAt,
-  }) {
-    final localUpdated = getUpdatedAt(local.payload);
-    final remoteUpdated = getUpdatedAt(remote.payload);
+    LocalFirstEvent<T> remote,
+  ) {
+    final localUpdated = local.syncCreatedAt;
+    final remoteUpdated = remote.syncCreatedAt;
 
-    if (remoteUpdated.isAfter(localUpdated)) {
-      return remote.copyWith(
-        repositoryName: remote.repositoryName.isEmpty
-            ? local.repositoryName
-            : remote.repositoryName,
-        syncCreatedAt: remote.syncCreatedAt ?? local.syncCreatedAt,
-      );
+    if (localUpdated.isAfter(remoteUpdated)) {
+      return local;
     }
-
-    return local.copyWith(
-      repositoryName: local.repositoryName.isEmpty
-          ? remote.repositoryName
-          : local.repositoryName,
-      syncCreatedAt: local.syncCreatedAt ?? remote.syncCreatedAt,
-    );
+    return remote;
   }
 }

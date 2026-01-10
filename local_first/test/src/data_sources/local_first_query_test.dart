@@ -43,6 +43,7 @@ class _FakeStorage extends LocalFirstStorage {
 
   List<Map<String, dynamic>> items;
   final Map<String, String> _meta = {};
+  final Map<String, Map<String, dynamic>> _events = {};
 
   @override
   Future<void> initialize() async {}
@@ -86,6 +87,44 @@ class _FakeStorage extends LocalFirstStorage {
 
   @override
   Future<void> deleteAll(String tableName) async {}
+
+  @override
+  Future<List<Map<String, dynamic>>> getAllEvents(String tableName) async {
+    return _events.values.toList();
+  }
+
+  @override
+  Future<Map<String, dynamic>?> getEventById(String tableName, String id) async {
+    return _events[id];
+  }
+
+  @override
+  Future<void> insertEvent(
+    String tableName,
+    Map<String, dynamic> item,
+    String idField,
+  ) async {
+    _events[item[idField] as String] = item;
+  }
+
+  @override
+  Future<void> updateEvent(
+    String tableName,
+    String id,
+    Map<String, dynamic> item,
+  ) async {
+    _events[id] = item;
+  }
+
+  @override
+  Future<void> deleteEvent(String repositoryName, String id) async {
+    _events.remove(id);
+  }
+
+  @override
+  Future<void> deleteAllEvents(String tableName) async {
+    _events.clear();
+  }
 
   @override
   Future<void> setMeta(String key, String value) async {
@@ -161,9 +200,9 @@ void main() {
       final results = await query.getAll();
       expect(results.length, 3); // delete filtered out
 
-      final alice = results.firstWhere((m) => m.payload.id == '1');
-      expect(alice.payload.name, 'alice');
-      expect(alice.payload.score, 10);
+      final alice = results.firstWhere((m) => m.state.id == '1');
+      expect(alice.state.name, 'alice');
+      expect(alice.state.score, 10);
       expect(alice.syncStatus, SyncStatus.ok);
       expect(alice.syncOperation, SyncOperation.insert);
       expect(alice.repositoryName, 'dummy');
@@ -179,64 +218,64 @@ void main() {
               .getAll();
 
       expect(results.length, 1);
-      expect(results.single.payload.name, 'dave');
+      expect(results.single.state.name, 'dave');
     });
 
     test('supports where equal and not equal', () async {
       final eq = await query.where('name', isEqualTo: 'alice').getAll();
-      expect(eq.map((e) => e.payload.name), ['alice']);
+      expect(eq.map((e) => e.state.name), ['alice']);
 
       final neq = await query.where('name', isNotEqualTo: 'alice').getAll();
-      expect(neq.every((e) => e.payload.name != 'alice'), isTrue);
+      expect(neq.every((e) => e.state.name != 'alice'), isTrue);
     });
 
     test('supports greater/less comparisons', () async {
       final gt = await query.where('score', isGreaterThan: 10).getAll();
-      expect(gt.map((e) => e.payload.id), containsAll(['2', '4']));
+      expect(gt.map((e) => e.state.id), containsAll(['2', '4']));
 
       final gte = await query
           .where('score', isGreaterThanOrEqualTo: 20)
           .getAll();
-      expect(gte.map((e) => e.payload.id), contains('2'));
+      expect(gte.map((e) => e.state.id), contains('2'));
 
       final lt = await query.where('score', isLessThan: 20).getAll();
-      expect(lt.map((e) => e.payload.id), containsAll(['1', '4']));
+      expect(lt.map((e) => e.state.id), containsAll(['1', '4']));
 
       final lte = await query.where('score', isLessThanOrEqualTo: 10).getAll();
-      expect(lte.map((e) => e.payload.id), ['1']);
+      expect(lte.map((e) => e.state.id), ['1']);
     });
 
     test('supports whereIn / whereNotIn', () async {
       final inList = await query
           .where('name', whereIn: ['alice', 'dave'])
           .getAll();
-      expect(inList.map((e) => e.payload.id), containsAll(['1', '4']));
+      expect(inList.map((e) => e.state.id), containsAll(['1', '4']));
 
       final notInList = await query
           .where('name', whereNotIn: ['alice', 'bob'])
           .getAll();
       expect(
-        notInList.map((e) => e.payload.name),
+        notInList.map((e) => e.state.name),
         everyElement(isNot(anyOf('alice', 'bob'))),
       );
     });
 
     test('supports isNull filter', () async {
       final nullNotes = await query.where('note', isNull: true).getAll();
-      expect(nullNotes.map((e) => e.payload.id), containsAll(['1', '4']));
+      expect(nullNotes.map((e) => e.state.id), containsAll(['1', '4']));
 
       final notNullNotes = await query.where('note', isNull: false).getAll();
-      expect(notNullNotes.map((e) => e.payload.id), ['2']);
+      expect(notNullNotes.map((e) => e.state.id), ['2']);
     });
 
     test('supports offset pagination', () async {
       final page = await query
           .orderBy('score')
-          .startAfter(1)
-          .limitTo(2)
-          .getAll();
-      expect(page.length, 2);
-      expect(page.first.payload.id, '4'); // scores: 10,15,20 (charlie is deleted)
+      .startAfter(1)
+      .limitTo(2)
+      .getAll();
+  expect(page.length, 2);
+      expect(page.first.state.id, '4'); // scores: 10,15,20 (charlie is deleted)
     });
 
     test('watch emits initial mapped results', () async {
@@ -244,8 +283,8 @@ void main() {
       final first = await stream.first;
 
       expect(first.length, 3);
-      expect(first.any((m) => m.payload.id == '1'), isTrue);
-      expect(first.any((m) => m.payload.id == '2'), isTrue);
+      expect(first.any((m) => m.state.id == '1'), isTrue);
+      expect(first.any((m) => m.state.id == '2'), isTrue);
     });
   });
 }

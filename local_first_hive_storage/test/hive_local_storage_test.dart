@@ -158,7 +158,7 @@ void main() {
 
       final results = await q.where('age', isGreaterThan: 25).getAll();
       expect(results.length, 1);
-      expect(results.first.payload.id, '2');
+      expect(results.first.state.id, '2');
 
       await lazyStorage.close();
     });
@@ -190,7 +190,7 @@ void main() {
           .getAll();
 
       expect(results.length, 1);
-      expect(results.first.payload.id, '3');
+      expect(results.first.state.id, '3');
 
       // Null entries are skipped inside Hive query mapping.
       final all = await storage.getAll('users');
@@ -211,7 +211,7 @@ void main() {
       final stream = q.watch();
       final first = await stream.first;
       expect(first.length, 1);
-      expect(first.first.payload.id, '1');
+      expect(first.first.state.id, '1');
     });
 
     test('watchQuery throws if not initialized', () async {

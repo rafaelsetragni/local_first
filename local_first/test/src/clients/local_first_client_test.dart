@@ -137,6 +137,49 @@ class _InMemoryStorage implements LocalFirstStorage {
     meta[key] = value;
   }
 
+  String _eventsTable(String name) => '${name}__events';
+
+  @override
+  Future<List<Map<String, dynamic>>> getAllEvents(String tableName) {
+    return getAll(_eventsTable(tableName));
+  }
+
+  @override
+  Future<Map<String, dynamic>?> getEventById(
+    String tableName,
+    String id,
+  ) {
+    return getById(_eventsTable(tableName), id);
+  }
+
+  @override
+  Future<void> insertEvent(
+    String tableName,
+    Map<String, dynamic> item,
+    String idField,
+  ) async {
+    await insert(_eventsTable(tableName), item, idField);
+  }
+
+  @override
+  Future<void> updateEvent(
+    String tableName,
+    String id,
+    Map<String, dynamic> item,
+  ) async {
+    await update(_eventsTable(tableName), id, item);
+  }
+
+  @override
+  Future<void> deleteEvent(String repositoryName, String id) async {
+    await delete(_eventsTable(repositoryName), id);
+  }
+
+  @override
+  Future<void> deleteAllEvents(String tableName) async {
+    await deleteAll(_eventsTable(tableName));
+  }
+
   @override
   Future<void> update(
     String tableName,
@@ -228,7 +271,10 @@ void main() {
         syncStrategies: [_OkStrategy()],
       );
       await clientWithProbe.initialize();
-      await probeRepo.upsert(LocalFirstEvent(payload: _TestModel('1')));
+      await probeRepo.upsert(
+        LocalFirstEvent(state: _TestModel('1')),
+        needSync: true,
+      );
 
       expect(await storage.getById('probe', '1'), isNotNull);
       expect(probeRepo.initialized, isTrue);
@@ -245,7 +291,7 @@ void main() {
       expect(await client.getMeta('k'), 'v');
     });
 
-    test('getAllPendingObjects aggregates pending from repositories', () async {
+    test('getAllPendingEvents aggregates pending from repositories', () async {
       await client.initialize();
       await storage.insert('tests', {
         'id': 'p1',
@@ -255,10 +301,10 @@ void main() {
         '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
       }, 'id');
 
-      final pending = await client.getAllPendingObjects();
+      final pending = await client.getAllPendingEvents();
       expect(pending.length, 1);
-      expect(pending.first.payload, isA<_TestModel>());
-      expect(pending.first.payload.id, 'p1');
+      expect(pending.first.state, isA<_TestModel>());
+      expect(pending.first.state.id, 'p1');
     });
 
     test('dispose closes storage', () async {

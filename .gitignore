@@ -8,3 +8,7 @@ pubspec.lock
 # Melos
 pubspec_overrides.yaml
 build/
+
+coverage/lcov.info
+
+local_first/coverage/lcov.info

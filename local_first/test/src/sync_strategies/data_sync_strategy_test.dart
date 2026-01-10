@@ -33,6 +33,8 @@ class _FakeStorage implements LocalFirstStorage {
   final Map<String, String> _meta = {};
   bool initialized = false;
 
+  String _eventsTable(String name) => '${name}__events';
+
   @override
   Future<void> initialize() async {
     initialized = true;
@@ -87,6 +89,47 @@ class _FakeStorage implements LocalFirstStorage {
   @override
   Future<void> deleteAll(String tableName) async {
     _tables[tableName]?.clear();
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> getAllEvents(String tableName) {
+    return getAll(_eventsTable(tableName));
+  }
+
+  @override
+  Future<Map<String, dynamic>?> getEventById(
+    String tableName,
+    String id,
+  ) {
+    return getById(_eventsTable(tableName), id);
+  }
+
+  @override
+  Future<void> insertEvent(
+    String tableName,
+    Map<String, dynamic> item,
+    String idField,
+  ) async {
+    await insert(_eventsTable(tableName), item, idField);
+  }
+
+  @override
+  Future<void> updateEvent(
+    String tableName,
+    String id,
+    Map<String, dynamic> item,
+  ) async {
+    await update(_eventsTable(tableName), id, item);
+  }
+
+  @override
+  Future<void> deleteEvent(String repositoryName, String id) async {
+    await delete(_eventsTable(repositoryName), id);
+  }
+
+  @override
+  Future<void> deleteAllEvents(String tableName) async {
+    await deleteAll(_eventsTable(tableName));
   }
 
   @override
@@ -148,20 +191,20 @@ void main() {
       expect(strategy.client, same(client));
     });
 
-    test('getPendingObjects delegates to client', () async {
+    test('getPendingEvents delegates to client', () async {
       final strategy = _TestStrategy();
       final client = _MockClient();
-      final pending = [LocalFirstEvent(payload: _DummyModel('1'))];
+      final pending = [LocalFirstEvent(state: _DummyModel('1'))];
 
       when(
-        () => client.getAllPendingObjects(),
+        () => client.getAllPendingEvents(),
       ).thenAnswer((_) async => pending);
       strategy.attach(client);
 
-      final result = await strategy.getPendingObjects();
+      final result = await strategy.getPendingEvents();
 
       expect(result, pending);
-      verify(() => client.getAllPendingObjects()).called(1);
+      verify(() => client.getAllPendingEvents()).called(1);
     });
 
     test('pullChangesToLocal calls client pull logic', () async {

@@ -44,6 +44,37 @@ class _FakeStorage extends LocalFirstStorage {
   Future<void> deleteAll(String tableName) async {}
 
   @override
+  Future<List<Map<String, dynamic>>> getAllEvents(String tableName) async =>
+      const [];
+
+  @override
+  Future<Map<String, dynamic>?> getEventById(
+    String tableName,
+    String id,
+  ) async =>
+      null;
+
+  @override
+  Future<void> insertEvent(
+    String tableName,
+    Map<String, dynamic> item,
+    String idField,
+  ) async {}
+
+  @override
+  Future<void> updateEvent(
+    String tableName,
+    String id,
+    Map<String, dynamic> item,
+  ) async {}
+
+  @override
+  Future<void> deleteEvent(String repositoryName, String id) async {}
+
+  @override
+  Future<void> deleteAllEvents(String tableName) async {}
+
+  @override
   Future<void> setMeta(String key, String value) async {}
 
   @override

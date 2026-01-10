@@ -21,8 +21,20 @@ abstract class DataSyncStrategy {
 
   Future<SyncStatus> onPushToRemote(LocalFirstEvent localData);
 
-  Future<List<LocalFirstEvent>> getPendingObjects() {
-    return _client.getAllPendingObjects();
+  /// Notifies listeners about connection state changes (e.g. connectivity loss).
+  @protected
+  void reportConnectionState(bool connected) {
+    _client.reportConnectionState(connected);
+  }
+
+  /// Exposes the connection state stream maintained by the client.
+  Stream<bool> get connectionChanges => _client.connectionChanges;
+
+  /// Latest known connection state.
+  bool? get latestConnectionState => _client.latestConnectionState;
+
+  Future<List<LocalFirstEvent>> getPendingEvents() {
+    return _client.getAllPendingEvents();
   }
 
   Future<void> pullChangesToLocal(Map<String, dynamic> remoteChanges) {

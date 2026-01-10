@@ -529,6 +529,7 @@ class NavigatorService {
 }
 
 /// Central orchestrator for auth, persistence, and sync.
+/// Coordinates repositories, storage, sync strategy, and session/namespace handling.
 class RepositoryService {
   static const tag = 'RepositoryService';
 
@@ -546,12 +547,12 @@ class RepositoryService {
   List<UserModel> _usersFromEvents(
     List<LocalFirstEvent<UserModel>> events,
   ) =>
-      events.map((e) => e.payload).toList();
+      events.map((e) => e.state).toList();
 
   List<CounterLogModel> _logsFromEvents(
     List<LocalFirstEvent<CounterLogModel>> events,
   ) =>
-      events.map((e) => e.payload).toList();
+      events.map((e) => e.state).toList();
 
   RepositoryService._internal()
     : userRepository = _buildUserRepository(),
@@ -578,13 +579,13 @@ class RepositoryService {
         .where('username', isEqualTo: username)
         .getAll();
     final preservedAvatar = existing.isNotEmpty
-        ? existing.first.payload.avatarUrl
+        ? existing.first.state.avatarUrl
         : null;
     final user = authenticatedUser = UserModel(
       username: username,
       avatarUrl: preservedAvatar,
     );
-    await userRepository.upsert(user);
+    await userRepository.upsert(user, needSync: true);
     await _persistLastUsername(username);
     syncStrategy.start();
     NavigatorService().navigateToHome();
@@ -595,7 +596,7 @@ class RepositoryService {
     for (final data in remote) {
       try {
         final user = userRepository.fromJson(data);
-        await userRepository.upsert(user);
+        await userRepository.upsert(user, needSync: false);
       } catch (_) {
         // ignore malformed user entries
       }
@@ -693,7 +694,7 @@ class RepositoryService {
       updatedAt: DateTime.now().toUtc(),
     );
 
-    await userRepository.upsert(updated);
+    await userRepository.upsert(updated, needSync: true);
     authenticatedUser = updated;
     return updated;
   }
@@ -708,7 +709,7 @@ class RepositoryService {
     }
 
     final log = CounterLogModel(username: username, increment: amount);
-    await counterLogRepository.upsert(log);
+    await counterLogRepository.upsert(log, needSync: true);
   }
 
   Future<void> _switchUserDatabase(String username) async {
@@ -900,7 +901,8 @@ LocalFirstRepository<CounterLogModel> _buildCounterLogRepository() {
   );
 }
 
-/// Periodically syncs pending changes with MongoDB and pulls updates.
+/// Periodic sync strategy: batches pending events to MongoDB and pulls remote events.
+/// Demonstrates the classic local-first loop (push pending, pull remote, merge).
 class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   static const logTag = 'MongoPeriodicSyncStrategy';
   final Duration period = const Duration(milliseconds: 500);
@@ -917,9 +919,9 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     stop();
     client.awaitInitialization.then((_) async {
       dev.log('Starting periodic sync', name: logTag);
-      final pendingObjects = await getPendingObjects();
-      for (final object in pendingObjects) {
-        _addPending(object);
+      final pendingEvents = await getPendingEvents();
+      for (final event in pendingEvents) {
+        _addPending(event);
       }
       for (final repository in mongoApi.repositoryNames) {
         final value = await client.getMeta('__last_sync__$repository');
@@ -932,23 +934,23 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   }
 
   void stop() {
-    _timer?.cancel();
-    _timer = null;
-    pendingChanges.clear();
-    lastSyncedAt.clear();
-  }
+      _timer?.cancel();
+      _timer = null;
+      pendingChanges.clear();
+      lastSyncedAt.clear();
+    }
 
   void dispose() {
     stop();
   }
 
-  void _addPending(LocalFirstEvent object) {
-    pendingChanges.putIfAbsent(object.repositoryName, () => []).add(object);
+  void _addPending(LocalFirstEvent event) {
+    pendingChanges.putIfAbsent(event.repositoryName, () => []).add(event);
   }
 
   @override
-  Future<SyncStatus> onPushToRemote(LocalFirstEvent object) async {
-    _addPending(object);
+  Future<SyncStatus> onPushToRemote(LocalFirstEvent event) async {
+    _addPending(event);
     return SyncStatus.pending;
   }
 
@@ -1005,6 +1007,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
 }
 
 /// Low-level helper to push/pull changes against MongoDB.
+/// Minimal MongoDB adapter used by the demo sync strategy (push/pull events).
 class MongoApi {
   static const logTag = 'MongoApi';
   final String uri;
@@ -1069,12 +1072,12 @@ class MongoApi {
           if (item is! JsonMap<dynamic>) continue;
           final id = item['id']?.toString();
           if (id == null) continue;
-          final doc = {
+          await collection.insertOne({
             ..._toMongoDateFields(item),
             'operation': 'insert',
+            'event_id': item['event_id'],
             'updated_at': now,
-          };
-          await collection.replaceOne(where.eq('id', id), doc, upsert: true);
+          });
         }
       }
 
@@ -1084,24 +1087,27 @@ class MongoApi {
           if (item is! JsonMap<dynamic>) continue;
           final id = item['id']?.toString();
           if (id == null) continue;
-          final doc = {
+          await collection.insertOne({
             ..._toMongoDateFields(item),
             'operation': 'update',
+            'event_id': item['event_id'],
             'updated_at': now,
-          };
-          await collection.replaceOne(where.eq('id', id), doc, upsert: true);
+          });
         }
       }
 
       final deleteItems = operations['delete'];
       if (deleteItems is List) {
-        for (final id in deleteItems) {
+        for (final item in deleteItems) {
+          if (item is! Map) continue;
+          final id = item['id']?.toString();
           if (id == null) continue;
-          await collection.replaceOne(where.eq('id', id.toString()), {
-            'id': id.toString(),
+          await collection.insertOne({
+            'id': id,
             'operation': 'delete',
+            'event_id': item['event_id'],
             'updated_at': now,
-          }, upsert: true);
+          });
         }
       }
     }
@@ -1128,7 +1134,12 @@ class MongoApi {
       await cursor.forEach((doc) {
         final op = doc['operation'];
         if (op == 'delete') {
-          if (doc['id'] != null) deletes.add(doc['id']);
+          if (doc['id'] != null) {
+            deletes.add({
+              'id': doc['id'],
+              'event_id': doc['event_id'],
+            });
+          }
           return;
         }
         final item = Map<String, dynamic>.from(doc)

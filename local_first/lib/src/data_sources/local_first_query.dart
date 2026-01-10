@@ -147,6 +147,7 @@ class LocalFirstQuery<T> {
     return results
         .map((json) {
           final itemJson = Map<String, dynamic>.from(json);
+          final eventId = itemJson.remove('_event_id') as String?;
           final item = _fromJson(
             itemJson..removeWhere((key, _) => key.startsWith('_sync_')),
           );
@@ -161,12 +162,14 @@ class LocalFirstQuery<T> {
               : SyncOperation.insert;
 
           final createdAt = json['_sync_created_at'] as int?;
-          final createdAtDate = createdAt != null
-              ? DateTime.fromMillisecondsSinceEpoch(createdAt, isUtc: true)
-              : null;
+          final createdAtDate = DateTime.fromMillisecondsSinceEpoch(
+            createdAt ?? 0,
+            isUtc: true,
+          );
 
           return LocalFirstEvent<T>(
-            payload: item,
+            state: item,
+            eventId: eventId,
             syncStatus: syncStatus,
             syncOperation: syncOperation,
             syncCreatedAt: createdAtDate,

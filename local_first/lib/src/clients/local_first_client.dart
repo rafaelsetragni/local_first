@@ -13,11 +13,28 @@ class LocalFirstClient {
 
   final List<DataSyncStrategy> syncStrategies;
   final Completer _onInitialize = Completer();
+  final StreamController<bool> _connectionController =
+      StreamController<bool>.broadcast();
+  bool? _latestConnection;
 
   Future get awaitInitialization => _onInitialize.future;
 
   /// Gets the local database delegate used for storage.
   LocalFirstStorage get localStorage => _localStorage;
+
+  /// Emits connection state changes observed by sync strategies.
+  void reportConnectionState(bool connected) {
+    _latestConnection = connected;
+    if (!_connectionController.isClosed) {
+      _connectionController.add(connected);
+    }
+  }
+
+  /// Stream of connection state changes pushed by sync strategies.
+  Stream<bool> get connectionChanges => _connectionController.stream;
+
+  /// Latest known connection state (if any).
+  bool? get latestConnectionState => _latestConnection;
 
   /// Creates an instance of LocalFirstClient.
   ///
@@ -87,17 +104,18 @@ class LocalFirstClient {
   ///
   /// Call this when you're done using the LocalFirstClient instance.
   Future<void> dispose() async {
+    await _connectionController.close();
     await _localStorage.close();
   }
 
   Future<void> _pullRemoteChanges(Map<String, dynamic> map) async {
     final LocalFirstResponse response = await _buildOfflineResponse(map);
 
-    for (final MapEntry<LocalFirstRepository, LocalFirstModels> entry
+    for (final MapEntry<LocalFirstRepository, LocalFirstEvents> entry
         in response.changes.entries) {
       final LocalFirstRepository repository = entry.key;
-      final LocalFirstModels remoteObjects = entry.value;
-      await repository._mergeRemoteItems(remoteObjects);
+      final LocalFirstEvents remoteEvents = entry.value;
+      await repository._mergeRemoteEvents(remoteEvents);
     }
 
     for (final repository in _repositories) {
@@ -108,9 +126,9 @@ class LocalFirstClient {
     }
   }
 
-  Future<LocalFirstModels> getAllPendingObjects() async {
+  Future<LocalFirstEvents> getAllPendingEvents() async {
     final results = await Future.wait([
-      for (var repository in _repositories) repository.getPendingObjects(),
+      for (var repository in _repositories) repository.getPendingEvents(),
     ]);
     return results.expand((e) => e).toList();
   }
@@ -132,11 +150,11 @@ class LocalFirstClient {
 
     final timestamp = DateTime.parse(json['timestamp'] as String).toUtc();
     final changesJson = json['changes'] as Map;
-    final repositoryObjects = <LocalFirstRepository, List<LocalFirstEvent>>{};
+    final repositoryEvents = <LocalFirstRepository, List<LocalFirstEvent>>{};
 
     for (var repositoryName in changesJson.keys) {
       final repository = getRepositoryByName(repositoryName as String);
-      final objects = <LocalFirstEvent>[];
+      final events = <LocalFirstEvent>[];
 
       final repositoryChangeJson =
           changesJson[repositoryName] as Map<String, dynamic>;
@@ -148,7 +166,7 @@ class LocalFirstClient {
             Map<String, dynamic>.from(element),
             operation: SyncOperation.insert,
           );
-          objects.add(object);
+          events.add(object);
         }
       } else if (repositoryChangeJson.containsKey('update')) {
         final updates = (repositoryChangeJson['update'] as List);
@@ -157,25 +175,28 @@ class LocalFirstClient {
             Map<String, dynamic>.from(element),
             operation: SyncOperation.update,
           );
-          objects.add(object);
+          events.add(object);
         }
       } else if (repositoryChangeJson.containsKey('delete')) {
-        final deleteIds = (repositoryChangeJson['delete'] as List<String>);
-        for (var id in deleteIds) {
+        final deletes = (repositoryChangeJson['delete'] as List);
+        for (var element in deletes) {
+          if (element is! Map) continue;
+          final id = element['id']?.toString();
+          if (id == null) continue;
           final object = await repository._getById(id);
-          if (object != null) {
-            objects.add(
-              object.copyWith(
-                syncStatus: SyncStatus.ok,
-                syncOperation: SyncOperation.delete,
-              ),
-            );
-          }
+          if (object == null) continue;
+          events.add(
+            object.copyWith(
+              eventId: element['event_id']?.toString() ?? object.eventId,
+              syncStatus: SyncStatus.ok,
+              syncOperation: SyncOperation.delete,
+            ),
+          );
         }
       }
 
-      repositoryObjects[repository] = objects;
+      repositoryEvents[repository] = events;
     }
-    return LocalFirstResponse(changes: repositoryObjects, timestamp: timestamp);
+    return LocalFirstResponse(changes: repositoryEvents, timestamp: timestamp);
   }
 }

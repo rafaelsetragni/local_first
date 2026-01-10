@@ -12,7 +12,8 @@ import 'package:path/path.dart' as p;
 ///
 /// Features:
 /// - Stores data as JSON in Hive boxes
-/// - Each table is a separate box
+/// - Each table is a separate box (state and events) under a namespace-specific
+///   directory
 /// - Metadata (lastSyncAt) is stored in dedicated box
 /// - Operations are fast and completely offline
 /// - Supports reactive queries with box.watch()
@@ -35,7 +36,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   String get namespace => _namespace;
 
   final HiveInterface _hive;
-  final Future<void> Function() _initFlutter;
+  final Future<void> Function([String? subDir]) _initFlutter;
   final Set<String> _lazyCollections;
 
   /// Creates a new HiveLocalFirstStorage.
@@ -49,7 +50,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     this.customPath,
     String? namespace,
     HiveInterface? hive,
-    Future<void> Function()? initFlutter,
+    Future<void> Function([String? subDir])? initFlutter,
     Set<String> lazyCollections = const {},
   }) : _namespace = namespace ?? 'default',
        _hive = hive ?? Hive,
@@ -62,9 +63,9 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
     // Initialize Hive
     if (customPath != null) {
-      _hive.init(customPath!);
+      _hive.init(p.join(customPath!, _namespace));
     } else {
-      await _initFlutter();
+      await _initFlutter(_namespace);
     }
 
     // Open metadata box
@@ -90,10 +91,8 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
     if (!_initialized) return;
 
-    await _closeAllBoxes();
-    _boxes.clear();
-    await _metadataBox.close();
-    _metadataBox = await _hive.openBox<dynamic>(_metadataBoxName);
+    await close();
+    await initialize();
   }
 
   Future<void> _closeAllBoxes() async {
@@ -103,28 +102,39 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     _boxes.clear();
   }
 
-  String get _metadataBoxName => '${_namespace}__offline_metadata';
+  String get _metadataBoxName => 'offline_metadata';
 
-  String _boxName(String tableName) => '${_namespace}__$tableName';
+  String _boxName(String tableName, {bool isEvent = false}) {
+    return isEvent ? '${tableName}__events' : tableName;
+  }
+
+  String _boxCacheKey(String tableName, {bool isEvent = false}) {
+    return '${isEvent ? 'events' : 'state'}::$tableName';
+  }
 
   /// Gets or creates a box for the table.
-  Future<BoxBase<Map<dynamic, dynamic>>> _getBox(String tableName) async {
+  Future<BoxBase<Map<dynamic, dynamic>>> _getBox(
+    String tableName, {
+    bool isEvent = false,
+  }) async {
     if (!_initialized) {
       throw StateError(
         'HiveLocalFirstStorage not initialized. Call initialize() first.',
       );
     }
 
-    if (_boxes.containsKey(tableName)) {
-      return _boxes[tableName]!;
+    final cacheKey = _boxCacheKey(tableName, isEvent: isEvent);
+    if (_boxes.containsKey(cacheKey)) {
+      return _boxes[cacheKey]!;
     }
 
+    final resolvedName = _boxName(tableName, isEvent: isEvent);
     // Open box and store in cache
-    final bool useLazy = _lazyCollections.contains(tableName);
+    final bool useLazy = !isEvent && _lazyCollections.contains(tableName);
     final box = useLazy
-        ? await _hive.openLazyBox<Map>(_boxName(tableName))
-        : await _hive.openBox<Map>(_boxName(tableName));
-    _boxes[tableName] = box;
+        ? await _hive.openLazyBox<Map>(resolvedName)
+        : await _hive.openBox<Map>(resolvedName);
+    _boxes[cacheKey] = box;
     return box;
   }
 
@@ -151,8 +161,41 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
+  Future<List<Map<String, dynamic>>> getAllEvents(String tableName) async {
+    final box = await _getBox(tableName, isEvent: true);
+
+    if (box is LazyBox<Map>) {
+      final keys = box.keys.cast<String>();
+      final List<Map<String, dynamic>> items = [];
+      for (final key in keys) {
+        final raw = await box.get(key);
+        if (raw != null) {
+          items.add(Map<String, dynamic>.from(raw));
+        }
+      }
+      return items;
+    }
+
+    return (box as Box<Map<dynamic, dynamic>>).values
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+  }
+
+  @override
   Future<Map<String, dynamic>?> getById(String tableName, String id) {
     return _getBox(tableName).then((box) async {
+      if (box is LazyBox<Map>) {
+        final rawItem = await box.get(id);
+        return rawItem != null ? Map<String, dynamic>.from(rawItem) : null;
+      }
+      final rawItem = (box as Box<Map<dynamic, dynamic>>).get(id);
+      return rawItem != null ? Map<String, dynamic>.from(rawItem) : null;
+    });
+  }
+
+  @override
+  Future<Map<String, dynamic>?> getEventById(String tableName, String id) {
+    return _getBox(tableName, isEvent: true).then((box) async {
       if (box is LazyBox<Map>) {
         final rawItem = await box.get(id);
         return rawItem != null ? Map<String, dynamic>.from(rawItem) : null;
@@ -175,6 +218,18 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
+  Future<void> insertEvent(
+    String tableName,
+    Map<String, dynamic> item,
+    String idField,
+  ) async {
+    final box = await _getBox(tableName, isEvent: true);
+
+    final id = item[idField] as String;
+    await box.put(id, item);
+  }
+
+  @override
   Future<void> update(
     String tableName,
     String id,
@@ -186,14 +241,37 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
+  Future<void> updateEvent(
+    String tableName,
+    String id,
+    Map<String, dynamic> item,
+  ) async {
+    final box = await _getBox(tableName, isEvent: true);
+
+    await box.put(id, item);
+  }
+
+  @override
   Future<void> delete(String repositoryName, String id) async {
     final box = await _getBox(repositoryName);
     await box.delete(id);
   }
 
   @override
+  Future<void> deleteEvent(String repositoryName, String id) async {
+    final box = await _getBox(repositoryName, isEvent: true);
+    await box.delete(id);
+  }
+
+  @override
   Future<void> deleteAll(String tableName) async {
     final box = await _getBox(tableName);
+    await box.clear();
+  }
+
+  @override
+  Future<void> deleteAllEvents(String tableName) async {
+    final box = await _getBox(tableName, isEvent: true);
     await box.clear();
   }
 
@@ -237,9 +315,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     }
 
     // List all boxes to delete
-    final boxesToDelete = <String>[
-      for (final entry in _boxes.keys) _boxName(entry),
-    ];
+    final boxesToDelete = <String>[for (final box in _boxes.values) box.name];
 
     // Clear contents of all open boxes
     for (var box in _boxes.values) {

@@ -11,23 +11,24 @@ part 'sqlite_local_storage_test_helpers.dart';
 /// SQLite implementation of [LocalFirstStorage].
 ///
 /// Stores each repository as a table with `id` and `data` (JSON string) columns,
-/// plus a metadata table for key/value pairs. Queries reuse the default
-/// in-memory filtering from [LocalFirstStorage.query], while write operations
-/// trigger watchers to re-run their queries.
+/// plus a metadata table for key/value pairs. Each namespace is isolated into
+/// its own database file. Queries reuse the default in-memory filtering from
+/// [LocalFirstStorage.query], while write operations trigger watchers to re-run
+/// their queries.
 class SqliteLocalFirstStorage implements LocalFirstStorage {
   SqliteLocalFirstStorage({
     this.databaseName = 'local_first.db',
     this.databasePath,
     String namespace = 'default',
     DatabaseFactory? dbFactory,
-  }) : _namespace = namespace,
-       _factory = dbFactory ?? databaseFactory {
+  })  : _namespace = namespace,
+        _factory = dbFactory ?? databaseFactory {
     _validateIdentifier(_namespace, 'namespace');
   }
 
   final String databaseName;
   final String? databasePath;
-  final String _namespace;
+  String _namespace;
   final DatabaseFactory _factory;
 
   Database? _db;
@@ -38,7 +39,15 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
   static final RegExp _validName = RegExp(r'^[a-zA-Z0-9_]+$');
 
-  String get _metadataTable => '${_namespace}__metadata';
+  String get _metadataTable => 'metadata';
+
+  String get _resolvedDatabaseName =>
+      _namespace == 'default' ? databaseName : '${_namespace}__$databaseName';
+
+  Future<String> _databasePath() async {
+    if (databasePath != null) return databasePath!;
+    return p.join(await getDatabasesPath(), _resolvedDatabaseName);
+  }
 
   Future<Database> get _database async {
     if (!_initialized || _db == null) {
@@ -53,7 +62,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   Future<void> initialize() async {
     if (_initialized) return;
 
-    final path = databasePath ?? p.join(await getDatabasesPath(), databaseName);
+    final path = await _databasePath();
 
     _db = await _factory.openDatabase(
       path,
@@ -87,20 +96,36 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     _initialized = false;
   }
 
+  /// Changes the active namespace, closing the current database and
+  /// opening a separate database file for the new namespace.
+  Future<void> useNamespace(String namespace) async {
+    if (_namespace == namespace) return;
+    _validateIdentifier(namespace, 'namespace');
+    await close();
+    _namespace = namespace;
+    await initialize();
+  }
+
   @override
   Future<void> clearAllData() async {
     final db = await _database;
-    final prefix = '${_namespace}__';
 
     final tables = await db.rawQuery(
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE ?",
-      ['$prefix%'],
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
     );
 
+    final repositoriesToNotify = <String>{};
     for (final row in tables) {
       final name = row['name'] as String;
       await db.delete(name);
-      final repositoryName = name.substring(prefix.length);
+      final isMetadata = name == _metadataTable;
+      final isEventTable = name.endsWith('__events');
+      if (!isMetadata && !isEventTable) {
+        repositoriesToNotify.add(name);
+      }
+    }
+
+    for (final repositoryName in repositoriesToNotify) {
       await _notifyWatchers(repositoryName);
     }
 
@@ -116,6 +141,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }) async {
     _schemas[tableName] = Map.unmodifiable(schema);
     await _ensureTable(tableName);
+    await _ensureTable(tableName, isEvent: true);
   }
 
   @override
@@ -133,10 +159,50 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<Map<String, dynamic>?> getById(String tableName, String id) async {
+  Future<List<Map<String, dynamic>>> getAllEvents(String tableName) async {
+    final db = await _database;
+    await _ensureTable(tableName, isEvent: true);
+    final resolvedTable = _tableName(tableName, isEvent: true);
+
+    final rows = await db.query(resolvedTable);
+    return rows
+        .map((row) => row['data'])
+        .whereType<String>()
+        .map((json) => Map<String, dynamic>.from(jsonDecode(json) as Map))
+        .toList();
+  }
+
+  @override
+  Future<Map<String, dynamic>?> getById(
+    String tableName,
+    String id,
+  ) async {
     final db = await _database;
     await _ensureTable(tableName);
     final resolvedTable = _tableName(tableName);
+
+    final rows = await db.query(
+      resolvedTable,
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+
+    if (rows.isEmpty) return null;
+    final data = rows.first['data'];
+    if (data is! String) return null;
+
+    return Map<String, dynamic>.from(jsonDecode(data) as Map);
+  }
+
+  @override
+  Future<Map<String, dynamic>?> getEventById(
+    String tableName,
+    String id,
+  ) async {
+    final db = await _database;
+    await _ensureTable(tableName, isEvent: true);
+    final resolvedTable = _tableName(tableName, isEvent: true);
 
     final rows = await db.query(
       resolvedTable,
@@ -180,6 +246,32 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
+  Future<void> insertEvent(
+    String tableName,
+    Map<String, dynamic> item,
+    String idField,
+  ) async {
+    final db = await _database;
+    await _ensureTable(tableName, isEvent: true);
+    final resolvedTable = _tableName(tableName, isEvent: true);
+
+    final id = item[idField];
+    if (id is! String) {
+      throw ArgumentError('Item is missing string id field "$idField".');
+    }
+
+    final schema = _schemaFor(tableName);
+    final row = _encodeRowForStorage(schema, item, id);
+
+    await db.insert(
+      resolvedTable,
+      row,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+
+  }
+
+  @override
   Future<void> update(
     String tableName,
     String id,
@@ -202,6 +294,26 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
+  Future<void> updateEvent(
+    String tableName,
+    String id,
+    Map<String, dynamic> item,
+  ) async {
+    final db = await _database;
+    await _ensureTable(tableName, isEvent: true);
+    final resolvedTable = _tableName(tableName, isEvent: true);
+
+    final schema = _schemaFor(tableName);
+    final row = _encodeRowForStorage(schema, item, id);
+
+    await db.insert(
+      resolvedTable,
+      row,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  @override
   Future<void> delete(String repositoryName, String id) async {
     final db = await _database;
     final resolvedTable = _tableName(repositoryName);
@@ -212,6 +324,15 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
+  Future<void> deleteEvent(String repositoryName, String id) async {
+    final db = await _database;
+    final resolvedTable = _tableName(repositoryName, isEvent: true);
+    await _ensureTable(repositoryName, isEvent: true);
+
+    await db.delete(resolvedTable, where: 'id = ?', whereArgs: [id]);
+  }
+
+  @override
   Future<void> deleteAll(String tableName) async {
     final db = await _database;
     await _ensureTable(tableName);
@@ -219,6 +340,15 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     await db.delete(resolvedTable);
     await _notifyWatchers(tableName);
+  }
+
+  @override
+  Future<void> deleteAllEvents(String tableName) async {
+    final db = await _database;
+    await _ensureTable(tableName, isEvent: true);
+    final resolvedTable = _tableName(tableName, isEvent: true);
+
+    await db.delete(resolvedTable);
   }
 
   @override
@@ -303,9 +433,12 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return _schemas[repositoryName] ?? const {};
   }
 
-  Future<void> _ensureTable(String repositoryName) async {
+  Future<void> _ensureTable(
+    String repositoryName, {
+    bool isEvent = false,
+  }) async {
     final db = await _database;
-    final resolvedTableName = _tableName(repositoryName);
+    final resolvedTableName = _tableName(repositoryName, isEvent: isEvent);
     final schema = _schemaFor(repositoryName);
     const reservedColumns = {
       'id',
@@ -343,9 +476,13 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     }
   }
 
-  String _tableName(String name) {
+  String _tableName(
+    String name, {
+    bool isEvent = false,
+  }) {
     _validateIdentifier(name, 'tableName');
-    return '${_namespace}__$name';
+    final base = name;
+    return isEvent ? '${base}__events' : base;
   }
 
   static void _validateIdentifier(String name, String label) {

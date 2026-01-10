@@ -149,6 +149,12 @@ class _MyHomePageState extends State<MyHomePage> {
   late final Stream<int> _counterStream;
   late final Stream<List<UserModel>> _usersStream;
   late final Stream<List<CounterLogModel>> _recentLogsStream;
+  late final Stream<bool> _connectionStream;
+  final GlobalKey<AnimatedListState> _logsListKey =
+      GlobalKey<AnimatedListState>();
+  late final StreamSubscription<List<CounterLogModel>> _logsSubscription;
+  final List<CounterLogModel> _logs = [];
+  Map<String, String?> _avatarMap = {};
 
   @override
   void initState() {
@@ -157,12 +163,103 @@ class _MyHomePageState extends State<MyHomePage> {
     _usersStream = service.watchUsers();
     _counterStream = service.watchCounter();
     _recentLogsStream = service.watchRecentLogs(limit: 5);
+    _connectionStream = service.connectionState.stream;
+    _logsSubscription = _recentLogsStream.listen(_onLogsUpdate);
   }
 
   Future<void> _onAvatarTap(BuildContext context, String currentAvatar) async {
     final url = await _promptAvatarDialog(context, currentAvatar);
     if (url == null) return;
     await RepositoryService().updateAvatarUrl(url);
+  }
+
+  @override
+  void dispose() {
+    _logsSubscription.cancel();
+    super.dispose();
+  }
+
+  void _onLogsUpdate(List<CounterLogModel> newLogs) {
+    final listState = _logsListKey.currentState;
+
+    if (listState == null) {
+      _logs
+        ..clear()
+        ..addAll(newLogs);
+      if (mounted) setState(() {});
+      return;
+    }
+
+    // Remove items no longer present (fade out).
+    for (int i = _logs.length - 1; i >= 0; i--) {
+      final log = _logs[i];
+      final stillPresent = newLogs.any((l) => l.id == log.id);
+      if (!stillPresent) {
+        final removed = _logs.removeAt(i);
+        listState.removeItem(
+          i,
+          (context, animation) =>
+              _buildAnimatedLogTile(removed, animation, appearing: false),
+          duration: const Duration(milliseconds: 250),
+        );
+      }
+    }
+
+    // Insert new items and adjust order to match new list.
+    for (int targetIndex = 0; targetIndex < newLogs.length; targetIndex++) {
+      final incoming = newLogs[targetIndex];
+      final currentIndex = _logs.indexWhere((l) => l.id == incoming.id);
+
+      if (currentIndex == -1) {
+        _logs.insert(targetIndex, incoming);
+        listState.insertItem(
+          targetIndex,
+          duration: const Duration(milliseconds: 250),
+        );
+      } else if (currentIndex != targetIndex) {
+        final item = _logs.removeAt(currentIndex);
+        _logs.insert(targetIndex, item);
+      }
+    }
+
+    // Trim extras if new list is shorter.
+    while (_logs.length > newLogs.length) {
+      final lastIndex = _logs.length - 1;
+      final removed = _logs.removeAt(lastIndex);
+      listState.removeItem(
+        lastIndex,
+        (context, animation) =>
+            _buildAnimatedLogTile(removed, animation, appearing: false),
+        duration: const Duration(milliseconds: 250),
+      );
+    }
+    if (mounted) setState(() {});
+  }
+
+  Widget _buildAnimatedLogTile(
+    CounterLogModel log,
+    Animation<double> animation, {
+    required bool appearing,
+  }) {
+    final curved = CurvedAnimation(
+      parent: animation,
+      curve: Curves.easeOut,
+    );
+    final avatar = _avatarMap[log.username] ?? '';
+    return FadeTransition(
+      opacity: appearing ? curved : animation,
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: appearing ? const Offset(0.15, 0) : Offset.zero,
+          end: appearing ? Offset.zero : const Offset(-0.05, 0),
+        ).animate(curved),
+        child: CounterLogTile(
+          key: ValueKey('tile-${log.id}'),
+          log: log,
+          avatarUrl: avatar,
+        ),
+      ),
+    );
   }
 
   Future<String?> _promptAvatarDialog(
@@ -222,7 +319,7 @@ class _MyHomePageState extends State<MyHomePage> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            _buildAvatarAndGlobalCounter(user),
+            Expanded(child: _buildAvatarAndGlobalCounter(user)),
             Column(
               children: [
                 _buildUserList(context),
@@ -262,43 +359,82 @@ class _MyHomePageState extends State<MyHomePage> {
         final currentUserAvatar =
             avatarMap[user.username] ?? user.avatarUrl ?? '';
 
-        return Column(
-          children: [
-            GestureDetector(
-              onTap: () => _onAvatarTap(context, currentUserAvatar),
-              child: AvatarPreview(
-                avatarUrl: currentUserAvatar,
-                showEditIndicator: true,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'Hello, ${user.username}!',
-              textAlign: TextAlign.center,
-              style: Theme.of(
-                context,
-              ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 48),
-            const Text('Global counter updated by all users:'),
-            StreamBuilder<int>(
-              stream: _counterStream,
-              builder: (context, counterSnapshot) {
-                final total = counterSnapshot.data ?? 0;
-                if (counterSnapshot.connectionState ==
-                    ConnectionState.waiting) {
-                  return const Padding(
-                    padding: EdgeInsets.all(8.0),
-                    child: CircularProgressIndicator(),
-                  );
-                }
-                return Text(
-                  '$total',
-                  style: Theme.of(context).textTheme.headlineLarge,
-                );
-              },
-            ),
-          ],
+        return StreamBuilder<bool>(
+          stream: _connectionStream,
+          initialData: RepositoryService().connectionState.latestOrNull,
+          builder: (context, connectionSnapshot) {
+            final isConnected = connectionSnapshot.data ?? false;
+            return Column(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Column(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      margin: const EdgeInsets.only(bottom: 8),
+                      decoration: BoxDecoration(
+                        color: isConnected
+                            ? Colors.green.shade100
+                            : Colors.red.shade100,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        isConnected ? 'Connected' : 'Disconnected',
+                        style: TextStyle(
+                          color: isConnected
+                              ? Colors.green.shade800
+                              : Colors.red.shade800,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: () => _onAvatarTap(context, currentUserAvatar),
+                      child: AvatarPreview(
+                        avatarUrl: currentUserAvatar,
+                        showEditIndicator: true,
+                        connectionStatus: isConnected,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Hello, ${user.username}!',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context)
+                          .textTheme
+                          .headlineMedium
+                          ?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+                Column(
+                  children: [
+                    const Text('Global counter updated by all users:'),
+                    StreamBuilder<int>(
+                      stream: _counterStream,
+                      builder: (context, counterSnapshot) {
+                        final total = counterSnapshot.data ?? 0;
+                        if (counterSnapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return const Padding(
+                            padding: EdgeInsets.all(8.0),
+                            child: CircularProgressIndicator(),
+                          );
+                        }
+                        return Text(
+                          '$total',
+                          style: Theme.of(context).textTheme.headlineLarge,
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -335,26 +471,25 @@ class _MyHomePageState extends State<MyHomePage> {
               for (final u in usersSnapshot.data ?? const [])
                 u.username: u.avatarUrl,
             };
-            return Container(
-              color: ColorScheme.of(context).surfaceContainerLow,
-              padding: const EdgeInsets.all(24.0),
+            _avatarMap = Map<String, String?>.from(avatarMap);
+            return SizedBox(
               height: MediaQuery.of(context).size.height * 0.35,
-              child: StreamBuilder(
-                stream: _recentLogsStream,
-                builder: (context, logsSnapshot) {
-                  final recentLogs = logsSnapshot.data ?? const [];
-                  if (logsSnapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  return ListView.builder(
-                    itemCount: recentLogs.length,
-                    itemBuilder: (context, index) {
-                      final log = recentLogs[index];
-                      final avatar = avatarMap[log.username] ?? '';
-                      return CounterLogTile(log: log, avatarUrl: avatar);
-                    },
-                  );
-                },
+              child: Container(
+                color: ColorScheme.of(context).surfaceContainerLow,
+                padding: const EdgeInsets.all(24.0),
+                child: AnimatedList(
+                  key: _logsListKey,
+                  initialItemCount: _logs.length,
+                  itemBuilder: (context, index, animation) {
+                    if (index >= _logs.length) return const SizedBox.shrink();
+                    final log = _logs[index];
+                    return _buildAnimatedLogTile(
+                      log,
+                      animation,
+                      appearing: true,
+                    );
+                  },
+                ),
               ),
             );
           },
@@ -455,45 +590,67 @@ class AvatarPreview extends StatelessWidget {
   final String avatarUrl;
   final double radius;
   final bool showEditIndicator;
+  final bool? connectionStatus;
   const AvatarPreview({
     super.key,
     required this.avatarUrl,
     this.showEditIndicator = false,
     this.radius = 50,
+    this.connectionStatus,
   });
 
   @override
   Widget build(BuildContext context) {
     final hasAvatar = avatarUrl.isNotEmpty;
-    return Stack(
-      children: [
-        CircleAvatar(
-          radius: radius,
-          backgroundColor: ColorScheme.of(context).surfaceContainerHighest,
-          backgroundImage: hasAvatar ? NetworkImage(avatarUrl) : null,
-          child: hasAvatar ? null : Icon(Icons.person, size: radius),
-        ),
-        if (showEditIndicator)
-          Positioned(
-            bottom: 4,
-            right: 4,
-            child: PhysicalModel(
-              color: Colors.transparent,
-              elevation: 4,
-              shadowColor: ColorScheme.of(context).shadow,
-              shape: BoxShape.circle,
-              child: CircleAvatar(
-                radius: 14,
-                backgroundColor: ColorScheme.of(context).primaryFixed,
-                child: Icon(
-                  Icons.edit,
-                  size: 16,
-                  color: ColorScheme.of(context).onPrimaryFixed,
+    final indicatorColor = connectionStatus == null
+        ? null
+        : (connectionStatus! ? Colors.green : Colors.red);
+    final ringDiameter = radius * 2 + 8; // 4px gap each side
+    return SizedBox(
+      width: ringDiameter,
+      height: ringDiameter,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          if (indicatorColor != null)
+            IgnorePointer(
+              child: Container(
+                width: ringDiameter,
+                height: ringDiameter,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: indicatorColor, width: 4),
                 ),
               ),
             ),
+          CircleAvatar(
+            radius: radius - (indicatorColor != null ? 4 : 0),
+            backgroundColor: ColorScheme.of(context).surfaceContainerHighest,
+            backgroundImage: hasAvatar ? NetworkImage(avatarUrl) : null,
+            child: hasAvatar ? null : Icon(Icons.person, size: radius),
           ),
-      ],
+          if (showEditIndicator)
+            Positioned(
+              bottom: 0,
+              right: 0,
+              child: PhysicalModel(
+                color: Colors.transparent,
+                elevation: 4,
+                shadowColor: ColorScheme.of(context).shadow,
+                shape: BoxShape.circle,
+                child: CircleAvatar(
+                  radius: radius / 2.5,
+                  backgroundColor: ColorScheme.of(context).primaryFixed,
+                  child: Icon(
+                    Icons.edit,
+                    size: radius / 2.5,
+                    color: ColorScheme.of(context).onPrimaryFixed,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -528,7 +685,26 @@ class NavigatorService {
   void navigateToSignIn() => pushReplacement(const SignInPage());
 }
 
+/// Small helper to expose connection state as a stream with the last value cached.
+class ConnectionSignal {
+  ConnectionSignal() : _controller = StreamController<bool>.broadcast();
+
+  final StreamController<bool> _controller;
+  bool? _latest;
+
+  Stream<bool> get stream => _controller.stream;
+  bool? get latestOrNull => _latest;
+
+  void add(bool value) {
+    _latest = value;
+    if (!_controller.isClosed) {
+      _controller.add(value);
+    }
+  }
+}
+
 /// Central orchestrator for auth, persistence, and sync.
+/// Coordinates repositories, storage, sync strategy, and session/namespace handling.
 class RepositoryService {
   static const tag = 'RepositoryService';
 
@@ -543,11 +719,17 @@ class RepositoryService {
   final LocalFirstRepository<UserModel> userRepository;
   final LocalFirstRepository<CounterLogModel> counterLogRepository;
   final MongoPeriodicSyncStrategy syncStrategy;
+  final ConnectionSignal connectionState;
 
+  // Central orchestrator for the demo: wires repositories, storage, sync
+  // strategy and handles auth/session (namespace) switching.
   RepositoryService._internal()
-    : userRepository = _buildUserRepository(),
+    : connectionState = ConnectionSignal(),
+      userRepository = _buildUserRepository(),
       counterLogRepository = _buildCounterLogRepository(),
-      syncStrategy = MongoPeriodicSyncStrategy();
+      syncStrategy = MongoPeriodicSyncStrategy() {
+    syncStrategy.setConnectionListener(connectionState.add);
+  }
 
   Future<UserModel?> initialize() async {
     final localFirst = this.localFirst ??= LocalFirstClient(
@@ -561,13 +743,14 @@ class RepositoryService {
   }
 
   List<UserModel> _usersFromEvents(List<LocalFirstEvent<UserModel>> events) =>
-      events.map((e) => e.payload).toList();
+      events.map((e) => e.state).toList();
 
   List<CounterLogModel> _logsFromEvents(
     List<LocalFirstEvent<CounterLogModel>> events,
-  ) => events.map((e) => e.payload).toList();
+  ) => events.map((e) => e.state).toList();
 
   Future<void> signIn({required String username}) async {
+    // On sign in, swap namespace, prefetch users from remote, and persist the new user.
     syncStrategy.stop();
     await _switchUserDatabase('');
     await _syncRemoteUsersToLocal();
@@ -576,13 +759,13 @@ class RepositoryService {
         .where('username', isEqualTo: username)
         .getAll();
     final preservedAvatar = existing.isNotEmpty
-        ? existing.first.payload.avatarUrl
+        ? existing.first.state.avatarUrl
         : null;
     final user = authenticatedUser = UserModel(
       username: username,
       avatarUrl: preservedAvatar,
     );
-    await userRepository.upsert(user);
+    await userRepository.upsert(user, needSync: existing.isEmpty);
     await _persistLastUsername(username);
     syncStrategy.start();
     NavigatorService().navigateToHome();
@@ -593,7 +776,7 @@ class RepositoryService {
     for (final data in remote) {
       try {
         final user = userRepository.fromJson(data);
-        await userRepository.upsert(user);
+        await userRepository.upsert(user, needSync: false);
       } catch (_) {
         // ignore malformed user entries
       }
@@ -601,6 +784,7 @@ class RepositoryService {
   }
 
   Future<void> signOut() async {
+    // Stops sync and resets session-specific state.
     syncStrategy.stop();
     authenticatedUser = null;
     await _switchUserDatabase('');
@@ -686,7 +870,7 @@ class RepositoryService {
       updatedAt: DateTime.now().toUtc(),
     );
 
-    await userRepository.upsert(updated);
+    await userRepository.upsert(updated, needSync: true);
     authenticatedUser = updated;
     return updated;
   }
@@ -701,7 +885,7 @@ class RepositoryService {
     }
 
     final log = CounterLogModel(username: username, increment: amount);
-    await counterLogRepository.upsert(log);
+    await counterLogRepository.upsert(log, needSync: true);
   }
 
   Future<void> _switchUserDatabase(String username) async {
@@ -865,12 +1049,11 @@ class CounterLogModel {
     return '$verb by $change by $username';
   }
 
-  String toFormattedDate() =>
-      () {
-        final local = createdAt.toLocal();
-        return '${local.day.toString().padLeft(2, '0')}/${local.month.toString().padLeft(2, '0')}/${local.year} '
-            '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
-      }();
+  String toFormattedDate() => () {
+    final local = createdAt.toLocal();
+    return '${local.day.toString().padLeft(2, '0')}/${local.month.toString().padLeft(2, '0')}/${local.year} '
+        '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+  }();
 }
 
 LocalFirstRepository<UserModel> _buildUserRepository() {
@@ -893,7 +1076,8 @@ LocalFirstRepository<CounterLogModel> _buildCounterLogRepository() {
   );
 }
 
-/// Periodically syncs pending changes with MongoDB and pulls updates.
+/// Periodic sync strategy: batches pending events to MongoDB and pulls remote events.
+/// Demonstrates the classic local-first loop (push pending, pull remote, merge).
 class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   static const logTag = 'MongoPeriodicSyncStrategy';
   final Duration period = const Duration(milliseconds: 500);
@@ -901,18 +1085,28 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     uri: mongoConnectionString,
     repositoryNames: const ['counter_log', 'user'],
   );
+  void Function(bool) _onConnectionChange = _noopConnection;
+  bool? _lastConnected;
+  bool _isSyncing = false;
 
   Timer? _timer;
   final JsonMap<DateTime?> lastSyncedAt = {};
   final JsonMap<List<LocalFirstEvent>> pendingChanges = {};
 
+  void setConnectionListener(void Function(bool) listener) {
+    _onConnectionChange = listener;
+  }
+
   void start() {
     stop();
     client.awaitInitialization.then((_) async {
+      final initialConnected = await _quickPing();
+      reportConnectionState(initialConnected);
+      _lastConnected = initialConnected;
       dev.log('Starting periodic sync', name: logTag);
-      final pendingObjects = await getPendingObjects();
-      for (final object in pendingObjects) {
-        _addPending(object);
+      final pendingEvents = await getPendingEvents();
+      for (final event in pendingEvents) {
+        _addPending(event);
       }
       for (final repository in mongoApi.repositoryNames) {
         final value = await client.getMeta('__last_sync__$repository');
@@ -935,38 +1129,64 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     stop();
   }
 
-  void _addPending(LocalFirstEvent object) {
-    pendingChanges.putIfAbsent(object.repositoryName, () => []).add(object);
+  void _addPending(LocalFirstEvent event) {
+    pendingChanges.putIfAbsent(event.repositoryName, () => []).add(event);
   }
 
   @override
-  Future<SyncStatus> onPushToRemote(LocalFirstEvent object) async {
-    _addPending(object);
+  Future<SyncStatus> onPushToRemote(LocalFirstEvent event) async {
+    _addPending(event);
     return SyncStatus.pending;
   }
 
   Future<void> _onTimerTick(_) async {
-    if (pendingChanges.isNotEmpty) {
-      final changes = JsonMap<List<LocalFirstEvent>>.from(pendingChanges);
-      pendingChanges.clear();
+    if (_isSyncing) return;
+    _isSyncing = true;
+    try {
+      if (pendingChanges.isNotEmpty) {
+        final changes = JsonMap<List<LocalFirstEvent>>.from(pendingChanges);
+        pendingChanges.clear();
 
-      await _pushToRemote(changes);
-    }
-    final remoteChanges = await mongoApi.pull(lastSyncedAt);
-    if (remoteChanges['changes']?.isNotEmpty) {
-      await pullChangesToLocal(remoteChanges);
+        await _pushToRemote(changes).timeout(period * 2);
+      }
+      final remoteChanges = await mongoApi.pull(lastSyncedAt).timeout(period * 2);
+      if (remoteChanges['changes']?.isNotEmpty) {
+        await pullChangesToLocal(remoteChanges);
 
-      // Use the latest updated_at seen in this pull as the new lastSyncedAt
-      final latest = mongoApi.latestUpdatedAt(remoteChanges);
-      if (latest != null) {
-        for (final repo in mongoApi.repositoryNames) {
-          lastSyncedAt[repo] = latest;
-          await client.setKeyValue(
-            '__last_sync__$repo',
-            latest.toIso8601String(),
-          );
+        // Use the latest updated_at seen in this pull as the new lastSyncedAt
+        final latest = mongoApi.latestUpdatedAt(remoteChanges);
+        if (latest != null) {
+          for (final repo in mongoApi.repositoryNames) {
+            lastSyncedAt[repo] = latest;
+            await client.setKeyValue(
+              '__last_sync__$repo',
+              latest.toIso8601String(),
+            );
+          }
         }
       }
+      _emitConnection(true);
+    } on TimeoutException catch (e, s) {
+      dev.log('Sync timeout: $e', name: logTag, error: e, stackTrace: s);
+      _emitConnection(false);
+    } catch (e, s) {
+      dev.log('Sync error: $e', name: logTag, error: e, stackTrace: s);
+      _emitConnection(false);
+    } finally {
+      _isSyncing = false;
+    }
+  }
+
+  Future<bool> _quickPing() async {
+    try {
+      await mongoApi.ping().timeout(period * 2);
+      return true;
+    } on TimeoutException catch (e, s) {
+      dev.log('Ping timeout: $e', name: logTag, error: e, stackTrace: s);
+      return false;
+    } catch (e, s) {
+      dev.log('Ping failed: $e', name: logTag, error: e, stackTrace: s);
+      return false;
     }
   }
 
@@ -994,9 +1214,29 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   Future<List<JsonMap<dynamic>>> fetchUsers() {
     return mongoApi.fetchUsers();
   }
+
+  void _emitConnection(bool connected) {
+    try {
+      _onConnectionChange(connected);
+      final wasDisconnected = _lastConnected == false;
+      _lastConnected = connected;
+      if (connected && wasDisconnected && _timer != null && !_isSyncing) {
+        // Trigger an immediate sync when coming back online.
+        _onTimerTick(null);
+      }
+      reportConnectionState(connected);
+      dev.log(
+        'Connection state: ${connected ? 'connected' : 'disconnected'}',
+        name: logTag,
+      );
+    } catch (_) {}
+  }
+
+  static void _noopConnection(bool _) {}
 }
 
 /// Low-level helper to push/pull changes against MongoDB.
+/// Minimal MongoDB adapter used by the demo sync strategy (push/pull events).
 class MongoApi {
   static const logTag = 'MongoApi';
   final String uri;
@@ -1036,6 +1276,7 @@ class MongoApi {
   }
 
   Future<void> push(JsonMap<dynamic> payload) async {
+    // Uploads batched events grouped by repository.
     final operationsByNode = payload['changes'];
     if (operationsByNode is! JsonMap<dynamic>) return;
 
@@ -1061,12 +1302,12 @@ class MongoApi {
           if (item is! JsonMap<dynamic>) continue;
           final id = item['id']?.toString();
           if (id == null) continue;
-          final doc = {
+          await collection.insertOne({
             ..._toMongoDateFields(item),
             'operation': 'insert',
+            'event_id': item['event_id'],
             'updated_at': now,
-          };
-          await collection.replaceOne(where.eq('id', id), doc, upsert: true);
+          });
         }
       }
 
@@ -1076,30 +1317,34 @@ class MongoApi {
           if (item is! JsonMap<dynamic>) continue;
           final id = item['id']?.toString();
           if (id == null) continue;
-          final doc = {
+          await collection.insertOne({
             ..._toMongoDateFields(item),
             'operation': 'update',
+            'event_id': item['event_id'],
             'updated_at': now,
-          };
-          await collection.replaceOne(where.eq('id', id), doc, upsert: true);
+          });
         }
       }
 
       final deleteItems = operations['delete'];
       if (deleteItems is List) {
-        for (final id in deleteItems) {
+        for (final item in deleteItems) {
+          if (item is! Map) continue;
+          final id = item['id']?.toString();
           if (id == null) continue;
-          await collection.replaceOne(where.eq('id', id.toString()), {
-            'id': id.toString(),
+          await collection.insertOne({
+            'id': id,
             'operation': 'delete',
+            'event_id': item['event_id'],
             'updated_at': now,
-          }, upsert: true);
+          });
         }
       }
     }
   }
 
   Future<JsonMap<dynamic>> pull(JsonMap<DateTime?> lastSyncByNode) async {
+    // Pulls new events since the last sync timestamp per repository.
     final timestamp = DateTime.now().toUtc();
 
     final changes = <String, JsonMap<List<dynamic>>>{};
@@ -1120,7 +1365,9 @@ class MongoApi {
       await cursor.forEach((doc) {
         final op = doc['operation'];
         if (op == 'delete') {
-          if (doc['id'] != null) deletes.add(doc['id']);
+          if (doc['id'] != null) {
+            deletes.add({'id': doc['id'], 'event_id': doc['event_id']});
+          }
           return;
         }
         final item = Map<String, dynamic>.from(doc)
@@ -1167,6 +1414,12 @@ class MongoApi {
     });
 
     return users.values.toList();
+  }
+
+  Future<void> ping() async {
+    final collection = await _collection(repositoryNames.first);
+    // Lightweight query to check connectivity.
+    await collection.count();
   }
 
   DateTime? latestUpdatedAt(JsonMap<dynamic> pullResult) {
