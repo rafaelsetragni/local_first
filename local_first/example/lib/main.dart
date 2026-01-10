@@ -150,6 +150,11 @@ class _MyHomePageState extends State<MyHomePage> {
   late final Stream<List<UserModel>> _usersStream;
   late final Stream<List<CounterLogModel>> _recentLogsStream;
   late final Stream<bool> _connectionStream;
+  final GlobalKey<AnimatedListState> _logsListKey =
+      GlobalKey<AnimatedListState>();
+  late final StreamSubscription<List<CounterLogModel>> _logsSubscription;
+  final List<CounterLogModel> _logs = [];
+  Map<String, String?> _avatarMap = {};
 
   @override
   void initState() {
@@ -159,12 +164,102 @@ class _MyHomePageState extends State<MyHomePage> {
     _counterStream = service.watchCounter();
     _recentLogsStream = service.watchRecentLogs(limit: 5);
     _connectionStream = service.connectionState.stream;
+    _logsSubscription = _recentLogsStream.listen(_onLogsUpdate);
   }
 
   Future<void> _onAvatarTap(BuildContext context, String currentAvatar) async {
     final url = await _promptAvatarDialog(context, currentAvatar);
     if (url == null) return;
     await RepositoryService().updateAvatarUrl(url);
+  }
+
+  @override
+  void dispose() {
+    _logsSubscription.cancel();
+    super.dispose();
+  }
+
+  void _onLogsUpdate(List<CounterLogModel> newLogs) {
+    final listState = _logsListKey.currentState;
+
+    if (listState == null) {
+      _logs
+        ..clear()
+        ..addAll(newLogs);
+      if (mounted) setState(() {});
+      return;
+    }
+
+    // Remove items no longer present (fade out).
+    for (int i = _logs.length - 1; i >= 0; i--) {
+      final log = _logs[i];
+      final stillPresent = newLogs.any((l) => l.id == log.id);
+      if (!stillPresent) {
+        final removed = _logs.removeAt(i);
+        listState.removeItem(
+          i,
+          (context, animation) =>
+              _buildAnimatedLogTile(removed, animation, appearing: false),
+          duration: const Duration(milliseconds: 250),
+        );
+      }
+    }
+
+    // Insert new items and adjust order to match new list.
+    for (int targetIndex = 0; targetIndex < newLogs.length; targetIndex++) {
+      final incoming = newLogs[targetIndex];
+      final currentIndex = _logs.indexWhere((l) => l.id == incoming.id);
+
+      if (currentIndex == -1) {
+        _logs.insert(targetIndex, incoming);
+        listState.insertItem(
+          targetIndex,
+          duration: const Duration(milliseconds: 250),
+        );
+      } else if (currentIndex != targetIndex) {
+        final item = _logs.removeAt(currentIndex);
+        _logs.insert(targetIndex, item);
+      }
+    }
+
+    // Trim extras if new list is shorter.
+    while (_logs.length > newLogs.length) {
+      final lastIndex = _logs.length - 1;
+      final removed = _logs.removeAt(lastIndex);
+      listState.removeItem(
+        lastIndex,
+        (context, animation) =>
+            _buildAnimatedLogTile(removed, animation, appearing: false),
+        duration: const Duration(milliseconds: 250),
+      );
+    }
+    if (mounted) setState(() {});
+  }
+
+  Widget _buildAnimatedLogTile(
+    CounterLogModel log,
+    Animation<double> animation, {
+    required bool appearing,
+  }) {
+    final curved = CurvedAnimation(
+      parent: animation,
+      curve: Curves.easeOut,
+    );
+    final avatar = _avatarMap[log.username] ?? '';
+    return FadeTransition(
+      opacity: appearing ? curved : animation,
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: appearing ? const Offset(0.15, 0) : Offset.zero,
+          end: appearing ? Offset.zero : const Offset(-0.05, 0),
+        ).animate(curved),
+        child: CounterLogTile(
+          key: ValueKey('tile-${log.id}'),
+          log: log,
+          avatarUrl: avatar,
+        ),
+      ),
+    );
   }
 
   Future<String?> _promptAvatarDialog(
@@ -376,26 +471,22 @@ class _MyHomePageState extends State<MyHomePage> {
               for (final u in usersSnapshot.data ?? const [])
                 u.username: u.avatarUrl,
             };
+            _avatarMap = Map<String, String?>.from(avatarMap);
             return SizedBox(
               height: MediaQuery.of(context).size.height * 0.35,
               child: Container(
                 color: ColorScheme.of(context).surfaceContainerLow,
                 padding: const EdgeInsets.all(24.0),
-                child: StreamBuilder(
-                  stream: _recentLogsStream,
-                  builder: (context, logsSnapshot) {
-                    final recentLogs = logsSnapshot.data ?? const [];
-                    if (logsSnapshot.connectionState ==
-                        ConnectionState.waiting) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-                    return ListView.builder(
-                      itemCount: recentLogs.length,
-                      itemBuilder: (context, index) {
-                        final log = recentLogs[index];
-                        final avatar = avatarMap[log.username] ?? '';
-                        return CounterLogTile(log: log, avatarUrl: avatar);
-                      },
+                child: AnimatedList(
+                  key: _logsListKey,
+                  initialItemCount: _logs.length,
+                  itemBuilder: (context, index, animation) {
+                    if (index >= _logs.length) return const SizedBox.shrink();
+                    final log = _logs[index];
+                    return _buildAnimatedLogTile(
+                      log,
+                      animation,
+                      appearing: true,
                     );
                   },
                 ),
