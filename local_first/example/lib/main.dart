@@ -1086,6 +1086,8 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     repositoryNames: const ['counter_log', 'user'],
   );
   void Function(bool) _onConnectionChange = _noopConnection;
+  bool? _lastConnected;
+  bool _isSyncing = false;
 
   Timer? _timer;
   final JsonMap<DateTime?> lastSyncedAt = {};
@@ -1098,6 +1100,9 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   void start() {
     stop();
     client.awaitInitialization.then((_) async {
+      final initialConnected = await _quickPing();
+      reportConnectionState(initialConnected);
+      _lastConnected = initialConnected;
       dev.log('Starting periodic sync', name: logTag);
       final pendingEvents = await getPendingEvents();
       for (final event in pendingEvents) {
@@ -1135,14 +1140,16 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   }
 
   Future<void> _onTimerTick(_) async {
+    if (_isSyncing) return;
+    _isSyncing = true;
     try {
       if (pendingChanges.isNotEmpty) {
         final changes = JsonMap<List<LocalFirstEvent>>.from(pendingChanges);
         pendingChanges.clear();
 
-        await _pushToRemote(changes);
+        await _pushToRemote(changes).timeout(period * 2);
       }
-      final remoteChanges = await mongoApi.pull(lastSyncedAt);
+      final remoteChanges = await mongoApi.pull(lastSyncedAt).timeout(period * 2);
       if (remoteChanges['changes']?.isNotEmpty) {
         await pullChangesToLocal(remoteChanges);
 
@@ -1159,8 +1166,27 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
         }
       }
       _emitConnection(true);
-    } catch (_) {
+    } on TimeoutException catch (e, s) {
+      dev.log('Sync timeout: $e', name: logTag, error: e, stackTrace: s);
       _emitConnection(false);
+    } catch (e, s) {
+      dev.log('Sync error: $e', name: logTag, error: e, stackTrace: s);
+      _emitConnection(false);
+    } finally {
+      _isSyncing = false;
+    }
+  }
+
+  Future<bool> _quickPing() async {
+    try {
+      await mongoApi.ping().timeout(period * 2);
+      return true;
+    } on TimeoutException catch (e, s) {
+      dev.log('Ping timeout: $e', name: logTag, error: e, stackTrace: s);
+      return false;
+    } catch (e, s) {
+      dev.log('Ping failed: $e', name: logTag, error: e, stackTrace: s);
+      return false;
     }
   }
 
@@ -1192,6 +1218,17 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   void _emitConnection(bool connected) {
     try {
       _onConnectionChange(connected);
+      final wasDisconnected = _lastConnected == false;
+      _lastConnected = connected;
+      if (connected && wasDisconnected && _timer != null && !_isSyncing) {
+        // Trigger an immediate sync when coming back online.
+        _onTimerTick(null);
+      }
+      reportConnectionState(connected);
+      dev.log(
+        'Connection state: ${connected ? 'connected' : 'disconnected'}',
+        name: logTag,
+      );
     } catch (_) {}
   }
 
@@ -1377,6 +1414,12 @@ class MongoApi {
     });
 
     return users.values.toList();
+  }
+
+  Future<void> ping() async {
+    final collection = await _collection(repositoryNames.first);
+    // Lightweight query to check connectivity.
+    await collection.count();
   }
 
   DateTime? latestUpdatedAt(JsonMap<dynamic> pullResult) {
