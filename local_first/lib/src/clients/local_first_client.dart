@@ -13,11 +13,28 @@ class LocalFirstClient {
 
   final List<DataSyncStrategy> syncStrategies;
   final Completer _onInitialize = Completer();
+  final StreamController<bool> _connectionController =
+      StreamController<bool>.broadcast();
+  bool? _latestConnection;
 
   Future get awaitInitialization => _onInitialize.future;
 
   /// Gets the local database delegate used for storage.
   LocalFirstStorage get localStorage => _localStorage;
+
+  /// Emits connection state changes observed by sync strategies.
+  void reportConnectionState(bool connected) {
+    _latestConnection = connected;
+    if (!_connectionController.isClosed) {
+      _connectionController.add(connected);
+    }
+  }
+
+  /// Stream of connection state changes pushed by sync strategies.
+  Stream<bool> get connectionChanges => _connectionController.stream;
+
+  /// Latest known connection state (if any).
+  bool? get latestConnectionState => _latestConnection;
 
   /// Creates an instance of LocalFirstClient.
   ///
@@ -87,6 +104,7 @@ class LocalFirstClient {
   ///
   /// Call this when you're done using the LocalFirstClient instance.
   Future<void> dispose() async {
+    await _connectionController.close();
     await _localStorage.close();
   }
 
