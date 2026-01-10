@@ -89,6 +89,7 @@ Future<void> main() async {
       title: 'Buy milk',
       updatedAt: DateTime.now().toUtc(),
     ),
+    needSync: true,
   );
 }
 ```

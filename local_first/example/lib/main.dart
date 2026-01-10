@@ -586,7 +586,7 @@ class RepositoryService {
       username: username,
       avatarUrl: preservedAvatar,
     );
-    await userRepository.upsert(user);
+    await userRepository.upsert(user, needSync: existing.isEmpty);
     await _persistLastUsername(username);
     syncStrategy.start();
     NavigatorService().navigateToHome();
@@ -597,7 +597,7 @@ class RepositoryService {
     for (final data in remote) {
       try {
         final user = userRepository.fromJson(data);
-        await userRepository.upsert(user);
+        await userRepository.upsert(user, needSync: false);
       } catch (_) {
         // ignore malformed user entries
       }
@@ -691,7 +691,7 @@ class RepositoryService {
       updatedAt: DateTime.now().toUtc(),
     );
 
-    await userRepository.upsert(updated);
+    await userRepository.upsert(updated, needSync: true);
     authenticatedUser = updated;
     return updated;
   }
@@ -706,7 +706,7 @@ class RepositoryService {
     }
 
     final log = CounterLogModel(username: username, increment: amount);
-    await counterLogRepository.upsert(log);
+    await counterLogRepository.upsert(log, needSync: true);
   }
 
   Future<void> _switchUserDatabase(String username) async {
@@ -870,12 +870,11 @@ class CounterLogModel {
     return '$verb by $change by $username';
   }
 
-  String toFormattedDate() =>
-      () {
-        final local = createdAt.toLocal();
-        return '${local.day.toString().padLeft(2, '0')}/${local.month.toString().padLeft(2, '0')}/${local.year} '
-            '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
-      }();
+  String toFormattedDate() => () {
+    final local = createdAt.toLocal();
+    return '${local.day.toString().padLeft(2, '0')}/${local.month.toString().padLeft(2, '0')}/${local.year} '
+        '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+  }();
 }
 
 LocalFirstRepository<UserModel> _buildUserRepository() {
@@ -1069,12 +1068,12 @@ class MongoApi {
           if (item is! JsonMap<dynamic>) continue;
           final id = item['id']?.toString();
           if (id == null) continue;
-          final doc = {
+          await collection.insertOne({
             ..._toMongoDateFields(item),
             'operation': 'insert',
+            'event_id': item['event_id'],
             'updated_at': now,
-          };
-          await collection.replaceOne(where.eq('id', id), doc, upsert: true);
+          });
         }
       }
 
@@ -1084,24 +1083,27 @@ class MongoApi {
           if (item is! JsonMap<dynamic>) continue;
           final id = item['id']?.toString();
           if (id == null) continue;
-          final doc = {
+          await collection.insertOne({
             ..._toMongoDateFields(item),
             'operation': 'update',
+            'event_id': item['event_id'],
             'updated_at': now,
-          };
-          await collection.replaceOne(where.eq('id', id), doc, upsert: true);
+          });
         }
       }
 
       final deleteItems = operations['delete'];
       if (deleteItems is List) {
-        for (final id in deleteItems) {
+        for (final item in deleteItems) {
+          if (item is! Map) continue;
+          final id = item['id']?.toString();
           if (id == null) continue;
-          await collection.replaceOne(where.eq('id', id.toString()), {
-            'id': id.toString(),
+          await collection.insertOne({
+            'id': id,
             'operation': 'delete',
+            'event_id': item['event_id'],
             'updated_at': now,
-          }, upsert: true);
+          });
         }
       }
     }
@@ -1129,7 +1131,9 @@ class MongoApi {
       await cursor.forEach((doc) {
         final op = doc['operation'];
         if (op == 'delete') {
-          if (doc['id'] != null) deletes.add(doc['id']);
+          if (doc['id'] != null) {
+            deletes.add({'id': doc['id'], 'event_id': doc['event_id']});
+          }
           return;
         }
         final item = Map<String, dynamic>.from(doc)

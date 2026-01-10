@@ -271,7 +271,10 @@ void main() {
         syncStrategies: [_OkStrategy()],
       );
       await clientWithProbe.initialize();
-      await probeRepo.upsert(LocalFirstEvent(state: _TestModel('1')));
+      await probeRepo.upsert(
+        LocalFirstEvent(state: _TestModel('1')),
+        needSync: true,
+      );
 
       expect(await storage.getById('probe', '1'), isNotNull);
       expect(probeRepo.initialized, isTrue);

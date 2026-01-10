@@ -253,14 +253,14 @@ void main() {
     test('initialize can be re-run after reset without errors', () async {
       repo.reset();
       await repo.initialize();
-      await repo.upsert(_event('reinit', value: 'ok'));
+      await repo.upsert(_event('reinit', value: 'ok'), needSync: true);
       final stored = await storage.getById('tests', 'reinit');
       expect(stored, isNotNull);
     });
 
     test('insert sets sync metadata and persists', () async {
       final model = _event('1', value: 'a');
-      await repo.upsert(model);
+      await repo.upsert(model, needSync: true);
 
       final stored = await storage.getById('tests', '1');
       expect(stored, isNotNull);
@@ -278,9 +278,9 @@ void main() {
 
     test('delete removes state row and logs delete event', () async {
       final model = _event('1', value: 'a');
-      await repo.upsert(model);
+      await repo.upsert(model, needSync: true);
 
-      await repo.delete('1');
+      await repo.delete('1', needSync: true);
 
       final storedState = await storage.getById('tests', '1');
       expect(storedState, isNull);
@@ -293,7 +293,7 @@ void main() {
     });
 
     test('delete returns silently when item not found', () async {
-      await repo.delete('missing-id');
+      await repo.delete('missing-id', needSync: true);
       final stored = await storage.getById('tests', 'missing-id');
       expect(stored, isNull);
     });
@@ -316,7 +316,7 @@ void main() {
         );
         await failingClient.initialize();
 
-        await failingRepo.upsert(_event('fail', value: 'x'));
+        await failingRepo.upsert(_event('fail', value: 'x'), needSync: true);
 
         final stored = await failingStorage.getById('tests', 'fail');
         expect(stored?['_sync_status'], SyncStatus.failed.index);
@@ -340,8 +340,10 @@ void main() {
       );
       await conditionalClient.initialize();
 
-      await conditionalRepo.upsert(_event('fail-push', value: 'x'));
-      await conditionalRepo.upsert(_event('ok-push', value: 'y'));
+      await conditionalRepo.upsert(_event('fail-push', value: 'x'),
+          needSync: true);
+      await conditionalRepo.upsert(_event('ok-push', value: 'y'),
+          needSync: true);
 
       final failed = await conditionalStorage.getById('tests', 'fail-push');
       final ok = await conditionalStorage.getById('tests', 'ok-push');
@@ -403,7 +405,7 @@ void main() {
           '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
         }, 'id');
 
-        await repo.upsert(_event('ins', value: 'new'));
+        await repo.upsert(_event('ins', value: 'new'), needSync: true);
 
         final stored = await storage.getById('tests', 'ins');
         expect(stored!['_sync_operation'], SyncOperation.insert.index);
@@ -465,7 +467,7 @@ void main() {
         '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
       }, 'id');
 
-      await repo.upsert(_event('synced', value: 'new'));
+      await repo.upsert(_event('synced', value: 'new'), needSync: true);
 
       final stored = await storage.getById('tests', 'synced');
       expect(stored?['_sync_operation'], SyncOperation.update.index);
@@ -485,7 +487,7 @@ void main() {
           '_sync_created_at': createdAt,
         }, 'id');
 
-        await repo.upsert(_event('pending', value: 'v2'));
+        await repo.upsert(_event('pending', value: 'v2'), needSync: true);
 
         final stored = await storage.getById('tests', 'pending');
         expect(stored?['_sync_operation'], SyncOperation.insert.index);
@@ -505,7 +507,7 @@ void main() {
         '_sync_created_at': createdAt,
       }, 'id');
 
-      await repo.upsert(_event('syncedInsert', value: 'new'));
+      await repo.upsert(_event('syncedInsert', value: 'new'), needSync: true);
 
       final stored = await storage.getById('tests', 'syncedInsert');
       expect(stored?['_sync_operation'], SyncOperation.update.index);
@@ -525,7 +527,7 @@ void main() {
           // intentionally omit _sync_created_at to simulate legacy data
         }, 'id');
 
-        await repo.upsert(_event('legacy', value: 'new'));
+        await repo.upsert(_event('legacy', value: 'new'), needSync: true);
 
         final stored = await storage.getById('tests', 'legacy');
         expect(stored?['_sync_operation'], SyncOperation.update.index);
