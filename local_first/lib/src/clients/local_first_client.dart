@@ -160,17 +160,20 @@ class LocalFirstClient {
           events.add(object);
         }
       } else if (repositoryChangeJson.containsKey('delete')) {
-        final deleteIds = (repositoryChangeJson['delete'] as List<String>);
-        for (var id in deleteIds) {
+        final deletes = (repositoryChangeJson['delete'] as List);
+        for (var element in deletes) {
+          if (element is! Map) continue;
+          final id = element['id']?.toString();
+          if (id == null) continue;
           final object = await repository._getById(id);
-          if (object != null) {
-            events.add(
-              object.copyWith(
-                syncStatus: SyncStatus.ok,
-                syncOperation: SyncOperation.delete,
-              ),
-            );
-          }
+          if (object == null) continue;
+          events.add(
+            object.copyWith(
+              eventId: element['event_id']?.toString() ?? object.eventId,
+              syncStatus: SyncStatus.ok,
+              syncOperation: SyncOperation.delete,
+            ),
+          );
         }
       }
 

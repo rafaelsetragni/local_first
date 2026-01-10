@@ -120,6 +120,7 @@ Future<void> main() async {
   //    LocalFirstEvent is created internally and keeps sync metadata immutable.
   await todoRepository.upsert(
     Todo(id: '1', title: 'Buy milk', updatedAt: DateTime.now().toUtc()),
+    needSync: true,
   );
 
   // served instantly from local cache

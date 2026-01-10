@@ -143,31 +143,37 @@ abstract class LocalFirstRepository<T> {
   /// Otherwise, a new item will be inserted.
   ///
   /// The operation is marked as pending and will be synced on next [LocalFirstClient.sync].
-  Future<void> upsert(dynamic item) async {
+  Future<void> upsert(dynamic item, {required bool needSync}) async {
     final LocalFirstEvent<T> event = item is LocalFirstEvent<T>
         ? item
         : LocalFirstEvent<T>(state: item as T);
+    final adjusted = event.copyWith(
+      syncStatus: needSync ? SyncStatus.pending : SyncStatus.ok,
+    );
 
     final json = await _client.localStorage.getById(name, getId(event.state));
     if (json != null) {
       final existing = _eventFromJson(json);
-      await _update(_prepareForUpdate(_copyEvent(existing, event)));
+      await _update(_prepareForUpdate(_copyEvent(existing, adjusted),
+          needSync: needSync));
     } else {
-      await _insert(_prepareForInsert(event));
+      await _insert(_prepareForInsert(adjusted, needSync: needSync));
     }
   }
 
   Future<void> _insert(LocalFirstEvent<T> item) async {
-    final model = _prepareForInsert(item);
+    final model = item;
 
     await _client.localStorage.insert(name, _toStorageJson(model), idFieldName);
 
     await _persistEvent(model);
-    await _pushLocalEvent(model);
+    if (model.needSync) {
+      await _pushLocalEvent(model);
+    }
   }
 
   Future<void> _update(LocalFirstEvent<T> object) async {
-    final model = _prepareForUpdate(object);
+    final model = object;
     await _client.localStorage.update(
       name,
       getId(model.state),
@@ -175,7 +181,9 @@ abstract class LocalFirstRepository<T> {
     );
 
     await _persistEvent(model);
-    await _pushLocalEvent(model);
+    if (model.needSync) {
+      await _pushLocalEvent(model);
+    }
   }
 
   /// Deletes an item by its ID (soft delete).
@@ -186,7 +194,7 @@ abstract class LocalFirstRepository<T> {
   ///
   /// Parameters:
   /// - [id]: The unique identifier of the item to delete
-  Future<void> delete(String id) async {
+  Future<void> delete(String id, {required bool needSync}) async {
     final json = await _client.localStorage.getById(name, id);
     if (json == null) {
       return;
@@ -196,7 +204,7 @@ abstract class LocalFirstRepository<T> {
 
     final deleted = object.copyWith(
       eventId: LocalFirstIdGenerator.uuidV7(),
-      syncStatus: SyncStatus.pending,
+      syncStatus: needSync ? SyncStatus.pending : SyncStatus.ok,
       syncOperation: SyncOperation.delete,
     );
 
@@ -231,17 +239,23 @@ abstract class LocalFirstRepository<T> {
     );
   }
 
-  LocalFirstEvent<T> _prepareForInsert(LocalFirstEvent<T> model) {
+  LocalFirstEvent<T> _prepareForInsert(
+    LocalFirstEvent<T> model, {
+    required bool needSync,
+  }) {
     return model.copyWith(
       eventId: LocalFirstIdGenerator.uuidV7(),
-      syncStatus: SyncStatus.pending,
+      syncStatus: needSync ? SyncStatus.pending : SyncStatus.ok,
       syncOperation: SyncOperation.insert,
       syncCreatedAt: model.syncCreatedAt,
       repositoryName: name,
     );
   }
 
-  LocalFirstEvent<T> _prepareForUpdate(LocalFirstEvent<T> model) {
+  LocalFirstEvent<T> _prepareForUpdate(
+    LocalFirstEvent<T> model, {
+    required bool needSync,
+  }) {
     final wasPendingInsert =
         model.needSync && model.syncOperation == SyncOperation.insert;
     final existingCreatedAt = model.syncCreatedAt;
@@ -251,7 +265,7 @@ abstract class LocalFirstRepository<T> {
         : SyncOperation.update;
     return model.copyWith(
       eventId: LocalFirstIdGenerator.uuidV7(),
-      syncStatus: SyncStatus.pending,
+      syncStatus: needSync ? SyncStatus.pending : SyncStatus.ok,
       syncOperation: operation,
       repositoryName: name,
       syncCreatedAt: existingCreatedAt,
