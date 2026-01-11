@@ -11,5 +11,6 @@ part 'src/clients/local_first_client.dart';
 part 'src/models/local_first_model.dart';
 part 'src/repositories/local_first_repository.dart';
 part 'src/sync_strategies/data_sync_strategy.dart';
+part 'src/sync_strategies/periodic_sync_strategy.dart';
 part 'src/utils/conflict_util.dart';
 part 'src/utils/id_generator.dart';
