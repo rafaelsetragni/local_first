@@ -97,10 +97,7 @@ class _FakeStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<Map<String, dynamic>?> getEventById(
-    String tableName,
-    String id,
-  ) {
+  Future<Map<String, dynamic>?> getEventById(String tableName, String id) {
     return getById(_eventsTable(tableName), id);
   }
 
@@ -139,12 +136,12 @@ class _FakeStorage implements LocalFirstStorage {
   Future<void> setLastSyncAt(String repositoryName, DateTime time) async {}
 
   @override
-  Future<void> setMeta(String key, String value) async {
+  Future<void> setKey(String key, String value) async {
     _meta[key] = value;
   }
 
   @override
-  Future<String?> getMeta(String key) async => _meta[key];
+  Future<String?> getKey(String key) async => _meta[key];
 
   @override
   Future<List<Map<String, dynamic>>> query(LocalFirstQuery query) async {
@@ -196,9 +193,7 @@ void main() {
       final client = _MockClient();
       final pending = [LocalFirstEvent(state: _DummyModel('1'))];
 
-      when(
-        () => client.getAllPendingEvents(),
-      ).thenAnswer((_) async => pending);
+      when(() => client.getAllPendingEvents()).thenAnswer((_) async => pending);
       strategy.attach(client);
 
       final result = await strategy.getPendingEvents();
@@ -230,7 +225,7 @@ void main() {
       });
 
       final metaKey = '__last_sync__users';
-      final value = await storage.getMeta(metaKey);
+      final value = await storage.getKey(metaKey);
       expect(value, isNotNull);
     });
   });

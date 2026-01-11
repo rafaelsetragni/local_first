@@ -51,8 +51,7 @@ class _FakeStorage extends LocalFirstStorage {
   Future<Map<String, dynamic>?> getEventById(
     String tableName,
     String id,
-  ) async =>
-      null;
+  ) async => null;
 
   @override
   Future<void> insertEvent(
@@ -75,10 +74,10 @@ class _FakeStorage extends LocalFirstStorage {
   Future<void> deleteAllEvents(String tableName) async {}
 
   @override
-  Future<void> setMeta(String key, String value) async {}
+  Future<void> setKey(String key, String value) async {}
 
   @override
-  Future<String?> getMeta(String key) async => null;
+  Future<String?> getKey(String key) async => null;
 
   @override
   Future<void> ensureSchema(

@@ -117,7 +117,7 @@ class _InMemoryStorage implements LocalFirstStorage {
   Future<DateTime?> getLastSyncAt(String repositoryName) async => null;
 
   @override
-  Future<String?> getMeta(String key) async => meta[key];
+  Future<String?> getKey(String key) async => meta[key];
 
   @override
   Future<void> insert(
@@ -133,7 +133,7 @@ class _InMemoryStorage implements LocalFirstStorage {
   Future<void> setLastSyncAt(String repositoryName, DateTime time) async {}
 
   @override
-  Future<void> setMeta(String key, String value) async {
+  Future<void> setKey(String key, String value) async {
     meta[key] = value;
   }
 
@@ -145,10 +145,7 @@ class _InMemoryStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<Map<String, dynamic>?> getEventById(
-    String tableName,
-    String id,
-  ) {
+  Future<Map<String, dynamic>?> getEventById(String tableName, String id) {
     return getById(_eventsTable(tableName), id);
   }
 
@@ -288,7 +285,7 @@ void main() {
 
     test('setKeyValue / getMeta delegates to storage', () async {
       await client.setKeyValue('k', 'v');
-      expect(await client.getMeta('k'), 'v');
+      expect(await client.getKeyValue('k'), 'v');
     });
 
     test('getAllPendingEvents aggregates pending from repositories', () async {

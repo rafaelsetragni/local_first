@@ -94,7 +94,10 @@ class _FakeStorage extends LocalFirstStorage {
   }
 
   @override
-  Future<Map<String, dynamic>?> getEventById(String tableName, String id) async {
+  Future<Map<String, dynamic>?> getEventById(
+    String tableName,
+    String id,
+  ) async {
     return _events[id];
   }
 
@@ -127,12 +130,12 @@ class _FakeStorage extends LocalFirstStorage {
   }
 
   @override
-  Future<void> setMeta(String key, String value) async {
+  Future<void> setKey(String key, String value) async {
     _meta[key] = value;
   }
 
   @override
-  Future<String?> getMeta(String key) async => _meta[key];
+  Future<String?> getKey(String key) async => _meta[key];
 
   @override
   Future<void> ensureSchema(
@@ -271,10 +274,10 @@ void main() {
     test('supports offset pagination', () async {
       final page = await query
           .orderBy('score')
-      .startAfter(1)
-      .limitTo(2)
-      .getAll();
-  expect(page.length, 2);
+          .startAfter(1)
+          .limitTo(2)
+          .getAll();
+      expect(page.length, 2);
       expect(page.first.state.id, '4'); // scores: 10,15,20 (charlie is deleted)
     });
 

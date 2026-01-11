@@ -116,10 +116,7 @@ class _InMemoryStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<Map<String, dynamic>?> getEventById(
-    String tableName,
-    String id,
-  ) {
+  Future<Map<String, dynamic>?> getEventById(String tableName, String id) {
     return getById(_eventsTable(tableName), id);
   }
 
@@ -158,12 +155,12 @@ class _InMemoryStorage implements LocalFirstStorage {
   Future<void> setLastSyncAt(String repositoryName, DateTime time) async {}
 
   @override
-  Future<void> setMeta(String key, String value) async {
+  Future<void> setKey(String key, String value) async {
     meta[key] = value;
   }
 
   @override
-  Future<String?> getMeta(String key) async => meta[key];
+  Future<String?> getKey(String key) async => meta[key];
 
   @override
   Future<void> ensureSchema(
@@ -286,8 +283,9 @@ void main() {
       expect(storedState, isNull);
       final events = await storage.getAllEvents('tests');
       expect(events, isNotEmpty);
-      final deleteEvent =
-          events.firstWhere((e) => e['_sync_operation'] == SyncOperation.delete.index);
+      final deleteEvent = events.firstWhere(
+        (e) => e['_sync_operation'] == SyncOperation.delete.index,
+      );
       expect(deleteEvent['_sync_status'], SyncStatus.pending.index);
       expect(deleteEvent['id'], '1');
     });
@@ -340,10 +338,14 @@ void main() {
       );
       await conditionalClient.initialize();
 
-      await conditionalRepo.upsert(_event('fail-push', value: 'x'),
-          needSync: true);
-      await conditionalRepo.upsert(_event('ok-push', value: 'y'),
-          needSync: true);
+      await conditionalRepo.upsert(
+        _event('fail-push', value: 'x'),
+        needSync: true,
+      );
+      await conditionalRepo.upsert(
+        _event('ok-push', value: 'y'),
+        needSync: true,
+      );
 
       final failed = await conditionalStorage.getById('tests', 'fail-push');
       final ok = await conditionalStorage.getById('tests', 'ok-push');
