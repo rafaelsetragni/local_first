@@ -8,10 +8,12 @@ part of '../../local_first.dart';
 /// - Maintaining sync state across nodes
 /// - Providing access to the local database delegate
 class LocalFirstClient {
-  late final List<LocalFirstRepository> _repositories;
+  final List<LocalFirstRepository> _repositories;
   final LocalFirstStorage _localStorage;
+  final List<DataSyncStrategy> _globalSyncStrategies;
+  final List<DataSyncStrategy> _allStrategies = [];
+  bool _initialized = false;
 
-  final List<DataSyncStrategy> syncStrategies;
   final Completer _onInitialize = Completer();
   final StreamController<bool> _connectionController =
       StreamController<bool>.broadcast();
@@ -44,27 +46,52 @@ class LocalFirstClient {
   ///
   /// Throws [ArgumentError] if there are duplicate node names.
   LocalFirstClient({
-    required List<LocalFirstRepository> repositories,
     required LocalFirstStorage localStorage,
-    required this.syncStrategies,
-  }) : assert(
-         syncStrategies.isNotEmpty,
-         'You need to provide at least one sync strategy.',
+    List<LocalFirstRepository>? repositories,
+    List<DataSyncStrategy>? globalSyncStrategies,
+  }) : _localStorage = localStorage,
+       _repositories = List<LocalFirstRepository>.from(
+         repositories ?? const [],
        ),
-       _localStorage = localStorage {
-    final names = repositories.map((n) => n.name).toSet();
-    if (names.length != repositories.length) {
-      throw ArgumentError('Duplicate node names');
-    }
-    for (var repository in repositories) {
-      repository._client = this;
-      repository._syncStrategies = syncStrategies;
-    }
-    for (final strategy in syncStrategies) {
-      strategy.attach(this);
-    }
+       _globalSyncStrategies = List<DataSyncStrategy>.from(
+         globalSyncStrategies ?? const [],
+       ) {
+    assert(
+      _repositories.map((r) => r.name).toSet().length == _repositories.length,
+      'Duplicate repository names detected.',
+    );
+    assert(
+      _repositories.map((r) => r.modelType).toSet().length ==
+          _repositories.length,
+      'Duplicate repository model types detected.',
+    );
+  }
 
-    _repositories = List.unmodifiable(repositories);
+  /// Strategies attached to this client (legacy + per-repository).
+  List<DataSyncStrategy> get syncStrategies => _allStrategies;
+
+  /// Registers a repository after client construction.
+  void registerRepository(LocalFirstRepository repository) {
+    assert(!_initialized, 'Cannot add repositories after initialization.');
+    final exists = _repositories.any((r) => r.name == repository.name);
+    assert(
+      !exists,
+      'Repository with name "${repository.name}" already exists.',
+    );
+    final sameType = _repositories.any(
+      (r) => r.modelType == repository.modelType,
+    );
+    assert(
+      !sameType,
+      'Repository with model type "${repository.modelType}" already exists.',
+    );
+    _repositories.add(repository);
+  }
+
+  /// Registers a global strategy after client construction.
+  void registerGlobalStrategy(DataSyncStrategy strategy) {
+    assert(!_initialized, 'Cannot add strategies after initialization.');
+    _globalSyncStrategies.add(strategy);
   }
 
   /// Gets a repository by its name.
@@ -79,12 +106,58 @@ class LocalFirstClient {
   /// This must be called before using any LocalFirstClient functionality.
   /// It initializes the local database and all registered repositories.
   Future<void> initialize() async {
-    await _localStorage.initialize();
+    if (_initialized) return;
 
-    for (var repository in _repositories) {
-      await repository.initialize();
-    }
+    await _localStorage.initialize();
+    await Future.wait([_initializeRepositories(), _initializeStrategies()]);
+
     _onInitialize.complete();
+    _initialized = true;
+  }
+
+  Future<void> _initializeRepositories() async {
+    for (var repository in _repositories) {
+      await repository.initialize(this);
+      for (final strategy in repository._syncStrategies) {
+        final compatible =
+            strategy.modelType == dynamic ||
+            strategy.modelType == repository.modelType;
+        if (!compatible) continue;
+        strategy._attach(this);
+        strategy._bindRepository(repository);
+      }
+    }
+  }
+
+  Future<void> _initializeStrategies() async {
+    final set = <DataSyncStrategy>{};
+
+    // Attach global strategies (no repository binding) and collect.
+    for (final strategy in _globalSyncStrategies) {
+      strategy._attach(this);
+      set.add(strategy);
+    }
+
+    // Collect per-repository strategies without duplication.
+    for (final repo in _repositories) {
+      set.addAll(repo._syncStrategies);
+    }
+
+    assert(
+      set.every(
+        (strategy) => _repositories.any(
+          (repo) =>
+              strategy.modelType == dynamic ||
+              repo.modelType == strategy.modelType,
+        ),
+      ),
+      'Orphan strategy has no compatible repository. Strategies must'
+      ' have type dynamic or its respective repository registered.',
+    );
+
+    _allStrategies
+      ..clear()
+      ..addAll(set);
   }
 
   /// Clears all data from the local database.
@@ -96,51 +169,43 @@ class LocalFirstClient {
 
     for (var repository in _repositories) {
       repository.reset();
-      await repository.initialize();
     }
   }
 
   /// Opens a database/namespace in the configured local storage.
-  Future<void> openDatabase(String namespace) {
-    return _localStorage.openDatabase(namespace);
-  }
+  Future<void> openDatabase(String namespace) =>
+      _localStorage.openDatabase(namespace);
 
   /// Closes the currently opened database/namespace.
-  Future<void> closeDatabase() {
-    return _localStorage.closeDatabase();
-  }
+  Future<void> closeDatabase() => _localStorage.closeDatabase();
+
+  /// Starts all attached sync strategies.
+  Future<void> startSyncStrategies() =>
+      Future.wait(_assertInitialized().map((s) => s.start()));
+
+  /// Stops all attached sync strategies.
+  Future<void> stopSyncStrategies() =>
+      Future.wait(_assertInitialized().map((s) => s.stop()));
 
   /// Disposes the LocalFirstClient instance and closes the local database.
   ///
   /// Call this when you're done using the LocalFirstClient instance.
-  Future<void> dispose() async {
-    await _connectionController.close();
-    await _localStorage.close();
-  }
-
-  Future<void> _pullRemoteChanges(Map<String, dynamic> map) async {
-    final LocalFirstResponse response = await _buildOfflineResponse(map);
-
-    for (final MapEntry<LocalFirstRepository, LocalFirstEvents> entry
-        in response.changes.entries) {
-      final LocalFirstRepository repository = entry.key;
-      final LocalFirstEvents remoteEvents = entry.value;
-      await repository._mergeRemoteEvents(remoteEvents);
-    }
-
-    for (final repository in _repositories) {
-      await setKeyValue(
-        '__last_sync__${repository.name}',
-        response.timestamp.toIso8601String(),
-      );
-    }
-  }
+  Future<void> dispose() => Future.wait([
+    _connectionController.close(),
+    closeDatabase(),
+    stopSyncStrategies(),
+  ]);
 
   Future<LocalFirstEvents> getAllPendingEvents() async {
     final results = await Future.wait([
       for (var repository in _repositories) repository.getPendingEvents(),
     ]);
     return results.expand((e) => e).toList();
+  }
+
+  List<DataSyncStrategy> _assertInitialized() {
+    assert(_initialized, 'LocalFirstClient not initialized.');
+    return _allStrategies;
   }
 
   Future<String?> getKeyValue(String key) async {
@@ -153,64 +218,5 @@ class LocalFirstClient {
 
   Future<void> deleteKeyValue(String key) async {
     await localStorage.deleteKey(key);
-  }
-
-  Future<LocalFirstResponse> _buildOfflineResponse(
-    Map<String, dynamic> json,
-  ) async {
-    if (json['timestamp'] == null || json['changes'] == null) {
-      throw FormatException('Invalid offline response format');
-    }
-
-    final timestamp = DateTime.parse(json['timestamp'] as String).toUtc();
-    final changesJson = json['changes'] as Map;
-    final repositoryEvents = <LocalFirstRepository, List<LocalFirstEvent>>{};
-
-    for (var repositoryName in changesJson.keys) {
-      final repository = getRepositoryByName(repositoryName as String);
-      final events = <LocalFirstEvent>[];
-
-      final repositoryChangeJson =
-          changesJson[repositoryName] as Map<String, dynamic>;
-
-      if (repositoryChangeJson.containsKey('insert')) {
-        final inserts = (repositoryChangeJson['insert'] as List);
-        for (var element in inserts) {
-          final object = repository._buildRemoteObject(
-            Map<String, dynamic>.from(element),
-            operation: SyncOperation.insert,
-          );
-          events.add(object);
-        }
-      } else if (repositoryChangeJson.containsKey('update')) {
-        final updates = (repositoryChangeJson['update'] as List);
-        for (var element in updates) {
-          final object = repository._buildRemoteObject(
-            Map<String, dynamic>.from(element),
-            operation: SyncOperation.update,
-          );
-          events.add(object);
-        }
-      } else if (repositoryChangeJson.containsKey('delete')) {
-        final deletes = (repositoryChangeJson['delete'] as List);
-        for (var element in deletes) {
-          if (element is! Map) continue;
-          final id = element['id']?.toString();
-          if (id == null) continue;
-          final object = await repository._getById(id);
-          if (object == null) continue;
-          events.add(
-            object.copyWith(
-              eventId: element['event_id']?.toString() ?? object.eventId,
-              syncStatus: SyncStatus.ok,
-              syncOperation: SyncOperation.delete,
-            ),
-          );
-        }
-      }
-
-      repositoryEvents[repository] = events;
-    }
-    return LocalFirstResponse(changes: repositoryEvents, timestamp: timestamp);
   }
 }

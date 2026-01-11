@@ -1,7 +1,7 @@
 part of '../../local_first.dart';
 
 /// Base strategy for periodic sync flows with connection reporting and timeout handling.
-abstract class PeriodicSyncStrategy extends DataSyncStrategy {
+abstract class PeriodicSyncStrategy<T> extends DataSyncStrategy<T> {
   PeriodicSyncStrategy({required this.period});
 
   final Duration period;
@@ -12,23 +12,29 @@ abstract class PeriodicSyncStrategy extends DataSyncStrategy {
   bool? _lastConnected;
 
   /// Starts the periodic cycle after the client is initialized.
-  void start() {
-    stop();
-    client.awaitInitialization.then((_) async {
-      if (_disposed) return;
-      await onStart();
-      if (_disposed) return;
-      _timer = Timer.periodic(period, _handleTick);
-      // Perform an immediate tick once started.
-      await _handleTick(null);
-    });
+  @override
+  Future<void> start() async {
+    if (_disposed) return;
+    await stop();
+
+    await _client.awaitInitialization;
+    await onStart();
+
+    if (_disposed) return;
+    _timer = Timer.periodic(period, _handleTick);
+    // Perform an immediate tick once started.
+    await _handleTick(null);
   }
 
   /// Stops the periodic cycle.
-  void stop() {
+  @override
+  Future<void> stop() async {
     _timer?.cancel();
     _timer = null;
   }
+
+  /// Executes a single tick immediately (useful for manual sync).
+  Future<void> runOnce() => _handleTick(null);
 
   /// Disposes timers and prevents future ticks.
   void dispose() {

@@ -8,18 +8,41 @@ part of '../../local_first.dart';
 /// - [ConnectivitySyncStrategy]: Synchronizes when network connectivity is restored.
 /// - [WorkManagerSyncStrategy]: Uses a background service for robust synchronization.
 /// - [WebSocketSyncStrategy]: Listens to a WebSocket for real-time updates.
-abstract class DataSyncStrategy {
-  late LocalFirstClient _client;
+abstract class DataSyncStrategy<T> {
+  DataSyncStrategy() : modelType = T;
 
-  void attach(LocalFirstClient client) {
+  /// Model type this strategy handles.
+  final Type modelType;
+  late LocalFirstClient _client;
+  final List<LocalFirstRepository<T>> _repositories = [];
+
+  void _attach(LocalFirstClient client) {
     _client = client;
   }
 
-  @visibleForTesting
-  @protected
-  LocalFirstClient get client => _client;
+  /// Starts any background work needed by the strategy.
+  Future<void> start() async {}
 
-  Future<SyncStatus> onPushToRemote(LocalFirstEvent localData);
+  /// Stops any background work started by [start].
+  Future<void> stop() async {}
+
+  /// Internal hook to bind the strategy to a repository (used by the client).
+  void _bindRepository(LocalFirstRepository<T> repository) {
+    if (!_repositories.contains(repository)) {
+      _repositories.add(repository);
+    }
+  }
+
+  /// Returns all repositories compatible with this strategy.
+  @protected
+  List<LocalFirstRepository<T>> get repositories {
+    if (_repositories.isEmpty) {
+      throw StateError('No repositories found for model type $modelType.');
+    }
+    return _repositories;
+  }
+
+  Future<SyncStatus> onPushToRemote(LocalFirstEvent<T> localData);
 
   /// Notifies listeners about connection state changes (e.g. connectivity loss).
   @protected
@@ -33,11 +56,10 @@ abstract class DataSyncStrategy {
   /// Latest known connection state.
   bool? get latestConnectionState => _client.latestConnectionState;
 
-  Future<List<LocalFirstEvent>> getPendingEvents() {
-    return _client.getAllPendingEvents();
-  }
-
-  Future<void> pullChangesToLocal(Map<String, dynamic> remoteChanges) {
-    return _client._pullRemoteChanges(remoteChanges);
+  Future<List<LocalFirstEvent<T>>> getPendingEvents() {
+    final repos = repositories;
+    return Future.wait(
+      repos.map((r) => r.getPendingEvents()),
+    ).then((lists) => lists.expand((e) => e).toList());
   }
 }

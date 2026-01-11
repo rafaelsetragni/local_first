@@ -22,6 +22,8 @@ enum LocalFieldType { text, integer, real, boolean, datetime, blob }
 /// }
 /// ```
 abstract class LocalFirstRepository<T> {
+  /// Captured model type for runtime checks.
+  final Type modelType = T;
   /// The unique name identifier for this repository.
   final String name;
 
@@ -39,7 +41,7 @@ abstract class LocalFirstRepository<T> {
 
   late LocalFirstClient _client;
 
-  late List<DataSyncStrategy> _syncStrategies;
+  late List<DataSyncStrategy<T>> _syncStrategies;
 
   /// Creates a new LocalFirstRepository.
   ///
@@ -59,11 +61,14 @@ abstract class LocalFirstRepository<T> {
     required T Function(T local, T remote) onConflict,
     this.idFieldName = 'id',
     Map<String, LocalFieldType> schema = const {},
+    List<DataSyncStrategy<T>> strategies = const [],
   }) : _getId = getId,
        _toJson = toJson,
        _fromJson = fromJson,
        _resolveConflict = onConflict,
-       schema = Map.unmodifiable(schema);
+       schema = Map.unmodifiable(schema) {
+    _syncStrategies = List<DataSyncStrategy<T>>.from(strategies);
+  }
 
   /// Creates a configured instance of LocalFirstRepository.
   ///
@@ -87,6 +92,7 @@ abstract class LocalFirstRepository<T> {
     required T Function(T local, T remote) onConflict,
     String idFieldName,
     Map<String, LocalFieldType> schema,
+    List<DataSyncStrategy<T>> strategies,
   }) = _LocalFirstRepository;
 
   String getId(T item) => _getId(item);
@@ -99,8 +105,9 @@ abstract class LocalFirstRepository<T> {
   /// Initializes the repository.
   ///
   /// This is called automatically by [LocalFirstClient.initialize].
-  Future<void> initialize() async {
+  Future<void> initialize(LocalFirstClient client) async {
     if (_isInitialized) return;
+    _client = client;
     await _client.localStorage.ensureSchema(
       name,
       schema,
@@ -154,8 +161,9 @@ abstract class LocalFirstRepository<T> {
     final json = await _client.localStorage.getById(name, getId(event.state));
     if (json != null) {
       final existing = _eventFromJson(json);
-      await _update(_prepareForUpdate(_copyEvent(existing, adjusted),
-          needSync: needSync));
+      await _update(
+        _prepareForUpdate(_copyEvent(existing, adjusted), needSync: needSync),
+      );
     } else {
       await _insert(_prepareForInsert(adjusted, needSync: needSync));
     }
@@ -501,5 +509,6 @@ final class _LocalFirstRepository<T> extends LocalFirstRepository<T> {
     required super.onConflict,
     super.idFieldName = 'id',
     super.schema = const {},
+    super.strategies = const [],
   });
 }
