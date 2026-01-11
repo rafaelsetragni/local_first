@@ -241,10 +241,7 @@ class _MyHomePageState extends State<MyHomePage> {
     Animation<double> animation, {
     required bool appearing,
   }) {
-    final curved = CurvedAnimation(
-      parent: animation,
-      curve: Curves.easeOut,
-    );
+    final curved = CurvedAnimation(parent: animation, curve: Curves.easeOut);
     final avatar = _avatarMap[log.username] ?? '';
     return FadeTransition(
       opacity: appearing ? curved : animation,
@@ -403,9 +400,7 @@ class _MyHomePageState extends State<MyHomePage> {
                     Text(
                       'Hello, ${user.username}!',
                       textAlign: TextAlign.center,
-                      style: Theme.of(context)
-                          .textTheme
-                          .headlineMedium
+                      style: Theme.of(context).textTheme.headlineMedium
                           ?.copyWith(fontWeight: FontWeight.bold),
                     ),
                   ],
@@ -752,48 +747,38 @@ class RepositoryService {
   Future<void> signIn({required String username}) async {
     // On sign in, swap namespace, prefetch users from remote, and persist the new user.
     syncStrategy.stop();
-    await _switchUserDatabase('');
-    await _syncRemoteUsersToLocal();
+
+    final user = authenticatedUser = UserModel(username: username);
+    final userId = user.id;
+
+    await openDatabase(userId);
+    await _persistLastUserId(userId);
+    await syncStrategy.pullSnapshot();
+
     final existing = await userRepository
         .query()
-        .where('username', isEqualTo: username)
+        .where('id', isEqualTo: userId)
         .getAll();
-    final preservedAvatar = existing.isNotEmpty
-        ? existing.first.state.avatarUrl
-        : null;
-    final user = authenticatedUser = UserModel(
-      username: username,
-      avatarUrl: preservedAvatar,
-    );
-    await userRepository.upsert(user, needSync: existing.isEmpty);
-    await _persistLastUsername(username);
+
+    authenticatedUser = existing.firstOrNull?.state ?? user;
+    if (existing.isEmpty) {
+      await userRepository.upsert(user, needSync: true);
+    }
+
     syncStrategy.start();
     NavigatorService().navigateToHome();
-  }
-
-  Future<void> _syncRemoteUsersToLocal() async {
-    final remote = await syncStrategy.fetchUsers();
-    for (final data in remote) {
-      try {
-        final user = userRepository.fromJson(data);
-        await userRepository.upsert(user, needSync: false);
-      } catch (_) {
-        // ignore malformed user entries
-      }
-    }
   }
 
   Future<void> signOut() async {
     // Stops sync and resets session-specific state.
     syncStrategy.stop();
-    authenticatedUser = null;
-    await _switchUserDatabase('');
-    await localFirst?.setKeyValue(_lastUsernameKey, '');
+    await _clearLastUserId();
+    await closeDatabase();
     NavigatorService().navigateToSignIn();
   }
 
   Future<UserModel?> restoreUser(String username) async {
-    await _switchUserDatabase('');
+    await openDatabase(username);
     final results = await userRepository
         .query()
         .where('username', isEqualTo: username)
@@ -806,13 +791,34 @@ class RepositoryService {
   }
 
   Future<UserModel?> restoreLastUser() async {
-    final username = await localFirst?.getMeta(_lastUsernameKey);
+    final username = await localFirst?.getKeyValue(_lastUsernameKey);
     if (username == null || username.isEmpty) return null;
     return restoreUser(username);
   }
 
-  Future<void> _persistLastUsername(String username) =>
-      localFirst?.setKeyValue(_lastUsernameKey, username) ?? Future.value();
+  Future<void> _persistLastUserId(String userId) =>
+      localFirst?.setKeyValue(_lastUsernameKey, userId) ?? Future.value();
+
+  Future<void> _clearLastUserId() =>
+      localFirst?.deleteKeyValue(_lastUsernameKey) ?? Future.value();
+
+  Future<void> openDatabase(String username) async {
+    final localFirst = this.localFirst;
+    if (localFirst == null) throw Exception('Service not initialized');
+
+    final namespace = _sanitizeNamespace(username);
+    if (_currentNamespace == namespace) return;
+    _currentNamespace = namespace;
+
+    await localFirst.openDatabase(namespace);
+  }
+
+  Future<void> closeDatabase() async {
+    final localFirst = this.localFirst;
+    if (localFirst == null) throw Exception('Service not initialized');
+    await localFirst.closeDatabase();
+    _currentNamespace = 'default';
+  }
 
   Future<List<UserModel>> getUsers() async =>
       _usersFromEvents(await userRepository.query().getAll());
@@ -888,20 +894,6 @@ class RepositoryService {
     await counterLogRepository.upsert(log, needSync: true);
   }
 
-  Future<void> _switchUserDatabase(String username) async {
-    final db = localFirst;
-    if (db == null) return;
-
-    final namespace = _sanitizeNamespace(username);
-    if (_currentNamespace == namespace) return;
-    _currentNamespace = namespace;
-
-    final storage = db.localStorage;
-    if (storage is HiveLocalFirstStorage) {
-      await storage.useNamespace(namespace);
-    }
-  }
-
   String _sanitizeNamespace(String username) {
     if (username.isEmpty) return 'default';
     final sanitized = username.toLowerCase().replaceAll(
@@ -931,7 +923,7 @@ class UserModel {
   factory UserModel({
     String? id,
     required String username,
-    required String? avatarUrl,
+    String? avatarUrl,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -1090,7 +1082,6 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   bool _isSyncing = false;
 
   Timer? _timer;
-  final JsonMap<DateTime?> lastSyncedAt = {};
   final JsonMap<List<LocalFirstEvent>> pendingChanges = {};
 
   void setConnectionListener(void Function(bool) listener) {
@@ -1108,12 +1099,6 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
       for (final event in pendingEvents) {
         _addPending(event);
       }
-      for (final repository in mongoApi.repositoryNames) {
-        final value = await client.getMeta('__last_sync__$repository');
-        lastSyncedAt[repository] = value != null
-            ? DateTime.tryParse(value)
-            : null;
-      }
       _timer = Timer.periodic(period, _onTimerTick);
     });
   }
@@ -1122,11 +1107,52 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     _timer?.cancel();
     _timer = null;
     pendingChanges.clear();
-    lastSyncedAt.clear();
   }
 
   void dispose() {
     stop();
+  }
+
+  /// Pulls remote counter logs from MongoDB and delegates resolution.
+  Future<void> pullCounterLogs() async {
+    await client.awaitInitialization;
+
+    final repo =
+        client.getRepositoryByName('counter_log')
+            as LocalFirstRepository<CounterLogModel>;
+    final remote = await mongoApi.fetchCounterLogs();
+
+    for (final item in remote) {
+      try {
+        final model = repo.fromJson(Map<String, dynamic>.from(item));
+        await repo.upsert(model, needSync: false);
+      } catch (_) {
+        // Ignore malformed entries
+      }
+    }
+  }
+
+  /// Pulls remote users snapshot from MongoDB and delegates resolution.
+  Future<void> pullUsers() async {
+    await client.awaitInitialization;
+    final repo =
+        client.getRepositoryByName('user') as LocalFirstRepository<UserModel>;
+    final remote = await fetchUsers();
+
+    for (final item in remote) {
+      try {
+        final user = repo.fromJson(Map<String, dynamic>.from(item));
+        await repo.upsert(user, needSync: false);
+      } catch (_) {
+        // Ignore malformed user entries
+      }
+    }
+  }
+
+  /// Convenience method to pull both users and counter logs snapshots.
+  Future<void> pullSnapshot() async {
+    await pullUsers();
+    await pullCounterLogs();
   }
 
   void _addPending(LocalFirstEvent event) {
@@ -1149,22 +1175,8 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
 
         await _pushToRemote(changes).timeout(period * 2);
       }
-      final remoteChanges = await mongoApi.pull(lastSyncedAt).timeout(period * 2);
-      if (remoteChanges['changes']?.isNotEmpty) {
-        await pullChangesToLocal(remoteChanges);
-
-        // Use the latest updated_at seen in this pull as the new lastSyncedAt
-        final latest = mongoApi.latestUpdatedAt(remoteChanges);
-        if (latest != null) {
-          for (final repo in mongoApi.repositoryNames) {
-            lastSyncedAt[repo] = latest;
-            await client.setKeyValue(
-              '__last_sync__$repo',
-              latest.toIso8601String(),
-            );
-          }
-        }
-      }
+      await pullUsers();
+      await pullCounterLogs();
       _emitConnection(true);
     } on TimeoutException catch (e, s) {
       dev.log('Sync timeout: $e', name: logTag, error: e, stackTrace: s);
@@ -1400,7 +1412,9 @@ class MongoApi {
   Future<List<JsonMap<dynamic>>> fetchUsers() async {
     dev.log('Fetching users snapshot', name: logTag);
     final collection = await _collection('user');
-    final cursor = collection.find(where.ne('operation', 'delete'));
+    final cursor = collection.find(
+      where.ne('operation', 'delete').sortBy('updated_at'),
+    );
 
     final users = <String, JsonMap<dynamic>>{};
 
@@ -1416,41 +1430,31 @@ class MongoApi {
     return users.values.toList();
   }
 
+  Future<List<JsonMap<dynamic>>> fetchCounterLogs() async {
+    dev.log('Fetching counter logs snapshot', name: logTag);
+    final collection = await _collection('counter_log');
+    final cursor = collection.find(
+      where.ne('operation', 'delete').sortBy('updated_at'),
+    );
+
+    final logs = <String, JsonMap<dynamic>>{};
+
+    await cursor.forEach((doc) {
+      final id = doc['id'];
+      if (id is! String) return;
+      final data = Map<String, dynamic>.from(doc)
+        ..remove('_id')
+        ..remove('operation');
+      logs[id] = _fromMongoDateFields(data);
+    });
+
+    return logs.values.toList();
+  }
+
   Future<void> ping() async {
     final collection = await _collection(repositoryNames.first);
     // Lightweight query to check connectivity.
     await collection.count();
-  }
-
-  DateTime? latestUpdatedAt(JsonMap<dynamic> pullResult) {
-    final changes = pullResult['changes'];
-    if (changes is! JsonMap) return null;
-    DateTime? latest;
-
-    for (final repositoryEntry in changes.entries) {
-      final repositoryChanges = repositoryEntry.value;
-      if (repositoryChanges is! JsonMap) continue;
-
-      for (final key in ['insert', 'update']) {
-        final list = repositoryChanges[key];
-        if (list is! List) continue;
-        for (final item in list) {
-          if (item is! Map<String, dynamic>) continue;
-          final updatedValue = item['updated_at'];
-          DateTime? candidate;
-          if (updatedValue is DateTime) {
-            candidate = updatedValue;
-          } else if (updatedValue is String) {
-            candidate = DateTime.tryParse(updatedValue);
-          }
-          if (candidate != null &&
-              (latest == null || candidate.isAfter(latest))) {
-            latest = candidate;
-          }
-        }
-      }
-    }
-    return latest;
   }
 
   JsonMap<dynamic> _toMongoDateFields(JsonMap<dynamic> item) {
