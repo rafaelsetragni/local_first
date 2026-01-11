@@ -24,6 +24,7 @@ enum LocalFieldType { text, integer, real, boolean, datetime, blob }
 abstract class LocalFirstRepository<T> {
   /// Captured model type for runtime checks.
   final Type modelType = T;
+
   /// The unique name identifier for this repository.
   final String name;
 
@@ -300,95 +301,10 @@ abstract class LocalFirstRepository<T> {
     );
   }
 
-  /// Merges remote state events into the local state table and log.
-  Future<void> _mergeRemoteEvents(List<dynamic> remoteEvents) async {
-    final typedRemote = remoteEvents.cast<LocalFirstEvent<T>>();
-    final LocalFirstEvents<T> allLocal = await _getAll(includeDeleted: true);
-    final Map<String, LocalFirstEvent<T>> localMap = {
-      for (var obj in allLocal) getId(obj.state): obj,
-    };
-
-    for (final LocalFirstEvent<T> remoteEvent in typedRemote) {
-      final remoteId = getId(remoteEvent.state);
-      final remoteOk = remoteEvent.copyWith(syncStatus: SyncStatus.ok);
-      final localEvent = localMap[remoteId];
-
-      if (remoteEvent.isDeleted) {
-        if (localEvent != null && !localEvent.needSync) {
-          await _client.localStorage.delete(name, remoteId);
-          await _client.localStorage.insertEvent(
-            name,
-            _toStorageJson(
-              remoteOk.copyWith(syncOperation: SyncOperation.delete),
-            ),
-            '_event_id',
-          );
-          await _markOlderEventsAsSynced(
-            remoteId,
-            excludeEventId: remoteOk.eventId,
-          );
-        }
-        continue;
-      }
-
-      if (localEvent == null) {
-        await _client.localStorage.insert(
-          name,
-          _toStorageJson(remoteOk),
-          idFieldName,
-        );
-        await _persistEvent(remoteOk);
-        await _markOlderEventsAsSynced(
-          remoteId,
-          excludeEventId: remoteOk.eventId,
-        );
-        continue;
-      }
-
-      if (remoteEvent.eventId == localEvent.eventId) {
-        await _persistEvent(remoteOk);
-        continue;
-      }
-
-      final resolvedPayload = resolveConflict(
-        localEvent.state,
-        remoteEvent.state,
-      );
-      final resolved = LocalFirstEvent<T>(
-        state: resolvedPayload,
-        eventId: remoteEvent.eventId,
-        syncStatus: SyncStatus.ok,
-        syncOperation: SyncOperation.update,
-        repositoryName: name,
-        syncCreatedAt: localEvent.syncCreatedAt,
-      );
-      await _client.localStorage.update(
-        name,
-        remoteId,
-        _toStorageJson(resolved),
-      );
-      await _persistEvent(resolved);
-      await _markOlderEventsAsSynced(
-        remoteId,
-        excludeEventId: resolved.eventId,
-      );
-    }
-  }
-
   /// Returns all state events that still require sync.
   Future<List<LocalFirstEvent<T>>> getPendingEvents() async {
     final allEvents = await _getAllEvents();
     return allEvents.where((event) => event.needSync).toList();
-  }
-
-  Future<List<LocalFirstEvent<T>>> _getAll({
-    bool includeDeleted = false,
-  }) async {
-    final maps = await _client.localStorage.getAll(name);
-    return maps //
-        .map(_eventFromJson)
-        .where((obj) => includeDeleted || !obj.isDeleted)
-        .toList();
   }
 
   Future<List<LocalFirstEvent<T>>> _getAllEvents() async {
@@ -473,30 +389,6 @@ abstract class LocalFirstRepository<T> {
           ? target.repositoryName
           : source.repositoryName,
     );
-  }
-
-  LocalFirstEvent<T> _buildRemoteObject(
-    Map<String, dynamic> json, {
-    required SyncOperation operation,
-  }) {
-    final model = _fromJson(json);
-    final eventId = json['event_id']?.toString();
-    return LocalFirstEvent<T>(
-      state: model,
-      eventId: eventId,
-      syncStatus: SyncStatus.ok,
-      syncOperation: operation,
-      repositoryName: name,
-      syncCreatedAt: DateTime.now().toUtc(),
-    );
-  }
-
-  Future<LocalFirstEvent<T>?> _getById(String id) async {
-    final json = await _client.localStorage.getById(name, id);
-    if (json == null) {
-      return null;
-    }
-    return _eventFromJson(json);
   }
 }
 
