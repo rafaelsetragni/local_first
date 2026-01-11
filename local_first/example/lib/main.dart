@@ -1070,56 +1070,26 @@ LocalFirstRepository<CounterLogModel> _buildCounterLogRepository() {
 
 /// Periodic sync strategy: batches pending events to MongoDB and pulls remote events.
 /// Demonstrates the classic local-first loop (push pending, pull remote, merge).
-class MongoPeriodicSyncStrategy extends DataSyncStrategy {
+class MongoPeriodicSyncStrategy extends PeriodicSyncStrategy {
   static const logTag = 'MongoPeriodicSyncStrategy';
-  final Duration period = const Duration(milliseconds: 500);
-  final MongoApi mongoApi = MongoApi(
-    uri: mongoConnectionString,
-    repositoryNames: const ['counter_log', 'user'],
-  );
-  void Function(bool) _onConnectionChange = _noopConnection;
-  bool? _lastConnected;
-  bool _isSyncing = false;
-
-  Timer? _timer;
+  final MongoApi mongoApi;
   final JsonMap<List<LocalFirstEvent>> pendingChanges = {};
+  void Function(bool) _onConnectionChange = _noopConnection;
 
   void setConnectionListener(void Function(bool) listener) {
     _onConnectionChange = listener;
   }
 
-  void start() {
-    stop();
-    client.awaitInitialization.then((_) async {
-      final initialConnected = await _quickPing();
-      reportConnectionState(initialConnected);
-      _lastConnected = initialConnected;
-      dev.log('Starting periodic sync', name: logTag);
-      final pendingEvents = await getPendingEvents();
-      for (final event in pendingEvents) {
-        _addPending(event);
-      }
-      _timer = Timer.periodic(period, _onTimerTick);
-    });
-  }
-
-  void stop() {
-    _timer?.cancel();
-    _timer = null;
-    pendingChanges.clear();
-  }
-
-  void dispose() {
-    stop();
-  }
+  MongoPeriodicSyncStrategy({
+    MongoApi? api,
+    super.period = const Duration(milliseconds: 500),
+  }) : mongoApi = api ?? MongoApi(uri: mongoConnectionString);
 
   /// Pulls remote counter logs from MongoDB and delegates resolution.
   Future<void> pullCounterLogs() async {
     await client.awaitInitialization;
 
-    final repo =
-        client.getRepositoryByName('counter_log')
-            as LocalFirstRepository<CounterLogModel>;
+    final repo = client.getRepositoryByName('counter_log');
     final remote = await mongoApi.fetchCounterLogs();
 
     for (final item in remote) {
@@ -1135,8 +1105,8 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   /// Pulls remote users snapshot from MongoDB and delegates resolution.
   Future<void> pullUsers() async {
     await client.awaitInitialization;
-    final repo =
-        client.getRepositoryByName('user') as LocalFirstRepository<UserModel>;
+
+    final repo = client.getRepositoryByName('user');
     final remote = await fetchUsers();
 
     for (final item in remote) {
@@ -1150,13 +1120,16 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   }
 
   /// Convenience method to pull both users and counter logs snapshots.
-  Future<void> pullSnapshot() async {
-    await pullUsers();
-    await pullCounterLogs();
-  }
+  Future<void> pullSnapshot() => Future.wait([pullUsers(), pullCounterLogs()]);
 
   void _addPending(LocalFirstEvent event) {
     pendingChanges.putIfAbsent(event.repositoryName, () => []).add(event);
+  }
+
+  @override
+  void stop() {
+    pendingChanges.clear();
+    super.stop();
   }
 
   @override
@@ -1165,78 +1138,44 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     return SyncStatus.pending;
   }
 
-  Future<void> _onTimerTick(_) async {
-    if (_isSyncing) return;
-    _isSyncing = true;
-    try {
-      if (pendingChanges.isNotEmpty) {
-        final changes = JsonMap<List<LocalFirstEvent>>.from(pendingChanges);
-        pendingChanges.clear();
-
-        await _pushToRemote(changes).timeout(period * 2);
-      }
-      await pullUsers();
-      await pullCounterLogs();
-      _emitConnection(true);
-    } on TimeoutException catch (e, s) {
-      dev.log('Sync timeout: $e', name: logTag, error: e, stackTrace: s);
-      _emitConnection(false);
-    } catch (e, s) {
-      dev.log('Sync error: $e', name: logTag, error: e, stackTrace: s);
-      _emitConnection(false);
-    } finally {
-      _isSyncing = false;
-    }
-  }
-
-  Future<bool> _quickPing() async {
-    try {
-      await mongoApi.ping().timeout(period * 2);
-      return true;
-    } on TimeoutException catch (e, s) {
-      dev.log('Ping timeout: $e', name: logTag, error: e, stackTrace: s);
-      return false;
-    } catch (e, s) {
-      dev.log('Ping failed: $e', name: logTag, error: e, stackTrace: s);
-      return false;
+  @override
+  Future<void> onStart() async {
+    final pendingEvents = await getPendingEvents();
+    for (final event in pendingEvents) {
+      _addPending(event);
     }
   }
 
   Future<void> _pushToRemote(JsonMap<List<LocalFirstEvent>> changes) async {
-    if (changes.isEmpty) return;
-    dev.log(
-      'Pushing changes for ${changes.length} repository(ies)',
-      name: logTag,
-    );
-    await mongoApi.push(_buildUploadPayload(changes));
-  }
-
-  JsonMap<dynamic> _buildUploadPayload(JsonMap<List<LocalFirstEvent>> changes) {
-    return {
-      'lastSyncedAt': DateTime.now().toUtc().toIso8601String(),
-      'changes': {
-        for (final entry in changes.entries)
-          entry.key: entry.value.toJson(
-            (payload) => client.getRepositoryByName(entry.key).toJson(payload),
-          ),
-      },
-    };
+    // Push logic will be revisited; currently a no-op after clearing the queue.
   }
 
   Future<List<JsonMap<dynamic>>> fetchUsers() {
     return mongoApi.fetchUsers();
   }
 
-  void _emitConnection(bool connected) {
+  @override
+  Future<void> onTick() async {
+    // Placeholder push loop; will be revisited after Mongo API refactor.
+    pendingChanges.clear();
+    await pullUsers();
+    await pullCounterLogs();
+  }
+
+  @override
+  Future<void> onTickError(Object error, StackTrace stackTrace) async {
+    dev.log(
+      'Sync error: $error',
+      name: logTag,
+      error: error,
+      stackTrace: stackTrace,
+    );
+  }
+
+  @override
+  void onConnectionChange(bool connected) {
     try {
       _onConnectionChange(connected);
-      final wasDisconnected = _lastConnected == false;
-      _lastConnected = connected;
-      if (connected && wasDisconnected && _timer != null && !_isSyncing) {
-        // Trigger an immediate sync when coming back online.
-        _onTimerTick(null);
-      }
-      reportConnectionState(connected);
       dev.log(
         'Connection state: ${connected ? 'connected' : 'disconnected'}',
         name: logTag,
@@ -1252,26 +1191,31 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
 class MongoApi {
   static const logTag = 'MongoApi';
   final String uri;
-  final List<String> repositoryNames;
   final String collectionPrefix;
 
   Db? _db;
+  final Db? _providedDb;
+  final Future<Db> Function() _dbFactory;
 
   MongoApi({
     required this.uri,
-    required this.repositoryNames,
     this.collectionPrefix = 'offline_',
-  });
+    Db? client,
+    Future<Db> Function()? dbFactory,
+  }) : _providedDb = client,
+       _dbFactory = dbFactory ?? (() => Db.create(uri));
 
   Future<Db> _getDb() async {
     final current = _db;
     if (current != null && current.isConnected) return current;
 
-    final db = await Db.create(uri);
-    await db.open();
-    dev.log('Connected to MongoDB at $uri', name: logTag);
+    final db = _providedDb ?? await _dbFactory();
+    if (!db.isConnected) {
+      await db.open();
+      dev.log('Connected to MongoDB at $uri', name: logTag);
+    }
     _db = db;
-    return db;
+    return _db!;
   }
 
   Future<DbCollection> _collection(String repositoryName) async {
@@ -1279,7 +1223,7 @@ class MongoApi {
     final collection = db.collection('$collectionPrefix$repositoryName');
 
     try {
-      await collection.createIndex(keys: {'updated_at': 1});
+      await collection.createIndex(keys: {'_sync_created_at': 1});
     } catch (_) {
       // Ignora erros de índice existente
     }
@@ -1287,198 +1231,70 @@ class MongoApi {
     return collection;
   }
 
-  Future<void> push(JsonMap<dynamic> payload) async {
-    // Uploads batched events grouped by repository.
-    final operationsByNode = payload['changes'];
-    if (operationsByNode is! JsonMap<dynamic>) return;
-
-    final now = DateTime.now().toUtc();
-    final hasChanges = operationsByNode.values.any((op) {
-      if (op is! JsonMap) return false;
-      return (op['insert'] as List?)?.isNotEmpty == true ||
-          (op['update'] as List?)?.isNotEmpty == true ||
-          (op['delete'] as List?)?.isNotEmpty == true;
-    });
-    if (!hasChanges) return;
-
-    dev.log('Uploading changes to Mongo', name: logTag);
-    for (final entry in operationsByNode.entries) {
-      final repositoryName = entry.key;
-      final operations = entry.value;
-      if (operations is! JsonMap<dynamic>) continue;
-      final collection = await _collection(repositoryName);
-
-      final insertItems = operations['insert'];
-      if (insertItems is List) {
-        for (final item in insertItems) {
-          if (item is! JsonMap<dynamic>) continue;
-          final id = item['id']?.toString();
-          if (id == null) continue;
-          await collection.insertOne({
-            ..._toMongoDateFields(item),
-            'operation': 'insert',
-            'event_id': item['event_id'],
-            'updated_at': now,
-          });
-        }
-      }
-
-      final updateItems = operations['update'];
-      if (updateItems is List) {
-        for (final item in updateItems) {
-          if (item is! JsonMap<dynamic>) continue;
-          final id = item['id']?.toString();
-          if (id == null) continue;
-          await collection.insertOne({
-            ..._toMongoDateFields(item),
-            'operation': 'update',
-            'event_id': item['event_id'],
-            'updated_at': now,
-          });
-        }
-      }
-
-      final deleteItems = operations['delete'];
-      if (deleteItems is List) {
-        for (final item in deleteItems) {
-          if (item is! Map) continue;
-          final id = item['id']?.toString();
-          if (id == null) continue;
-          await collection.insertOne({
-            'id': id,
-            'operation': 'delete',
-            'event_id': item['event_id'],
-            'updated_at': now,
-          });
-        }
-      }
-    }
-  }
-
-  Future<JsonMap<dynamic>> pull(JsonMap<DateTime?> lastSyncByNode) async {
-    // Pulls new events since the last sync timestamp per repository.
-    final timestamp = DateTime.now().toUtc();
-
-    final changes = <String, JsonMap<List<dynamic>>>{};
-
-    for (final repositoryName in repositoryNames) {
-      final cutoff =
-          lastSyncByNode[repositoryName] ??
-          DateTime.fromMillisecondsSinceEpoch(0);
-      final collection = await _collection(repositoryName);
-      final cursor = collection.find(
-        where.gt('updated_at', cutoff).sortBy('updated_at'),
-      );
-
-      final inserts = <dynamic>[];
-      final updates = <dynamic>[];
-      final deletes = <dynamic>[];
-
-      await cursor.forEach((doc) {
-        final op = doc['operation'];
-        if (op == 'delete') {
-          if (doc['id'] != null) {
-            deletes.add({'id': doc['id'], 'event_id': doc['event_id']});
-          }
-          return;
-        }
-        final item = Map<String, dynamic>.from(doc)
-          ..remove('operation')
-          ..remove('_id');
-        if (op == 'insert') {
-          inserts.add(_fromMongoDateFields(item));
-        } else {
-          updates.add(_fromMongoDateFields(item));
-        }
-      });
-
-      final finalChanges = {
-        if (inserts.isNotEmpty) 'insert': inserts,
-        if (updates.isNotEmpty) 'update': updates,
-        if (deletes.isNotEmpty) 'delete': deletes,
-      };
-      if (finalChanges.isNotEmpty) {
-        dev.log(
-          'Pulling changes for $repositoryName since ${lastSyncByNode[repositoryName]}',
-          name: logTag,
-        );
-        changes[repositoryName] = finalChanges;
-      }
-    }
-
-    return {'timestamp': timestamp.toIso8601String(), 'changes': changes};
-  }
-
-  Future<List<JsonMap<dynamic>>> fetchUsers() async {
+  Future<List<JsonMap<dynamic>>> fetchUsers({DateTime? lastSyncedAt}) async {
     dev.log('Fetching users snapshot', name: logTag);
-    final collection = await _collection('user');
-    final cursor = collection.find(
-      where.ne('operation', 'delete').sortBy('updated_at'),
-    );
-
-    final users = <String, JsonMap<dynamic>>{};
-
-    await cursor.forEach((doc) {
-      final id = doc['id'];
-      if (id is! String) return;
-      final data = Map<String, dynamic>.from(doc)
-        ..remove('_id')
-        ..remove('operation');
-      users[id] = _fromMongoDateFields(data);
-    });
-
-    return users.values.toList();
+    return readUsers(lastSyncedAt: lastSyncedAt);
   }
 
-  Future<List<JsonMap<dynamic>>> fetchCounterLogs() async {
+  Future<List<JsonMap<dynamic>>> fetchCounterLogs({
+    DateTime? lastSyncedAt,
+  }) async {
     dev.log('Fetching counter logs snapshot', name: logTag);
-    final collection = await _collection('counter_log');
-    final cursor = collection.find(
-      where.ne('operation', 'delete').sortBy('updated_at'),
-    );
-
-    final logs = <String, JsonMap<dynamic>>{};
-
-    await cursor.forEach((doc) {
-      final id = doc['id'];
-      if (id is! String) return;
-      final data = Map<String, dynamic>.from(doc)
-        ..remove('_id')
-        ..remove('operation');
-      logs[id] = _fromMongoDateFields(data);
-    });
-
-    return logs.values.toList();
+    return readCounterLogs(lastSyncedAt: lastSyncedAt);
   }
 
+  /// Lightweight query to check connectivity.
   Future<void> ping() async {
-    final collection = await _collection(repositoryNames.first);
-    // Lightweight query to check connectivity.
+    final collection = await _collection('user');
     await collection.count();
   }
 
-  JsonMap<dynamic> _toMongoDateFields(JsonMap<dynamic> item) {
-    final map = Map<String, dynamic>.from(item);
-    for (final key in ['created_at', 'updated_at']) {
-      final value = map[key];
-      if (value is String) {
-        final parsed = DateTime.tryParse(value);
-        if (parsed != null) {
-          map[key] = parsed;
-        }
-      }
-    }
-    return map;
+  // ---------------------------------------------------------------------------
+  // Reusable helpers and typed entry points for users/logs
+  // ---------------------------------------------------------------------------
+
+  Future<void> _insert(String collectionName, JsonMap<dynamic> item) async {
+    final collection = await _collection(collectionName);
+    await collection.insertOne(item);
   }
 
-  JsonMap<dynamic> _fromMongoDateFields(JsonMap<dynamic> item) {
-    final map = Map<String, dynamic>.from(item);
-    for (final key in ['created_at', 'updated_at']) {
-      final value = map[key];
-      if (value is DateTime) {
-        map[key] = value.toIso8601String();
-      }
+  Future<List<JsonMap<dynamic>>> _read(
+    String collectionName, {
+    SelectorBuilder? selector,
+    DateTime? lastSyncedAt,
+  }) async {
+    final collection = await _collection(collectionName);
+    var builder = selector ?? where;
+    if (lastSyncedAt != null) {
+      builder = builder.gt(
+        '_sync_created_at',
+        lastSyncedAt.millisecondsSinceEpoch,
+      );
     }
-    return map;
+    final cursor = collection.find(builder.sortBy('_sync_created_at'));
+
+    final results = <JsonMap<dynamic>>[];
+    await cursor.forEach((doc) {
+      final data = Map<String, dynamic>.from(doc)..remove('_id');
+      results.add(data);
+    });
+
+    return results;
+  }
+
+  Future<void> insertUser(JsonMap<dynamic> user) {
+    return _insert('user', user);
+  }
+
+  Future<void> insertCounterLog(JsonMap<dynamic> log) {
+    return _insert('counter_log', log);
+  }
+
+  Future<List<JsonMap<dynamic>>> readUsers({DateTime? lastSyncedAt}) {
+    return _read('user', lastSyncedAt: lastSyncedAt);
+  }
+
+  Future<List<JsonMap<dynamic>>> readCounterLogs({DateTime? lastSyncedAt}) {
+    return _read('counter_log', lastSyncedAt: lastSyncedAt);
   }
 }
