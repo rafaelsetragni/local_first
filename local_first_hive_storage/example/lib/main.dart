@@ -544,15 +544,12 @@ class RepositoryService {
   final LocalFirstRepository<UserModel> userRepository;
   final LocalFirstRepository<CounterLogModel> counterLogRepository;
   final MongoPeriodicSyncStrategy syncStrategy;
-  List<UserModel> _usersFromEvents(
-    List<LocalFirstEvent<UserModel>> events,
-  ) =>
+  List<UserModel> _usersFromEvents(List<LocalFirstEvent<UserModel>> events) =>
       events.map((e) => e.state).toList();
 
   List<CounterLogModel> _logsFromEvents(
     List<LocalFirstEvent<CounterLogModel>> events,
-  ) =>
-      events.map((e) => e.state).toList();
+  ) => events.map((e) => e.state).toList();
 
   RepositoryService._internal()
     : userRepository = _buildUserRepository(),
@@ -636,13 +633,12 @@ class RepositoryService {
   Future<List<UserModel>> getUsers() async =>
       _usersFromEvents(await userRepository.query().getAll());
 
-  Future<List<CounterLogModel>> getLogs() async =>
-      _logsFromEvents(
-        await counterLogRepository
-            .query()
-            .orderBy('created_at', descending: true)
-            .getAll(),
-      );
+  Future<List<CounterLogModel>> getLogs() async => _logsFromEvents(
+    await counterLogRepository
+        .query()
+        .orderBy('created_at', descending: true)
+        .getAll(),
+  );
 
   Stream<List<CounterLogModel>> watchLogs() => counterLogRepository
       .query()
@@ -658,11 +654,7 @@ class RepositoryService {
       watchLogs().map((logs) => logs.take(limit).toList());
 
   Stream<List<UserModel>> watchUsers() =>
-      userRepository
-          .query()
-          .orderBy('username')
-          .watch()
-          .map(_usersFromEvents);
+      userRepository.query().orderBy('username').watch().map(_usersFromEvents);
 
   Future<JsonMap<String?>> getAvatarsForUsers(Set<String> usernames) async {
     if (usernames.isEmpty) return {};
@@ -924,7 +916,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
         _addPending(event);
       }
       for (final repository in mongoApi.repositoryNames) {
-        final value = await client.getMeta('__last_sync__$repository');
+        final value = await client.getKeyValue('__last_sync__$repository');
         lastSyncedAt[repository] = value != null
             ? DateTime.tryParse(value)
             : null;
@@ -934,11 +926,11 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   }
 
   void stop() {
-      _timer?.cancel();
-      _timer = null;
-      pendingChanges.clear();
-      lastSyncedAt.clear();
-    }
+    _timer?.cancel();
+    _timer = null;
+    pendingChanges.clear();
+    lastSyncedAt.clear();
+  }
 
   void dispose() {
     stop();
@@ -994,8 +986,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
       'changes': {
         for (final entry in changes.entries)
           entry.key: entry.value.toJson(
-            (payload) =>
-                client.getRepositoryByName(entry.key).toJson(payload),
+            (payload) => client.getRepositoryByName(entry.key).toJson(payload),
           ),
       },
     };
@@ -1135,10 +1126,7 @@ class MongoApi {
         final op = doc['operation'];
         if (op == 'delete') {
           if (doc['id'] != null) {
-            deletes.add({
-              'id': doc['id'],
-              'event_id': doc['event_id'],
-            });
+            deletes.add({'id': doc['id'], 'event_id': doc['event_id']});
           }
           return;
         }
