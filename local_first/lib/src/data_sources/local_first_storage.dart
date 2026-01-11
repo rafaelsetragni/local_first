@@ -23,6 +23,15 @@ abstract class LocalFirstStorage {
   /// Called once during [LocalFirstClient.initialize].
   Future<void> initialize();
 
+  /// Opens the database for the given namespace.
+  ///
+  /// Implementations should switch any underlying connections/state to the
+  /// requested namespace, closing and reopening resources as needed.
+  Future<void> openDatabase(String namespace);
+
+  /// Closes the currently opened database/namespace.
+  Future<void> closeDatabase();
+
   /// Closes the database connection.
   ///
   /// Called when disposing the LocalFirstClient instance.
@@ -65,7 +74,11 @@ abstract class LocalFirstStorage {
   Future<void> update(String tableName, String id, Map<String, dynamic> item);
 
   /// Updates an existing event in the event log.
-  Future<void> updateEvent(String tableName, String id, Map<String, dynamic> item);
+  Future<void> updateEvent(
+    String tableName,
+    String id,
+    Map<String, dynamic> item,
+  );
 
   /// Deletes an item by its ID in the state table.
   Future<void> delete(String repositoryName, String id);
@@ -80,10 +93,13 @@ abstract class LocalFirstStorage {
   Future<void> deleteAllEvents(String tableName);
 
   /// Stores arbitrary metadata as string by key.
-  Future<void> setMeta(String key, String value);
+  Future<void> setKey(String key, String value);
 
   /// Reads arbitrary metadata stored by key.
-  Future<String?> getMeta(String key);
+  Future<String?> getKey(String key);
+
+  /// Deletes arbitrary metadata stored by key.
+  Future<void> deleteKey(String key);
 
   /// Ensures the storage backend has an up-to-date schema for a repository.
   ///

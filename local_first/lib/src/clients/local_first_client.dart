@@ -100,6 +100,16 @@ class LocalFirstClient {
     }
   }
 
+  /// Opens a database/namespace in the configured local storage.
+  Future<void> openDatabase(String namespace) {
+    return _localStorage.openDatabase(namespace);
+  }
+
+  /// Closes the currently opened database/namespace.
+  Future<void> closeDatabase() {
+    return _localStorage.closeDatabase();
+  }
+
   /// Disposes the LocalFirstClient instance and closes the local database.
   ///
   /// Call this when you're done using the LocalFirstClient instance.
@@ -133,12 +143,16 @@ class LocalFirstClient {
     return results.expand((e) => e).toList();
   }
 
-  Future<String?> getMeta(String key) async {
-    return await localStorage.getMeta(key);
+  Future<String?> getKeyValue(String key) async {
+    return await localStorage.getKey(key);
   }
 
   Future<void> setKeyValue(String key, String value) async {
-    await localStorage.setMeta(key, value);
+    await localStorage.setKey(key, value);
+  }
+
+  Future<void> deleteKeyValue(String key) async {
+    await localStorage.deleteKey(key);
   }
 
   Future<LocalFirstResponse> _buildOfflineResponse(
