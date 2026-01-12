@@ -39,6 +39,15 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   final Future<void> Function([String? subDir]) _initFlutter;
   final Set<String> _lazyCollections;
 
+  static const Set<String> _metadataKeys = {
+    '_last_event_id',
+    '_event_id',
+    '_data_id',
+    '_sync_status',
+    '_sync_operation',
+    '_sync_created_at',
+  };
+
   /// Creates a new HiveLocalFirstStorage.
   ///
   /// Parameters:
@@ -141,67 +150,56 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   @override
   Future<List<Map<String, dynamic>>> getAll(String tableName) async {
     final box = await _getBox(tableName);
-
-    if (box is LazyBox<Map>) {
-      final keys = box.keys.cast<String>();
-      final List<Map<String, dynamic>> items = [];
-      for (final key in keys) {
-        final raw = await box.get(key);
-        if (raw != null) {
-          items.add(Map<String, dynamic>.from(raw));
-        }
-      }
-      return items;
+    final keys = box.keys.cast<String>();
+    final List<Map<String, dynamic>> items = [];
+    for (final key in keys) {
+      final raw = await _readBoxValue(box, key);
+      if (raw == null) continue;
+      final merged = await _attachEventMetadata(tableName, raw);
+      if (merged['_sync_operation'] == SyncOperation.delete.index) continue;
+      items.add(merged);
     }
-
-    // Convert Hive values to List<Map<String, dynamic>>
-    return (box as Box<Map<dynamic, dynamic>>).values
-        .map((item) => Map<String, dynamic>.from(item))
-        .toList();
+    return items;
   }
 
   @override
   Future<List<Map<String, dynamic>>> getAllEvents(String tableName) async {
-    final box = await _getBox(tableName, isEvent: true);
-
-    if (box is LazyBox<Map>) {
-      final keys = box.keys.cast<String>();
-      final List<Map<String, dynamic>> items = [];
-      for (final key in keys) {
-        final raw = await box.get(key);
-        if (raw != null) {
-          items.add(Map<String, dynamic>.from(raw));
-        }
-      }
-      return items;
+    final eventBox = await _getBox(tableName, isEvent: true);
+    final dataBox = await _getBox(tableName);
+    final keys = eventBox.keys.cast<String>();
+    final List<Map<String, dynamic>> items = [];
+    for (final key in keys) {
+      final meta = await _readBoxValue(eventBox, key);
+      if (meta == null) continue;
+      final dataId = meta['_data_id'] as String?;
+      final data = dataId != null ? await _readBoxValue(dataBox, dataId) : null;
+      items.add(
+        _mergeEventWithData(meta, data, lastEventId: meta['_event_id']),
+      );
     }
-
-    return (box as Box<Map<dynamic, dynamic>>).values
-        .map((item) => Map<String, dynamic>.from(item))
-        .toList();
+    return items;
   }
 
   @override
   Future<Map<String, dynamic>?> getById(String tableName, String id) {
     return _getBox(tableName).then((box) async {
-      if (box is LazyBox<Map>) {
-        final rawItem = await box.get(id);
-        return rawItem != null ? Map<String, dynamic>.from(rawItem) : null;
-      }
-      final rawItem = (box as Box<Map<dynamic, dynamic>>).get(id);
-      return rawItem != null ? Map<String, dynamic>.from(rawItem) : null;
+      final rawItem = await _readBoxValue(box, id);
+      if (rawItem == null) return null;
+      final merged = await _attachEventMetadata(tableName, rawItem);
+      if (merged['_sync_operation'] == SyncOperation.delete.index) return null;
+      return merged;
     });
   }
 
   @override
   Future<Map<String, dynamic>?> getEventById(String tableName, String id) {
-    return _getBox(tableName, isEvent: true).then((box) async {
-      if (box is LazyBox<Map>) {
-        final rawItem = await box.get(id);
-        return rawItem != null ? Map<String, dynamic>.from(rawItem) : null;
-      }
-      final rawItem = (box as Box<Map<dynamic, dynamic>>).get(id);
-      return rawItem != null ? Map<String, dynamic>.from(rawItem) : null;
+    return _getBox(tableName, isEvent: true).then((eventBox) async {
+      final meta = await _readBoxValue(eventBox, id);
+      if (meta == null) return null;
+      final dataId = meta['_data_id'] as String?;
+      final dataBox = await _getBox(tableName);
+      final data = dataId != null ? await _readBoxValue(dataBox, dataId) : null;
+      return _mergeEventWithData(meta, data, lastEventId: meta['_event_id']);
     });
   }
 
@@ -214,7 +212,12 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     final box = await _getBox(tableName);
 
     final id = item[idField] as String;
-    await box.put(id, item);
+    final payload = _stripMetadata(item);
+    final lastEventId = item['_last_event_id'];
+    if (lastEventId is String) {
+      payload['_last_event_id'] = lastEventId;
+    }
+    await box.put(id, payload);
   }
 
   @override
@@ -226,7 +229,14 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     final box = await _getBox(tableName, isEvent: true);
 
     final id = item[idField] as String;
-    await box.put(id, item);
+    final meta = {
+      '_event_id': id,
+      '_data_id': item['_data_id'],
+      '_sync_status': item['_sync_status'],
+      '_sync_operation': item['_sync_operation'],
+      '_sync_created_at': item['_sync_created_at'],
+    };
+    await box.put(id, meta);
   }
 
   @override
@@ -237,7 +247,12 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   ) async {
     final box = await _getBox(tableName);
 
-    await box.put(id, item);
+    final payload = _stripMetadata(item);
+    final lastEventId = item['_last_event_id'];
+    if (lastEventId is String) {
+      payload['_last_event_id'] = lastEventId;
+    }
+    await box.put(id, payload);
   }
 
   @override
@@ -248,7 +263,14 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   ) async {
     final box = await _getBox(tableName, isEvent: true);
 
-    await box.put(id, item);
+    final meta = {
+      '_event_id': id,
+      '_data_id': item['_data_id'] ?? id,
+      '_sync_status': item['_sync_status'],
+      '_sync_operation': item['_sync_operation'],
+      '_sync_created_at': item['_sync_created_at'],
+    };
+    await box.put(id, meta);
   }
 
   @override
@@ -355,6 +377,58 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     await initialize();
   }
 
+  Map<String, dynamic> _stripMetadata(Map<String, dynamic> source) {
+    final copy = Map<String, dynamic>.from(source);
+    copy.removeWhere((key, _) => _metadataKeys.contains(key));
+    return copy;
+  }
+
+  Future<Map<String, dynamic>?> _readBoxValue(
+    BoxBase<Map<dynamic, dynamic>> box,
+    String key,
+  ) async {
+    final raw = box is LazyBox<Map>
+        ? await box.get(key)
+        : (box as Box<Map<dynamic, dynamic>>).get(key);
+    return raw != null ? Map<String, dynamic>.from(raw) : null;
+  }
+
+  Future<Map<String, dynamic>> _attachEventMetadata(
+    String tableName,
+    Map<String, dynamic> data,
+  ) async {
+    final merged = Map<String, dynamic>.from(data);
+    final lastEventId = data['_last_event_id'];
+    if (lastEventId is! String) return merged;
+
+    final eventBox = await _getBox(tableName, isEvent: true);
+    final meta = await _readBoxValue(eventBox, lastEventId);
+    if (meta != null) {
+      merged.addAll(meta);
+    }
+    merged['_last_event_id'] = lastEventId;
+    return merged;
+  }
+
+  Map<String, dynamic> _mergeEventWithData(
+    Map<String, dynamic> meta,
+    Map<String, dynamic>? data, {
+    Object? lastEventId,
+  }) {
+    final merged = <String, dynamic>{
+      if (data != null) ...data,
+      ...meta,
+    };
+    final dataId = meta['_data_id'];
+    if (dataId is String) {
+      merged.putIfAbsent('id', () => dataId);
+    }
+    if (lastEventId is String) {
+      merged['_last_event_id'] = lastEventId;
+    }
+    return merged;
+  }
+
   // ============================================
   // Query Support (optimized for Hive)
   // ============================================
@@ -374,13 +448,12 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
     // Collect items that match filters
     for (var key in box.keys) {
-      final rawItem = box is LazyBox<Map>
-          ? await box.get(key)
-          : (box as Box<Map<dynamic, dynamic>>).get(key);
+      final rawItem = await _readBoxValue(box, key);
       if (rawItem == null) continue;
 
-      // Convert Map<dynamic, dynamic> to Map<String, dynamic>
-      final item = Map<String, dynamic>.from(rawItem);
+      final item = await _attachEventMetadata(query.repositoryName, rawItem);
+      if (!query.includeDeleted &&
+          item['_sync_operation'] == SyncOperation.delete.index) continue;
 
       // Apply filters
       bool matches = true;
@@ -439,7 +512,8 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     }
 
     final controller = StreamController<List<Map<String, dynamic>>>.broadcast();
-    StreamSubscription? sub;
+    StreamSubscription? dataSub;
+    StreamSubscription? eventSub;
 
     Future<void> emitCurrent() async {
       try {
@@ -453,11 +527,14 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     controller.onListen = () async {
       await emitCurrent();
       final box = await _getBox(query.repositoryName);
-      sub = box.watch().listen((_) => emitCurrent());
+      final eventBox = await _getBox(query.repositoryName, isEvent: true);
+      dataSub = box.watch().listen((_) => emitCurrent());
+      eventSub = eventBox.watch().listen((_) => emitCurrent());
     };
 
     controller.onCancel = () async {
-      await sub?.cancel();
+      await dataSub?.cancel();
+      await eventSub?.cancel();
     };
 
     return controller.stream;
