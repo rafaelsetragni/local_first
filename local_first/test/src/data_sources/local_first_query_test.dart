@@ -58,14 +58,34 @@ class _FakeStorage extends LocalFirstStorage {
 
   @override
   Future<List<Map<String, dynamic>>> getAll(String tableName) async {
-    return items;
+    return items.map((item) {
+      final map = Map<String, dynamic>.from(item);
+      final eventId = map['_last_event_id'];
+      if (eventId is String) {
+        final meta = _events[eventId];
+        if (meta != null) {
+          map.addAll(meta);
+        }
+        map['_last_event_id'] = eventId;
+      }
+      return map;
+    }).toList();
   }
 
   @override
   Future<Map<String, dynamic>?> getById(String tableName, String id) async {
-    return items.firstWhere((e) => e['id'] == id, orElse: () => {}).isEmpty
-        ? null
-        : items.firstWhere((e) => e['id'] == id);
+    final base = items.firstWhere((e) => e['id'] == id, orElse: () => {});
+    if (base.isEmpty) return null;
+    final map = Map<String, dynamic>.from(base);
+    final eventId = map['_last_event_id'];
+    if (eventId is String) {
+      final meta = _events[eventId];
+      if (meta != null) {
+        map.addAll(meta);
+      }
+      map['_last_event_id'] = eventId;
+    }
+    return map;
   }
 
   @override
@@ -104,7 +124,7 @@ class _FakeStorage extends LocalFirstStorage {
     Map<String, dynamic> item,
     String idField,
   ) async {
-    _events[item[idField] as String] = item;
+    _events[item[idField] as String] = Map<String, dynamic>.from(item);
   }
 
   @override
@@ -148,45 +168,81 @@ void main() {
     late LocalFirstQuery<_DummyModel> query;
     final repo = _DummyRepo();
 
-    setUp(() {
+    setUp(() async {
       storage = _FakeStorage([
         {
           'id': '1',
           'name': 'alice',
           'score': 10,
           'note': null,
-          '_sync_status': SyncStatus.ok.index,
-          '_sync_operation': SyncOperation.insert.index,
-          '_sync_created_at': DateTime.utc(2024, 1, 1).millisecondsSinceEpoch,
+          '_last_event_id': 'e1',
         },
         {
           'id': '2',
           'name': 'bob',
           'score': 20,
           'note': 'blue',
-          '_sync_status': SyncStatus.pending.index,
-          '_sync_operation': SyncOperation.update.index,
-          '_sync_created_at': DateTime.utc(2024, 1, 2).millisecondsSinceEpoch,
+          '_last_event_id': 'e2',
         },
         {
           'id': '3',
           'name': 'charlie',
           'score': 30,
           'note': 'green',
-          '_sync_status': SyncStatus.ok.index,
-          '_sync_operation': SyncOperation.delete.index,
-          '_sync_created_at': DateTime.utc(2024, 1, 3).millisecondsSinceEpoch,
+          '_last_event_id': 'e3',
         },
         {
           'id': '4',
           'name': 'dave',
           'score': 15,
           'note': null,
+          '_last_event_id': 'e4',
+        },
+      ]);
+      await storage.insertEvent(
+        'dummy',
+        {
+          '_event_id': 'e1',
+          '_data_id': '1',
+          '_sync_status': SyncStatus.ok.index,
+          '_sync_operation': SyncOperation.insert.index,
+          '_sync_created_at': DateTime.utc(2024, 1, 1).millisecondsSinceEpoch,
+        },
+        '_event_id',
+      );
+      await storage.insertEvent(
+        'dummy',
+        {
+          '_event_id': 'e2',
+          '_data_id': '2',
+          '_sync_status': SyncStatus.pending.index,
+          '_sync_operation': SyncOperation.update.index,
+          '_sync_created_at': DateTime.utc(2024, 1, 2).millisecondsSinceEpoch,
+        },
+        '_event_id',
+      );
+      await storage.insertEvent(
+        'dummy',
+        {
+          '_event_id': 'e3',
+          '_data_id': '3',
+          '_sync_status': SyncStatus.ok.index,
+          '_sync_operation': SyncOperation.delete.index,
+          '_sync_created_at': DateTime.utc(2024, 1, 3).millisecondsSinceEpoch,
+        },
+        '_event_id',
+      );
+      await storage.insertEvent(
+        'dummy',
+        {
+          '_event_id': 'e4',
+          '_data_id': '4',
           '_sync_status': SyncStatus.ok.index,
           '_sync_operation': SyncOperation.insert.index,
           '_sync_created_at': DateTime.utc(2024, 1, 4).millisecondsSinceEpoch,
         },
-      ]);
+        '_event_id',
+      );
 
       query = LocalFirstQuery<_DummyModel>(
         repositoryName: 'dummy',

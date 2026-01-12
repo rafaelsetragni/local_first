@@ -57,6 +57,14 @@ class _InMemoryStorage implements LocalFirstStorage {
   final Map<String, String> meta = {};
   final Map<String, StreamController<List<Map<String, dynamic>>>> _controllers =
       {};
+  static const Set<String> _metadataKeys = {
+    '_last_event_id',
+    '_event_id',
+    '_data_id',
+    '_sync_status',
+    '_sync_operation',
+    '_sync_created_at',
+  };
 
   StreamController<List<Map<String, dynamic>>> _controller(String name) {
     return _controllers.putIfAbsent(
@@ -106,12 +114,39 @@ class _InMemoryStorage implements LocalFirstStorage {
 
   @override
   Future<List<Map<String, dynamic>>> getAll(String tableName) async {
-    return tables[tableName]?.values.map((e) => Map.of(e)).toList() ?? [];
+    final events = tables[_eventsTable(tableName)] ?? {};
+    final data = tables[tableName];
+    if (data == null) return [];
+
+    return data.values.map((value) {
+      final item = Map<String, dynamic>.from(value);
+      final lastEventId = item['_last_event_id'];
+      if (lastEventId is String) {
+        final meta = events[lastEventId];
+        if (meta != null) {
+          item.addAll(meta);
+        }
+        item['_last_event_id'] = lastEventId;
+      }
+      return item;
+    }).toList();
   }
 
   @override
   Future<Map<String, dynamic>?> getById(String tableName, String id) async {
-    return tables[tableName]?[id];
+    final events = tables[_eventsTable(tableName)] ?? {};
+    final data = tables[tableName]?[id];
+    if (data == null) return null;
+    final item = Map<String, dynamic>.from(data);
+    final lastEventId = item['_last_event_id'];
+    if (lastEventId is String) {
+      final meta = events[lastEventId];
+      if (meta != null) {
+        item.addAll(meta);
+      }
+      item['_last_event_id'] = lastEventId;
+    }
+    return item;
   }
 
   Future<DateTime?> getLastSyncAt(String repositoryName) async => null;
@@ -126,7 +161,25 @@ class _InMemoryStorage implements LocalFirstStorage {
     String idField,
   ) async {
     tables.putIfAbsent(tableName, () => {});
-    tables[tableName]![item[idField] as String] = item;
+    final id = item[idField] as String;
+    final lastEventId = item['_last_event_id'] ?? item['_event_id'];
+    final cleaned = _stripMetadata(item);
+    if (lastEventId is String) {
+      cleaned['_last_event_id'] = lastEventId;
+    }
+    tables[tableName]![id] = cleaned;
+
+    if (lastEventId is String &&
+        (item['_sync_status'] != null || item['_sync_operation'] != null)) {
+      tables.putIfAbsent(_eventsTable(tableName), () => {});
+      tables[_eventsTable(tableName)]![lastEventId] = {
+        '_event_id': lastEventId,
+        '_data_id': id,
+        '_sync_status': item['_sync_status'],
+        '_sync_operation': item['_sync_operation'],
+        '_sync_created_at': item['_sync_created_at'],
+      };
+    }
     await _emit(tableName);
   }
 
@@ -139,9 +192,39 @@ class _InMemoryStorage implements LocalFirstStorage {
 
   String _eventsTable(String name) => '${name}__events';
 
+  Map<String, dynamic> _mergeEventWithData(
+    Map<String, dynamic> meta,
+    Map<String, dynamic>? data,
+  ) {
+    final merged = <String, dynamic>{
+      if (data != null) ...data,
+      ...meta,
+    };
+    final eventId = meta['_event_id'];
+    final dataId = meta['_data_id'];
+    if (eventId is String) merged['_last_event_id'] = eventId;
+    if (dataId is String) merged.putIfAbsent('id', () => dataId);
+    return merged;
+  }
+
+  Map<String, dynamic> _stripMetadata(Map<String, dynamic> map) {
+    final copy = Map<String, dynamic>.from(map);
+    copy.removeWhere((key, _) => _metadataKeys.contains(key));
+    return copy;
+  }
+
   @override
   Future<List<Map<String, dynamic>>> getAllEvents(String tableName) {
-    return getAll(_eventsTable(tableName));
+    final events = tables[_eventsTable(tableName)] ?? {};
+    final data = tables[tableName] ?? {};
+
+    return Future.value([
+      for (final meta in events.values)
+        _mergeEventWithData(
+          Map<String, dynamic>.from(meta),
+          data[meta['_data_id']],
+        ),
+    ]);
   }
 
   @override
@@ -149,7 +232,12 @@ class _InMemoryStorage implements LocalFirstStorage {
     String tableName,
     String id,
   ) {
-    return getById(_eventsTable(tableName), id);
+    final meta = tables[_eventsTable(tableName)]?[id];
+    if (meta == null) return Future.value(null);
+    final data = tables[tableName]?[meta['_data_id']];
+    return Future.value(
+      _mergeEventWithData(Map<String, dynamic>.from(meta), data),
+    );
   }
 
   @override
@@ -158,7 +246,16 @@ class _InMemoryStorage implements LocalFirstStorage {
     Map<String, dynamic> item,
     String idField,
   ) async {
-    await insert(_eventsTable(tableName), item, idField);
+    tables.putIfAbsent(_eventsTable(tableName), () => {});
+    final id = item[idField] as String;
+    tables[_eventsTable(tableName)]![id] = {
+      '_event_id': id,
+      '_data_id': item['_data_id'] ?? id,
+      '_sync_status': item['_sync_status'],
+      '_sync_operation': item['_sync_operation'],
+      '_sync_created_at': item['_sync_created_at'],
+    };
+    await _emit(tableName);
   }
 
   @override
@@ -167,17 +264,27 @@ class _InMemoryStorage implements LocalFirstStorage {
     String id,
     Map<String, dynamic> item,
   ) async {
-    await update(_eventsTable(tableName), id, item);
+    tables.putIfAbsent(_eventsTable(tableName), () => {});
+    tables[_eventsTable(tableName)]![id] = {
+      '_event_id': id,
+      '_data_id': item['_data_id'] ?? id,
+      '_sync_status': item['_sync_status'],
+      '_sync_operation': item['_sync_operation'],
+      '_sync_created_at': item['_sync_created_at'],
+    };
+    await _emit(tableName);
   }
 
   @override
   Future<void> deleteEvent(String repositoryName, String id) async {
-    await delete(_eventsTable(repositoryName), id);
+    tables[_eventsTable(repositoryName)]?.remove(id);
+    await _emit(repositoryName);
   }
 
   @override
   Future<void> deleteAllEvents(String tableName) async {
-    await deleteAll(_eventsTable(tableName));
+    tables[_eventsTable(tableName)]?.clear();
+    await _emit(tableName);
   }
 
   @override
@@ -187,7 +294,24 @@ class _InMemoryStorage implements LocalFirstStorage {
     Map<String, dynamic> item,
   ) async {
     tables.putIfAbsent(tableName, () => {});
-    tables[tableName]![id] = item;
+    final cleaned = _stripMetadata(item);
+    final lastEventId = item['_last_event_id'] ?? item['_event_id'];
+    if (lastEventId is String) {
+      cleaned['_last_event_id'] = lastEventId;
+    }
+    tables[tableName]![id] = cleaned;
+
+    if (lastEventId is String &&
+        (item['_sync_status'] != null || item['_sync_operation'] != null)) {
+      tables.putIfAbsent(_eventsTable(tableName), () => {});
+      tables[_eventsTable(tableName)]![lastEventId] = {
+        '_event_id': lastEventId,
+        '_data_id': id,
+        '_sync_status': item['_sync_status'],
+        '_sync_operation': item['_sync_operation'],
+        '_sync_created_at': item['_sync_created_at'],
+      };
+    }
     await _emit(tableName);
   }
 
@@ -293,13 +417,29 @@ void main() {
 
     test('getAllPendingEvents aggregates pending from repositories', () async {
       await client.initialize();
-      await storage.insert('tests', {
-        'id': 'p1',
-        'value': 'pending',
-        '_sync_status': SyncStatus.pending.index,
-        '_sync_operation': SyncOperation.insert.index,
-        '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
-      }, 'id');
+      final eventId = 'evt-1';
+      final createdAt = DateTime.now().toUtc().millisecondsSinceEpoch;
+
+      await storage.insert(
+        'tests',
+        {
+          'id': 'p1',
+          'value': 'pending',
+          '_last_event_id': eventId,
+        },
+        'id',
+      );
+      await storage.insertEvent(
+        'tests',
+        {
+          '_event_id': eventId,
+          '_data_id': 'p1',
+          '_sync_status': SyncStatus.pending.index,
+          '_sync_operation': SyncOperation.insert.index,
+          '_sync_created_at': createdAt,
+        },
+        '_event_id',
+      );
 
       final pending = await client.getAllPendingEvents();
       expect(pending.length, 1);

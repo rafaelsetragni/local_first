@@ -25,6 +25,14 @@ class _InMemoryStorage implements LocalFirstStorage {
   final Map<String, StreamController<List<Map<String, dynamic>>>> _controllers =
       {};
   bool initialized = false;
+  static const Set<String> _metadataKeys = {
+    '_last_event_id',
+    '_event_id',
+    '_data_id',
+    '_sync_status',
+    '_sync_operation',
+    '_sync_created_at',
+  };
 
   StreamController<List<Map<String, dynamic>>> _controller(String name) {
     return _controllers.putIfAbsent(
@@ -66,12 +74,38 @@ class _InMemoryStorage implements LocalFirstStorage {
 
   @override
   Future<List<Map<String, dynamic>>> getAll(String tableName) async {
-    return tables[tableName]?.values.map((e) => Map.of(e)).toList() ?? [];
+    final events = tables[_eventsTable(tableName)] ?? {};
+    final data = tables[tableName];
+    if (data == null) return [];
+    return data.values.map((value) {
+      final item = Map<String, dynamic>.from(value);
+      final lastEventId = item['_last_event_id'];
+      if (lastEventId is String) {
+        final meta = events[lastEventId];
+        if (meta != null) {
+          item.addAll(meta);
+        }
+        item['_last_event_id'] = lastEventId;
+      }
+      return item;
+    }).toList();
   }
 
   @override
   Future<Map<String, dynamic>?> getById(String tableName, String id) async {
-    return tables[tableName]?[id];
+    final events = tables[_eventsTable(tableName)] ?? {};
+    final data = tables[tableName]?[id];
+    if (data == null) return null;
+    final item = Map<String, dynamic>.from(data);
+    final lastEventId = item['_last_event_id'];
+    if (lastEventId is String) {
+      final meta = events[lastEventId];
+      if (meta != null) {
+        item.addAll(meta);
+      }
+      item['_last_event_id'] = lastEventId;
+    }
+    return item;
   }
 
   @override
@@ -81,7 +115,26 @@ class _InMemoryStorage implements LocalFirstStorage {
     String idField,
   ) async {
     tables.putIfAbsent(tableName, () => {});
-    tables[tableName]![item[idField] as String] = item;
+    final id = item[idField] as String;
+    final lastEventId = item['_last_event_id'] ?? item['_event_id'];
+    final cleaned = _stripMetadata(item);
+    if (lastEventId is String) {
+      cleaned['_last_event_id'] = lastEventId;
+    }
+    tables[tableName]![id] = cleaned;
+
+    // If metadata is present, mirror to events table for joins.
+    if (lastEventId is String &&
+        (item['_sync_status'] != null || item['_sync_operation'] != null)) {
+      tables.putIfAbsent(_eventsTable(tableName), () => {});
+      tables[_eventsTable(tableName)]![lastEventId] = {
+        '_event_id': lastEventId,
+        '_data_id': id,
+        '_sync_status': item['_sync_status'],
+        '_sync_operation': item['_sync_operation'],
+        '_sync_created_at': item['_sync_created_at'],
+      };
+    }
     await _emit(tableName);
   }
 
@@ -92,7 +145,24 @@ class _InMemoryStorage implements LocalFirstStorage {
     Map<String, dynamic> item,
   ) async {
     tables.putIfAbsent(tableName, () => {});
-    tables[tableName]![id] = item;
+    final lastEventId = item['_last_event_id'] ?? item['_event_id'];
+    final cleaned = _stripMetadata(item);
+    if (lastEventId is String) {
+      cleaned['_last_event_id'] = lastEventId;
+    }
+    tables[tableName]![id] = cleaned;
+
+    if (lastEventId is String &&
+        (item['_sync_status'] != null || item['_sync_operation'] != null)) {
+      tables.putIfAbsent(_eventsTable(tableName), () => {});
+      tables[_eventsTable(tableName)]![lastEventId] = {
+        '_event_id': lastEventId,
+        '_data_id': id,
+        '_sync_status': item['_sync_status'],
+        '_sync_operation': item['_sync_operation'],
+        '_sync_created_at': item['_sync_created_at'],
+      };
+    }
     await _emit(tableName);
   }
 
@@ -110,17 +180,46 @@ class _InMemoryStorage implements LocalFirstStorage {
 
   String _eventsTable(String name) => '${name}__events';
 
-  @override
-  Future<List<Map<String, dynamic>>> getAllEvents(String tableName) {
-    return getAll(_eventsTable(tableName));
+  Map<String, dynamic> _mergeEventWithData(
+    Map<String, dynamic> meta,
+    Map<String, dynamic>? data,
+  ) {
+    final merged = <String, dynamic>{if (data != null) ...data, ...meta};
+    final eventId = meta['_event_id'];
+    final dataId = meta['_data_id'];
+    if (eventId is String) merged['_last_event_id'] = eventId;
+    if (dataId is String) merged.putIfAbsent('id', () => dataId);
+    return merged;
+  }
+
+  Map<String, dynamic> _stripMetadata(Map<String, dynamic> item) {
+    final copy = Map<String, dynamic>.from(item);
+    copy.removeWhere((key, _) => _metadataKeys.contains(key));
+    return copy;
   }
 
   @override
-  Future<Map<String, dynamic>?> getEventById(
-    String tableName,
-    String id,
-  ) {
-    return getById(_eventsTable(tableName), id);
+  Future<List<Map<String, dynamic>>> getAllEvents(String tableName) {
+    final events = tables[_eventsTable(tableName)] ?? {};
+    final data = tables[tableName] ?? {};
+
+    return Future.value([
+      for (final meta in events.values)
+        _mergeEventWithData(
+          Map<String, dynamic>.from(meta),
+          data[meta['_data_id']],
+        ),
+    ]);
+  }
+
+  @override
+  Future<Map<String, dynamic>?> getEventById(String tableName, String id) {
+    final meta = tables[_eventsTable(tableName)]?[id];
+    if (meta == null) return Future.value(null);
+    final data = tables[tableName]?[meta['_data_id']];
+    return Future.value(
+      _mergeEventWithData(Map<String, dynamic>.from(meta), data),
+    );
   }
 
   @override
@@ -129,7 +228,16 @@ class _InMemoryStorage implements LocalFirstStorage {
     Map<String, dynamic> item,
     String idField,
   ) async {
-    await insert(_eventsTable(tableName), item, idField);
+    tables.putIfAbsent(_eventsTable(tableName), () => {});
+    final id = item[idField] as String;
+    tables[_eventsTable(tableName)]![id] = {
+      '_event_id': id,
+      '_data_id': item['_data_id'] ?? id,
+      '_sync_status': item['_sync_status'],
+      '_sync_operation': item['_sync_operation'],
+      '_sync_created_at': item['_sync_created_at'],
+    };
+    await _emit(tableName);
   }
 
   @override
@@ -138,17 +246,27 @@ class _InMemoryStorage implements LocalFirstStorage {
     String id,
     Map<String, dynamic> item,
   ) async {
-    await update(_eventsTable(tableName), id, item);
+    tables.putIfAbsent(_eventsTable(tableName), () => {});
+    tables[_eventsTable(tableName)]![id] = {
+      '_event_id': id,
+      '_data_id': item['_data_id'] ?? id,
+      '_sync_status': item['_sync_status'],
+      '_sync_operation': item['_sync_operation'],
+      '_sync_created_at': item['_sync_created_at'],
+    };
+    await _emit(tableName);
   }
 
   @override
   Future<void> deleteEvent(String repositoryName, String id) async {
-    await delete(_eventsTable(repositoryName), id);
+    tables[_eventsTable(repositoryName)]?.remove(id);
+    await _emit(repositoryName);
   }
 
   @override
   Future<void> deleteAllEvents(String tableName) async {
-    await deleteAll(_eventsTable(tableName));
+    tables[_eventsTable(tableName)]?.clear();
+    await _emit(tableName);
   }
 
   @override
@@ -232,6 +350,29 @@ void main() {
     late _InMemoryStorage storage;
     late LocalFirstClient client;
     late LocalFirstRepository<_TestModel> repo;
+    Future<void> seed({
+      required String id,
+      String? value,
+      SyncStatus status = SyncStatus.ok,
+      SyncOperation op = SyncOperation.insert,
+      int? createdAt,
+    }) async {
+      final eventId = 'evt-$id';
+      final created =
+          createdAt ?? DateTime.now().toUtc().millisecondsSinceEpoch;
+      await storage.insert('tests', {
+        'id': id,
+        if (value != null) 'value': value,
+        '_last_event_id': eventId,
+      }, 'id');
+      await storage.insertEvent('tests', {
+        '_event_id': eventId,
+        '_data_id': id,
+        '_sync_status': status.index,
+        '_sync_operation': op.index,
+        '_sync_created_at': created,
+      }, '_event_id');
+    }
 
     setUp(() async {
       storage = _InMemoryStorage();
@@ -286,10 +427,11 @@ void main() {
       expect(storedState, isNull);
       final events = await storage.getAllEvents('tests');
       expect(events, isNotEmpty);
-      final deleteEvent =
-          events.firstWhere((e) => e['_sync_operation'] == SyncOperation.delete.index);
+      final deleteEvent = events.firstWhere(
+        (e) => e['_sync_operation'] == SyncOperation.delete.index,
+      );
       expect(deleteEvent['_sync_status'], SyncStatus.pending.index);
-      expect(deleteEvent['id'], '1');
+      expect(deleteEvent['_data_id'], '1');
     });
 
     test('delete returns silently when item not found', () async {
@@ -340,10 +482,14 @@ void main() {
       );
       await conditionalClient.initialize();
 
-      await conditionalRepo.upsert(_event('fail-push', value: 'x'),
-          needSync: true);
-      await conditionalRepo.upsert(_event('ok-push', value: 'y'),
-          needSync: true);
+      await conditionalRepo.upsert(
+        _event('fail-push', value: 'x'),
+        needSync: true,
+      );
+      await conditionalRepo.upsert(
+        _event('ok-push', value: 'y'),
+        needSync: true,
+      );
 
       final failed = await conditionalStorage.getById('tests', 'fail-push');
       final ok = await conditionalStorage.getById('tests', 'ok-push');
@@ -357,13 +503,13 @@ void main() {
 
     test('query returns mapped models with sync metadata', () async {
       final createdAt = DateTime.now().toUtc().millisecondsSinceEpoch;
-      await storage.insert('tests', {
-        'id': '10',
-        'value': 'v',
-        '_sync_status': SyncStatus.ok.index,
-        '_sync_operation': SyncOperation.insert.index,
-        '_sync_created_at': createdAt,
-      }, 'id');
+      await seed(
+        id: '10',
+        value: 'v',
+        status: SyncStatus.ok,
+        op: SyncOperation.insert,
+        createdAt: createdAt,
+      );
 
       final results = await repo.query().getAll();
       expect(results.length, 1);
@@ -374,20 +520,18 @@ void main() {
     });
 
     test('getPendingEvents returns only pending items', () async {
-      await storage.insert('tests', {
-        'id': 'p1',
-        'value': 'pending',
-        '_sync_status': SyncStatus.pending.index,
-        '_sync_operation': SyncOperation.insert.index,
-        '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
-      }, 'id');
-      await storage.insert('tests', {
-        'id': 'ok1',
-        'value': 'ok',
-        '_sync_status': SyncStatus.ok.index,
-        '_sync_operation': SyncOperation.insert.index,
-        '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
-      }, 'id');
+      await seed(
+        id: 'p1',
+        value: 'pending',
+        status: SyncStatus.pending,
+        op: SyncOperation.insert,
+      );
+      await seed(
+        id: 'ok1',
+        value: 'ok',
+        status: SyncStatus.ok,
+        op: SyncOperation.insert,
+      );
 
       final pending = await repo.getPendingEvents();
       expect(pending.map((e) => e.state.id), contains('p1'));
@@ -397,13 +541,12 @@ void main() {
     test(
       'upsert keeps insert operation for existing pending inserts',
       () async {
-        await storage.insert('tests', {
-          'id': 'ins',
-          'value': 'old',
-          '_sync_status': SyncStatus.pending.index,
-          '_sync_operation': SyncOperation.insert.index,
-          '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
-        }, 'id');
+        await seed(
+          id: 'ins',
+          value: 'old',
+          status: SyncStatus.pending,
+          op: SyncOperation.insert,
+        );
 
         await repo.upsert(_event('ins', value: 'new'), needSync: true);
 
@@ -459,13 +602,12 @@ void main() {
     });
 
     test('upsert on synced item marks update pending', () async {
-      await storage.insert('tests', {
-        'id': 'synced',
-        'value': 'old',
-        '_sync_status': SyncStatus.ok.index,
-        '_sync_operation': SyncOperation.insert.index,
-        '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
-      }, 'id');
+      await seed(
+        id: 'synced',
+        value: 'old',
+        status: SyncStatus.ok,
+        op: SyncOperation.insert,
+      );
 
       await repo.upsert(_event('synced', value: 'new'), needSync: true);
 
@@ -479,13 +621,13 @@ void main() {
       'upsert preserves pending insert operation for unsynced records',
       () async {
         final createdAt = DateTime.now().toUtc().millisecondsSinceEpoch;
-        await storage.insert('tests', {
-          'id': 'pending',
-          'value': 'v1',
-          '_sync_status': SyncStatus.pending.index,
-          '_sync_operation': SyncOperation.insert.index,
-          '_sync_created_at': createdAt,
-        }, 'id');
+        await seed(
+          id: 'pending',
+          value: 'v1',
+          status: SyncStatus.pending,
+          op: SyncOperation.insert,
+          createdAt: createdAt,
+        );
 
         await repo.upsert(_event('pending', value: 'v2'), needSync: true);
 
@@ -499,13 +641,13 @@ void main() {
 
     test('upsert converts synced insert record to update', () async {
       final createdAt = DateTime.now().toUtc().millisecondsSinceEpoch;
-      await storage.insert('tests', {
-        'id': 'syncedInsert',
-        'value': 'old',
-        '_sync_status': SyncStatus.ok.index,
-        '_sync_operation': SyncOperation.insert.index,
-        '_sync_created_at': createdAt,
-      }, 'id');
+      await seed(
+        id: 'syncedInsert',
+        value: 'old',
+        status: SyncStatus.ok,
+        op: SyncOperation.insert,
+        createdAt: createdAt,
+      );
 
       await repo.upsert(_event('syncedInsert', value: 'new'), needSync: true);
 
@@ -522,10 +664,15 @@ void main() {
         await storage.insert('tests', {
           'id': 'legacy',
           'value': 'old',
+          '_last_event_id': 'evt-legacy',
+        }, 'id');
+        await storage.insertEvent('tests', {
+          '_event_id': 'evt-legacy',
+          '_data_id': 'legacy',
           '_sync_status': SyncStatus.ok.index,
           '_sync_operation': SyncOperation.insert.index,
           // intentionally omit _sync_created_at to simulate legacy data
-        }, 'id');
+        }, '_event_id');
 
         await repo.upsert(_event('legacy', value: 'new'), needSync: true);
 
@@ -573,10 +720,15 @@ void main() {
       await storage.insert('tests', {
         'id': 'u1',
         'value': 'local',
+        '_last_event_id': 'evt-u1',
+      }, 'id');
+      await storage.insertEvent('tests', {
+        '_event_id': 'evt-u1',
+        '_data_id': 'u1',
         '_sync_status': SyncStatus.ok.index,
         '_sync_operation': SyncOperation.insert.index,
         '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
-      }, 'id');
+      }, '_event_id');
 
       final strategy = client.syncStrategies.first;
       final payload = {
@@ -601,13 +753,12 @@ void main() {
     test(
       'pullChangesToLocal deletes when remote marks deleted and local clean',
       () async {
-        await storage.insert('tests', {
-          'id': 'd1',
-          'value': 'keep?',
-          '_sync_status': SyncStatus.ok.index,
-          '_sync_operation': SyncOperation.insert.index,
-          '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
-        }, 'id');
+        await seed(
+          id: 'd1',
+          value: 'keep?',
+          status: SyncStatus.ok,
+          op: SyncOperation.insert,
+        );
 
         final strategy = client.syncStrategies.first;
         final payload = {
@@ -627,15 +778,53 @@ void main() {
     );
 
     test(
-      'pullChangesToLocal keeps pending local insert when remote deletes',
+      'pullChangesToLocal confirms pending insert when remote returns same event_id',
       () async {
-        await storage.insert('tests', {
-          'id': 'd2',
-          'value': 'pending',
-          '_sync_status': SyncStatus.pending.index,
-          '_sync_operation': SyncOperation.insert.index,
-          '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
-        }, 'id');
+        final createdAt = DateTime.utc(2024, 1, 1).millisecondsSinceEpoch;
+        await seed(
+          id: 'p1',
+          value: 'local',
+          status: SyncStatus.pending,
+          op: SyncOperation.insert,
+          createdAt: createdAt,
+        );
+
+        final strategy = client.syncStrategies.first;
+        final eventId = 'evt-p1';
+        final payload = {
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+          'changes': {
+            'tests': {
+              'insert': [
+                {'id': 'p1', 'value': 'remote', 'event_id': eventId},
+              ],
+            },
+          },
+        };
+
+        await strategy.pullChangesToLocal(payload);
+
+        final stored = await storage.getById('tests', 'p1');
+        expect(stored?['value'], 'remote');
+        expect(stored?['_sync_status'], SyncStatus.ok.index);
+        expect(stored?['_sync_operation'], SyncOperation.insert.index);
+        expect(stored?['_sync_created_at'], createdAt);
+        expect(stored?['_last_event_id'], eventId);
+        final persistedEvent = await storage.getEventById('tests', eventId);
+        expect(persistedEvent?['_sync_status'], SyncStatus.ok.index);
+        expect(persistedEvent?['_sync_operation'], SyncOperation.insert.index);
+      },
+    );
+
+    test(
+      'pullChangesToLocal do not keeps pending local insert when remote deletes',
+      () async {
+        await seed(
+          id: 'd2',
+          value: 'pending',
+          status: SyncStatus.pending,
+          op: SyncOperation.insert,
+        );
 
         final strategy = client.syncStrategies.first;
         final payload = {
@@ -650,10 +839,7 @@ void main() {
         await strategy.pullChangesToLocal(payload);
 
         final stored = await storage.getById('tests', 'd2');
-        expect(stored, isNotNull); // should not be deleted
-        expect(stored?['_sync_status'], SyncStatus.pending.index);
-        expect(stored?['_sync_operation'], SyncOperation.insert.index);
-        expect(stored?['value'], 'pending');
+        expect(stored, isNull); // remote delete removes even pending local insert
       },
     );
 
@@ -683,10 +869,15 @@ void main() {
         await storage.insert('tests', {
           'id': 'legacy-update',
           'value': 'local',
+          '_last_event_id': 'evt-legacy-update',
+        }, 'id');
+        await storage.insertEvent('tests', {
+          '_event_id': 'evt-legacy-update',
+          '_data_id': 'legacy-update',
           '_sync_status': SyncStatus.ok.index,
           '_sync_operation': SyncOperation.insert.index,
           // no _sync_created_at to simulate legacy data
-        }, 'id');
+        }, '_event_id');
 
         final strategy = client.syncStrategies.first;
         final payload = {
@@ -729,13 +920,12 @@ void main() {
           .toList()
           .timeout(const Duration(seconds: 5));
 
-      await storage.insert('tests', {
-        'id': 'w1',
-        'value': 'watch',
-        '_sync_status': SyncStatus.ok.index,
-        '_sync_operation': SyncOperation.insert.index,
-        '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
-      }, 'id');
+      await seed(
+        id: 'w1',
+        value: 'watch',
+        status: SyncStatus.ok,
+        op: SyncOperation.insert,
+      );
 
       await Future<void>.delayed(Duration.zero);
       final events = await eventsFuture;

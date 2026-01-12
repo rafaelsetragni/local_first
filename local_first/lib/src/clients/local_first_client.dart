@@ -180,14 +180,20 @@ class LocalFirstClient {
       } else if (repositoryChangeJson.containsKey('delete')) {
         final deletes = (repositoryChangeJson['delete'] as List);
         for (var element in deletes) {
-          if (element is! Map) continue;
-          final id = element['id']?.toString();
+          String? id;
+          String? eventId;
+          if (element is Map) {
+            id = element['id']?.toString();
+            eventId = element['event_id']?.toString();
+          } else if (element is String) {
+            id = element;
+          }
           if (id == null) continue;
           final object = await repository._getById(id);
           if (object == null) continue;
           events.add(
             object.copyWith(
-              eventId: element['event_id']?.toString() ?? object.eventId,
+              eventId: eventId ?? object.eventId,
               syncStatus: SyncStatus.ok,
               syncOperation: SyncOperation.delete,
             ),

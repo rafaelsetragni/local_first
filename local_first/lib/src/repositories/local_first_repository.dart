@@ -164,7 +164,7 @@ abstract class LocalFirstRepository<T> {
   Future<void> _insert(LocalFirstEvent<T> item) async {
     final model = item;
 
-    await _client.localStorage.insert(name, _toStorageJson(model), idFieldName);
+    await _client.localStorage.insert(name, _toDataJson(model), idFieldName);
 
     await _persistEvent(model);
     if (model.needSync) {
@@ -177,7 +177,7 @@ abstract class LocalFirstRepository<T> {
     await _client.localStorage.update(
       name,
       getId(model.state),
-      _toStorageJson(model),
+      _toDataJson(model),
     );
 
     await _persistEvent(model);
@@ -211,7 +211,7 @@ abstract class LocalFirstRepository<T> {
     await _client.localStorage.delete(name, getId(deleted.state));
     await _client.localStorage.insertEvent(
       name,
-      _toStorageJson(deleted),
+      _toEventJson(deleted),
       '_event_id',
     );
     await _markOlderEventsAsSynced(
@@ -220,11 +220,18 @@ abstract class LocalFirstRepository<T> {
     );
   }
 
-  Map<String, dynamic> _toStorageJson(LocalFirstEvent<T> model) {
-    final createdAt = model.syncCreatedAt.toUtc();
+  Map<String, dynamic> _toDataJson(LocalFirstEvent<T> model) {
     return {
       ...toJson(model.state),
+      '_last_event_id': model.eventId,
+    };
+  }
+
+  Map<String, dynamic> _toEventJson(LocalFirstEvent<T> model) {
+    final createdAt = model.syncCreatedAt.toUtc();
+    return {
       '_event_id': model.eventId,
+      '_data_id': getId(model.state),
       '_sync_status': model.syncStatus.index,
       '_sync_operation': model.syncOperation.index,
       '_sync_created_at': createdAt.millisecondsSinceEpoch,
@@ -235,7 +242,7 @@ abstract class LocalFirstRepository<T> {
     await _client.localStorage.updateEvent(
       name,
       event.eventId,
-      _toStorageJson(event),
+      _toEventJson(event),
     );
   }
 
@@ -283,12 +290,13 @@ abstract class LocalFirstRepository<T> {
   ///   .where('status', isEqualTo: 'active')
   ///   .getAll();
   /// ```
-  LocalFirstQuery<T> query() {
+  LocalFirstQuery<T> query({bool includeDeleted = false}) {
     return LocalFirstQuery<T>(
       repositoryName: name,
       delegate: _client.localStorage,
       fromJson: fromJson,
       repository: this,
+      includeDeleted: includeDeleted,
     );
   }
 
@@ -306,27 +314,24 @@ abstract class LocalFirstRepository<T> {
       final localEvent = localMap[remoteId];
 
       if (remoteEvent.isDeleted) {
-        if (localEvent != null && !localEvent.needSync) {
-          await _client.localStorage.delete(name, remoteId);
-          await _client.localStorage.insertEvent(
-            name,
-            _toStorageJson(
-              remoteOk.copyWith(syncOperation: SyncOperation.delete),
-            ),
-            '_event_id',
-          );
-          await _markOlderEventsAsSynced(
-            remoteId,
-            excludeEventId: remoteOk.eventId,
-          );
-        }
+        final deleted = remoteOk.copyWith(syncOperation: SyncOperation.delete);
+        await _client.localStorage.insertEvent(
+          name,
+          _toEventJson(deleted),
+          '_event_id',
+        );
+        await _client.localStorage.delete(name, remoteId);
+        await _markOlderEventsAsSynced(
+          remoteId,
+          excludeEventId: remoteOk.eventId,
+        );
         continue;
       }
 
       if (localEvent == null) {
         await _client.localStorage.insert(
           name,
-          _toStorageJson(remoteOk),
+          _toDataJson(remoteOk),
           idFieldName,
         );
         await _persistEvent(remoteOk);
@@ -338,7 +343,16 @@ abstract class LocalFirstRepository<T> {
       }
 
       if (remoteEvent.eventId == localEvent.eventId) {
-        await _persistEvent(remoteOk);
+        final confirmed = remoteOk.copyWith(
+          syncCreatedAt: localEvent.syncCreatedAt,
+          syncOperation: localEvent.syncOperation,
+        );
+        await _client.localStorage.update(
+          name,
+          remoteId,
+          _toDataJson(confirmed),
+        );
+        await _persistEvent(confirmed);
         continue;
       }
 
@@ -357,7 +371,7 @@ abstract class LocalFirstRepository<T> {
       await _client.localStorage.update(
         name,
         remoteId,
-        _toStorageJson(resolved),
+        _toDataJson(resolved),
       );
       await _persistEvent(resolved);
       await _markOlderEventsAsSynced(
@@ -403,7 +417,7 @@ abstract class LocalFirstRepository<T> {
       await _client.localStorage.updateEvent(
         name,
         updated.eventId,
-        _toStorageJson(updated),
+        _toEventJson(updated),
       );
     }
   }
@@ -412,26 +426,31 @@ abstract class LocalFirstRepository<T> {
     await _client.localStorage.update(
       name,
       getId(event.state),
-      _toStorageJson(event),
+      _toDataJson(event),
     );
     await _client.localStorage.updateEvent(
       name,
       event.eventId,
-      _toStorageJson(event),
+      _toEventJson(event),
     );
   }
 
   LocalFirstEvent<T> _eventFromJson(Map<String, dynamic> json) {
     final itemJson = Map<String, dynamic>.from(json);
+    final dataId = itemJson['_data_id'] as String?;
+    final lastEventId = itemJson.remove('_last_event_id') as String?;
     final statusIndex = itemJson.remove('_sync_status') as int?;
     final opIndex = itemJson.remove('_sync_operation') as int?;
     final createdAtMs = itemJson.remove('_sync_created_at') as int?;
     final eventId = itemJson.remove('_event_id') as String?;
+    itemJson.remove('_data_id');
+    // Ensure we have an id for deletes when data row was removed.
+    itemJson.putIfAbsent(idFieldName, () => dataId);
 
     final model = fromJson(itemJson);
     return LocalFirstEvent<T>(
       state: model,
-      eventId: eventId ?? LocalFirstIdGenerator.uuidV7(),
+      eventId: eventId ?? lastEventId ?? LocalFirstIdGenerator.uuidV7(),
       syncStatus: statusIndex != null
           ? SyncStatus.values[statusIndex]
           : SyncStatus.ok,
