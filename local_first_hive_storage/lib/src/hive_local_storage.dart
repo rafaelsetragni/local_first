@@ -105,8 +105,12 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   Future<void> _closeAllBoxes() async {
-    for (var box in _boxes.values) {
-      await box.close();
+    for (var box in _boxes.values.toList()) {
+      try {
+        await box.close();
+      } catch (_) {
+        // Ignore close errors to keep shutdown robust (tests may delete temp dirs).
+      }
     }
     _boxes.clear();
   }
@@ -415,10 +419,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     Map<String, dynamic>? data, {
     Object? lastEventId,
   }) {
-    final merged = <String, dynamic>{
-      if (data != null) ...data,
-      ...meta,
-    };
+    final merged = <String, dynamic>{if (data != null) ...data, ...meta};
     final dataId = meta['_data_id'];
     if (dataId is String) {
       merged.putIfAbsent('id', () => dataId);
@@ -453,7 +454,9 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
       final item = await _attachEventMetadata(query.repositoryName, rawItem);
       if (!query.includeDeleted &&
-          item['_sync_operation'] == SyncOperation.delete.index) continue;
+          item['_sync_operation'] == SyncOperation.delete.index) {
+        continue;
+      }
 
       // Apply filters
       bool matches = true;
@@ -525,11 +528,17 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     }
 
     controller.onListen = () async {
-      await emitCurrent();
-      final box = await _getBox(query.repositoryName);
-      final eventBox = await _getBox(query.repositoryName, isEvent: true);
-      dataSub = box.watch().listen((_) => emitCurrent());
-      eventSub = eventBox.watch().listen((_) => emitCurrent());
+      try {
+        await emitCurrent();
+        final box = await _getBox(query.repositoryName);
+        final eventBox = await _getBox(query.repositoryName, isEvent: true);
+        dataSub = box.watch().listen((_) => emitCurrent());
+        eventSub = eventBox.watch().listen((_) => emitCurrent());
+      } catch (e, st) {
+        if (!controller.isClosed) {
+          controller.addError(e, st);
+        }
+      }
     };
 
     controller.onCancel = () async {

@@ -241,10 +241,7 @@ class _MyHomePageState extends State<MyHomePage> {
     Animation<double> animation, {
     required bool appearing,
   }) {
-    final curved = CurvedAnimation(
-      parent: animation,
-      curve: Curves.easeOut,
-    );
+    final curved = CurvedAnimation(parent: animation, curve: Curves.easeOut);
     final avatar = _avatarMap[log.username] ?? '';
     return FadeTransition(
       opacity: appearing ? curved : animation,
@@ -403,9 +400,7 @@ class _MyHomePageState extends State<MyHomePage> {
                     Text(
                       'Hello, ${user.username}!',
                       textAlign: TextAlign.center,
-                      style: Theme.of(context)
-                          .textTheme
-                          .headlineMedium
+                      style: Theme.of(context).textTheme.headlineMedium
                           ?.copyWith(fontWeight: FontWeight.bold),
                     ),
                   ],
@@ -1086,8 +1081,8 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     repositoryNames: const ['counter_log', 'user'],
   );
   void Function(bool) _onConnectionChange = _noopConnection;
-  bool? _lastConnected;
   bool _isSyncing = false;
+  bool _connected = true;
 
   Timer? _timer;
   final JsonMap<DateTime?> lastSyncedAt = {};
@@ -1102,7 +1097,6 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     client.awaitInitialization.then((_) async {
       final initialConnected = await _quickPing();
       reportConnectionState(initialConnected);
-      _lastConnected = initialConnected;
       dev.log('Starting periodic sync', name: logTag);
       final pendingEvents = await getPendingEvents();
       for (final event in pendingEvents) {
@@ -1115,6 +1109,8 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
             : null;
       }
       _timer = Timer.periodic(period, _onTimerTick);
+      // Trigger immediate sync on start (and on reconnection).
+      unawaited(_onTimerTick(null));
     });
   }
 
@@ -1142,14 +1138,17 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   Future<void> _onTimerTick(_) async {
     if (_isSyncing) return;
     _isSyncing = true;
+    final drained = <String, List<LocalFirstEvent>>{};
     try {
       if (pendingChanges.isNotEmpty) {
-        final changes = JsonMap<List<LocalFirstEvent>>.from(pendingChanges);
+        drained.addAll(pendingChanges);
         pendingChanges.clear();
 
-        await _pushToRemote(changes).timeout(period * 2);
+        await _pushToRemote(drained).timeout(period * 2);
       }
-      final remoteChanges = await mongoApi.pull(lastSyncedAt).timeout(period * 2);
+      final remoteChanges = await mongoApi
+          .pull(lastSyncedAt)
+          .timeout(period * 2);
       if (remoteChanges['changes']?.isNotEmpty) {
         await pullChangesToLocal(remoteChanges);
 
@@ -1165,13 +1164,19 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
           }
         }
       }
-      _emitConnection(true);
+      _setConnected(true);
     } on TimeoutException catch (e, s) {
       dev.log('Sync timeout: $e', name: logTag, error: e, stackTrace: s);
-      _emitConnection(false);
+      _setConnected(false);
     } catch (e, s) {
       dev.log('Sync error: $e', name: logTag, error: e, stackTrace: s);
-      _emitConnection(false);
+      // Re-queue drained changes so they retry on next tick.
+      if (drained.isNotEmpty) {
+        for (final entry in drained.entries) {
+          pendingChanges.putIfAbsent(entry.key, () => []).addAll(entry.value);
+        }
+      }
+      _setConnected(false);
     } finally {
       _isSyncing = false;
     }
@@ -1218,18 +1223,22 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   void _emitConnection(bool connected) {
     try {
       _onConnectionChange(connected);
-      final wasDisconnected = _lastConnected == false;
-      _lastConnected = connected;
-      if (connected && wasDisconnected && _timer != null && !_isSyncing) {
-        // Trigger an immediate sync when coming back online.
-        _onTimerTick(null);
-      }
       reportConnectionState(connected);
       dev.log(
         'Connection state: ${connected ? 'connected' : 'disconnected'}',
         name: logTag,
       );
     } catch (_) {}
+  }
+
+  void _setConnected(bool connected) {
+    if (_connected == connected) return;
+    _connected = connected;
+    _emitConnection(connected);
+    if (connected && _timer != null && !_isSyncing) {
+      // Trigger an immediate sync when coming back online.
+      unawaited(_onTimerTick(null));
+    }
   }
 
   static void _noopConnection(bool _) {}

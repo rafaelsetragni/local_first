@@ -21,8 +21,8 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     this.databasePath,
     String namespace = 'default',
     DatabaseFactory? dbFactory,
-  })  : _namespace = namespace,
-        _factory = dbFactory ?? databaseFactory {
+  }) : _namespace = namespace,
+       _factory = dbFactory ?? databaseFactory {
     _validateIdentifier(_namespace, 'namespace');
   }
 
@@ -182,10 +182,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<Map<String, dynamic>?> getById(
-    String tableName,
-    String id,
-  ) async {
+  Future<Map<String, dynamic>?> getById(String tableName, String id) async {
     final db = await _database;
     await _ensureTables(tableName);
     final dataTable = _tableName(tableName);
@@ -324,7 +321,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     if (dataId is! String) {
       throw ArgumentError('Event item is missing data id reference.');
     }
-    final row = _encodeEventRow(item, dataId as String, id);
+    final row = _encodeEventRow(item, dataId, id);
 
     await db.insert(
       resolvedTable,
@@ -518,10 +515,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     );
   }
 
-  String _tableName(
-    String name, {
-    bool isEvent = false,
-  }) {
+  String _tableName(String name, {bool isEvent = false}) {
     _validateIdentifier(name, 'tableName');
     final base = name;
     return isEvent ? '${base}__events' : base;
@@ -690,9 +684,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> query(
-    LocalFirstQuery query,
-  ) async {
+  Future<List<Map<String, dynamic>>> query(LocalFirstQuery query) async {
     final db = await _database;
     await _ensureTables(query.repositoryName);
     final resolvedTable = _tableName(query.repositoryName);

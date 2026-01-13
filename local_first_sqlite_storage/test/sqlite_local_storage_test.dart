@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:async/async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_first/local_first.dart';
 import 'package:local_first_sqlite_storage/local_first_sqlite_storage.dart';
@@ -29,9 +30,7 @@ class DummyModel {
 }
 
 abstract class QueryBehavior {
-  Future<List<Map<String, dynamic>>> call(
-    LocalFirstQuery query,
-  );
+  Future<List<Map<String, dynamic>>> call(LocalFirstQuery query);
 }
 
 class MockableSqliteLocalFirstStorage extends SqliteLocalFirstStorage {
@@ -45,9 +44,7 @@ class MockableSqliteLocalFirstStorage extends SqliteLocalFirstStorage {
   final QueryBehavior behavior;
 
   @override
-  Future<List<Map<String, dynamic>>> query(
-    LocalFirstQuery query,
-  ) {
+  Future<List<Map<String, dynamic>>> query(LocalFirstQuery query) {
     return behavior(query);
   }
 }
@@ -74,6 +71,7 @@ void main() {
       List<QuerySort> sorts = const [],
       int? limit,
       int? offset,
+      bool includeDeleted = false,
     }) {
       return LocalFirstQuery<DummyModel>(
         repositoryName: 'users',
@@ -91,17 +89,32 @@ void main() {
         sorts: sorts,
         limit: limit,
         offset: offset,
+        includeDeleted: includeDeleted,
       );
     }
 
     Future<void> insertRow(Map<String, dynamic> item) {
-      final now = DateTime.now().millisecondsSinceEpoch;
       return storage.insert('users', {
         ...item,
-        '_sync_status': SyncStatus.ok.index,
-        '_sync_operation': SyncOperation.insert.index,
-        '_sync_created_at': now,
+        '_last_event_id': item['_last_event_id'] ?? 'evt-${item['id']}',
       }, 'id');
+    }
+
+    Future<void> insertEvent({
+      required String dataId,
+      required SyncOperation op,
+      required SyncStatus status,
+      int? createdAt,
+      String? eventId,
+    }) {
+      final id = eventId ?? 'evt-$dataId';
+      return storage.insertEvent('users', {
+        '_event_id': id,
+        '_data_id': dataId,
+        '_sync_status': status.index,
+        '_sync_operation': op.index,
+        '_sync_created_at': createdAt ?? DateTime.now().millisecondsSinceEpoch,
+      }, '_event_id');
     }
 
     setUp(() async {
@@ -139,14 +152,40 @@ void main() {
         'username': 'alice',
         'age': 20,
         'score': 1.1,
+        '_last_event_id': 'evt-1',
       });
-      await insertRow({'id': '2', 'username': 'bob', 'age': 25, 'score': 2.2});
+      await insertRow({
+        'id': '2',
+        'username': 'bob',
+        'age': 25,
+        'score': 2.2,
+        '_last_event_id': 'evt-2',
+      });
       await insertRow({
         'id': '3',
         'username': 'carol',
         'age': 30,
         'score': 3.3,
+        '_last_event_id': 'evt-3',
       });
+      await insertEvent(
+        dataId: '1',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-1',
+      );
+      await insertEvent(
+        dataId: '2',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-2',
+      );
+      await insertEvent(
+        dataId: '3',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-3',
+      );
 
       final results = await storage.query(
         buildQuery(sorts: [const QuerySort(field: 'age')], limit: 1, offset: 1),
@@ -169,7 +208,14 @@ void main() {
         'avatar': avatarBytes,
         'nullable': null,
         'nickname': 'nick',
+        '_last_event_id': 'evt-enc',
       });
+      await insertEvent(
+        dataId: 'enc',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-enc',
+      );
 
       final row = await storage.getById('users', 'enc');
       // JSON payload is preserved, but columns are encoded for indexing.
@@ -188,7 +234,14 @@ void main() {
         'age': 30,
         'verified': 0, // numeric bool
         'score': 1.0,
+        '_last_event_id': 'evt-mix',
       });
+      await insertEvent(
+        dataId: 'mix_bool',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-mix',
+      );
 
       final row = await storage.getById('users', 'mix_bool');
       expect(row?['verified'], 0);
@@ -200,7 +253,14 @@ void main() {
         'username': 'mixed',
         'age': 31,
         'birth': '2024-01-01T00:00:00.000Z', // string datetime
+        '_last_event_id': 'evt-dt',
       });
+      await insertEvent(
+        dataId: 'mix_dt',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-dt',
+      );
 
       final row = await storage.getById('users', 'mix_dt');
       expect(row?['birth'], '2024-01-01T00:00:00.000Z');
@@ -208,6 +268,11 @@ void main() {
 
     test('insert, getById, update, and delete round trip', () async {
       await insertRow({'id': '10', 'username': 'zelda', 'age': 40});
+      await insertEvent(
+        dataId: '10',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+      );
 
       final fetched = await storage.getById('users', '10');
       expect(fetched?['username'], 'zelda');
@@ -216,10 +281,14 @@ void main() {
         'id': '10',
         'username': 'zelda',
         'age': 41,
-        '_sync_status': SyncStatus.ok.index,
-        '_sync_operation': SyncOperation.update.index,
-        '_sync_created_at': DateTime.now().millisecondsSinceEpoch,
+        '_last_event_id': 'evt-10b',
       });
+      await insertEvent(
+        dataId: '10',
+        op: SyncOperation.update,
+        status: SyncStatus.ok,
+        eventId: 'evt-10b',
+      );
 
       final updated = await storage.getById('users', '10');
       expect(updated?['age'], 41);
@@ -231,12 +300,22 @@ void main() {
 
     test('deleteAll and clearAllData remove rows and metadata', () async {
       await insertRow({'id': '1', 'username': 'a', 'age': 20});
+      await insertEvent(
+        dataId: '1',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+      );
       await storage.setMeta('key', 'value');
 
       await storage.deleteAll('users');
       expect(await storage.getAll('users'), isEmpty);
 
       await insertRow({'id': '2', 'username': 'b', 'age': 21});
+      await insertEvent(
+        dataId: '2',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+      );
       await storage.clearAllData();
       expect(await storage.getAll('users'), isEmpty);
       expect(await storage.getMeta('key'), isNull);
@@ -248,20 +327,15 @@ void main() {
     });
 
     test('watchQuery emits on changes', () async {
-      final stream = storage.watchQuery(buildQuery());
-
-      final expectation = expectLater(
-        stream,
-        emitsInOrder([
-          isEmpty,
-          predicate<List<Map<String, dynamic>>>(
-            (items) => items.any((m) => m['id'] == 'w1'),
-          ),
-        ]),
-      );
+      final queue = StreamQueue(storage.watchQuery(buildQuery()));
+      final initial = await queue.next;
+      expect(initial, isEmpty);
 
       await insertRow({'id': 'w1', 'username': 'watch', 'age': 22});
-      await expectation;
+      final afterInsert = await queue.next;
+      expect(afterInsert.any((m) => m['id'] == 'w1'), isTrue);
+
+      await queue.cancel();
     });
 
     test('watchQuery throws when storage not initialized', () {
