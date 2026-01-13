@@ -1,16 +1,41 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:async/async.dart';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 import 'package:local_first/local_first.dart';
 import 'package:local_first_hive_storage/local_first_hive_storage.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:path/path.dart' as p;
 
 void main() {
   group('HiveLocalFirstStorage', () {
     late Directory tempDir;
     late HiveLocalFirstStorage storage;
+    Future<void> seedEvent({
+      required String table,
+      required String id,
+      Map<String, dynamic> data = const {},
+      required Map<String, dynamic> event,
+    }) async {
+      await storage.insert(table, {
+        'id': id,
+        ...data,
+        '_last_event_id': event['_event_id'],
+      }, 'id');
+      await storage.insertEvent(
+        table,
+        {
+          '_event_id': event['_event_id'],
+          '_data_id': id,
+          '_sync_status': event['_sync_status'],
+          '_sync_operation': event['_sync_operation'],
+          '_sync_created_at': event['_sync_created_at'],
+        },
+        '_event_id',
+      );
+    }
 
     setUp(() async {
       tempDir = await Directory.systemTemp.createTemp('hive_local_first_test');
@@ -199,6 +224,32 @@ void main() {
       expect(mapped.length, 3); // ids 1,2,3 (skipping null age)
     });
 
+    test('getAllEvents merges event metadata and survives missing data', () async {
+      final createdAt = DateTime.utc(2024, 1, 1).millisecondsSinceEpoch;
+      await seedEvent(
+        table: 'users',
+        id: '1',
+        data: {'name': 'Alice'},
+        event: {
+          '_event_id': 'evt-1',
+          '_sync_status': SyncStatus.ok.index,
+          '_sync_operation': SyncOperation.insert.index,
+          '_sync_created_at': createdAt,
+        },
+      );
+
+      final events = await storage.getAllEvents('users');
+      expect(events.single['_event_id'], 'evt-1');
+      expect(events.single['_data_id'], '1');
+      expect(events.single['name'], 'Alice');
+
+      // Remove data row to simulate orphaned event; id must still be present.
+      await storage.delete('users', '1');
+      final orphan = await storage.getAllEvents('users');
+      expect(orphan.single['_data_id'], '1');
+      expect(orphan.single['id'], '1');
+    });
+
     test('watchQuery emits initial results', () async {
       await storage.insert('users', {'id': '1'}, 'id');
       final q = LocalFirstQuery<_TestModel>(
@@ -209,7 +260,15 @@ void main() {
       );
 
       final stream = q.watch();
-      final first = await stream.first;
+      final completer = Completer<List<LocalFirstEvent<_TestModel>>>();
+      late final StreamSubscription sub;
+      sub = stream.listen((value) {
+        if (!completer.isCompleted) {
+          completer.complete(value);
+        }
+      });
+      final first = await completer.future;
+      await sub.cancel();
       expect(first.length, 1);
       expect(first.first.state.id, '1');
     });
@@ -233,32 +292,30 @@ void main() {
     });
 
     test('watchQuery streams changes after initial emission', () async {
-      final q = LocalFirstQuery<_TestModel>(
-        repositoryName: 'users',
-        delegate: storage,
-        fromJson: _TestModel.fromJson,
-        repository: _DummyRepo(),
-      );
+      final stream = storage
+          .watchQuery(
+            LocalFirstQuery<_TestModel>(
+              repositoryName: 'users',
+              delegate: storage,
+              fromJson: _TestModel.fromJson,
+              repository: _DummyRepo(),
+            ),
+          )
+          .map((items) => items.map((e) => e['id'].toString()).toList());
 
-      final iterator = StreamIterator(
-        storage
-            .watchQuery(q)
-            .map((items) => items.map((e) => e['id'].toString()).toList()),
-      );
-
-      // Initial emission should be an empty list.
-      expect(await iterator.moveNext(), isTrue);
-      expect(iterator.current, isEmpty);
+      final queue = StreamQueue(stream);
+      final initial = await queue.next;
+      expect(initial, isEmpty);
 
       await storage.insert('users', {'id': '1', 'age': 10}, 'id');
-      expect(await iterator.moveNext(), isTrue);
-      expect(iterator.current, ['1']);
+      final afterFirst = await queue.next;
+      expect(afterFirst, ['1']);
 
       await storage.insert('users', {'id': '2', 'age': 20}, 'id');
-      expect(await iterator.moveNext(), isTrue);
-      expect(iterator.current, containsAll(['1', '2']));
+      final afterSecond = await queue.next;
+      expect(afterSecond, containsAll(['1', '2']));
 
-      await iterator.cancel();
+      await queue.cancel();
     });
   });
 
@@ -338,7 +395,7 @@ void main() {
         customPath: Directory.systemTemp.path,
         namespace: 'ns_emit_error',
         hive: fakeHive,
-        initFlutter: () async {},
+        initFlutter: ([String? _]) async {},
       );
       await storage.initialize();
 
@@ -400,9 +457,10 @@ void main() {
       await storage.initialize();
       await storage.setMeta('k', 'v');
 
-      final hasMetaBox = Directory(
-        dir.path,
-      ).listSync().any((f) => f.path.contains('offline_metadata'));
+      final namespaceDir = Directory(p.join(dir.path, 'ns_init'));
+      final hasMetaBox = namespaceDir
+          .listSync(recursive: true)
+          .any((f) => f.path.contains('offline_metadata'));
       expect(hasMetaBox, isTrue);
 
       await storage.close();
@@ -433,9 +491,11 @@ void main() {
       ).thenAnswer((_) async => mockBox);
       when(() => mockMeta.close()).thenAnswer((_) async {});
       when(() => mockMeta.clear()).thenAnswer((_) async => 0);
+      when(() => mockMeta.name).thenReturn('offline_metadata');
       when(() => mockMeta.values).thenReturn(const []);
       when(() => mockBox.clear()).thenAnswer((_) async => 0);
       when(() => mockBox.close()).thenAnswer((_) async {});
+      when(() => mockBox.name).thenReturn('users');
       when(() => mockBox.put(any(), any())).thenAnswer((_) async {});
       when(() => mockBox.values).thenReturn(const <Map<dynamic, dynamic>>[]);
       when(
@@ -478,7 +538,7 @@ void main() {
       final storage = HiveLocalFirstStorage(
         namespace: 'ns_default',
         hive: fakeHive,
-        initFlutter: () async {
+        initFlutter: ([String? _]) async {
           initFlutterCalled = true;
         },
       );
@@ -513,9 +573,9 @@ void main() {
       when(() => mockMeta.close()).thenAnswer((_) async {});
       when(() => mockMeta.clear()).thenAnswer((_) async => 0);
       when(() => mockMeta.values).thenReturn(const []);
-      when(() => mockBox.keys).thenReturn([1, 2]);
-      when(() => mockBox.get(1)).thenReturn(null);
-      when(() => mockBox.get(2)).thenReturn({'id': '2', 'age': 10});
+      when(() => mockBox.keys).thenReturn(['1', '2']);
+      when(() => mockBox.get('1')).thenReturn(null);
+      when(() => mockBox.get('2')).thenReturn({'id': '2', 'age': 10});
 
       final storage = HiveLocalFirstStorage(
         customPath: Directory.systemTemp.path,

@@ -21,8 +21,8 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     this.databasePath,
     String namespace = 'default',
     DatabaseFactory? dbFactory,
-  })  : _namespace = namespace,
-        _factory = dbFactory ?? databaseFactory {
+  }) : _namespace = namespace,
+       _factory = dbFactory ?? databaseFactory {
     _validateIdentifier(_namespace, 'namespace');
   }
 
@@ -140,59 +140,66 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     required String idFieldName,
   }) async {
     _schemas[tableName] = Map.unmodifiable(schema);
-    await _ensureTable(tableName);
-    await _ensureTable(tableName, isEvent: true);
+    await _ensureTables(tableName);
   }
 
   @override
   Future<List<Map<String, dynamic>>> getAll(String tableName) async {
     final db = await _database;
-    await _ensureTable(tableName);
-    final resolvedTable = _tableName(tableName);
+    await _ensureTables(tableName);
+    final dataTable = _tableName(tableName);
+    final eventTable = _tableName(tableName, isEvent: true);
 
-    final rows = await db.query(resolvedTable);
+    final rows = await db.rawQuery(
+      'SELECT d.data, d._last_event_id, '
+      'e._event_id, e._sync_status, e._sync_operation, e._sync_created_at '
+      'FROM $dataTable d '
+      'LEFT JOIN $eventTable e ON d._last_event_id = e._event_id',
+    );
+
     return rows
-        .map((row) => row['data'])
-        .whereType<String>()
-        .map((json) => Map<String, dynamic>.from(jsonDecode(json) as Map))
+        .map(_decodeJoinedRow)
+        .where((row) => row['_sync_operation'] != SyncOperation.delete.index)
         .toList();
   }
 
   @override
   Future<List<Map<String, dynamic>>> getAllEvents(String tableName) async {
     final db = await _database;
-    await _ensureTable(tableName, isEvent: true);
-    final resolvedTable = _tableName(tableName, isEvent: true);
+    await _ensureTables(tableName);
+    final eventTable = _tableName(tableName, isEvent: true);
+    final dataTable = _tableName(tableName);
 
-    final rows = await db.query(resolvedTable);
-    return rows
-        .map((row) => row['data'])
-        .whereType<String>()
-        .map((json) => Map<String, dynamic>.from(jsonDecode(json) as Map))
-        .toList();
+    final rows = await db.rawQuery(
+      'SELECT d.data, d._last_event_id, '
+      'e._event_id, e._data_id, e._sync_status, '
+      'e._sync_operation, e._sync_created_at '
+      'FROM $eventTable e '
+      'LEFT JOIN $dataTable d ON e._data_id = d.id',
+    );
+
+    return rows.map(_decodeJoinedRow).toList();
   }
 
   @override
-  Future<Map<String, dynamic>?> getById(
-    String tableName,
-    String id,
-  ) async {
+  Future<Map<String, dynamic>?> getById(String tableName, String id) async {
     final db = await _database;
-    await _ensureTable(tableName);
-    final resolvedTable = _tableName(tableName);
+    await _ensureTables(tableName);
+    final dataTable = _tableName(tableName);
+    final eventTable = _tableName(tableName, isEvent: true);
 
-    final rows = await db.query(
-      resolvedTable,
-      where: 'id = ?',
-      whereArgs: [id],
-      limit: 1,
+    final rows = await db.rawQuery(
+      'SELECT d.data, d._last_event_id, '
+      'e._event_id, e._sync_status, e._sync_operation, e._sync_created_at '
+      'FROM $dataTable d '
+      'LEFT JOIN $eventTable e ON d._last_event_id = e._event_id '
+      'WHERE d.id = ? '
+      'LIMIT 1',
+      [id],
     );
 
-    if (rows.isEmpty) return null;
-    final data = rows.first['data'];
-    if (data is! String) return null;
-
-    return Map<String, dynamic>.from(jsonDecode(data) as Map);
+    if (rows.isEmpty || rows.first['data'] == null) return null;
+    return _decodeJoinedRow(rows.first);
   }
 
   @override
@@ -201,21 +208,23 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     String id,
   ) async {
     final db = await _database;
-    await _ensureTable(tableName, isEvent: true);
-    final resolvedTable = _tableName(tableName, isEvent: true);
+    await _ensureTables(tableName);
+    final eventTable = _tableName(tableName, isEvent: true);
+    final dataTable = _tableName(tableName);
 
-    final rows = await db.query(
-      resolvedTable,
-      where: 'id = ?',
-      whereArgs: [id],
-      limit: 1,
+    final rows = await db.rawQuery(
+      'SELECT d.data, d._last_event_id, '
+      'e._event_id, e._data_id, e._sync_status, '
+      'e._sync_operation, e._sync_created_at '
+      'FROM $eventTable e '
+      'LEFT JOIN $dataTable d ON e._data_id = d.id '
+      'WHERE e._event_id = ? '
+      'LIMIT 1',
+      [id],
     );
 
     if (rows.isEmpty) return null;
-    final data = rows.first['data'];
-    if (data is! String) return null;
-
-    return Map<String, dynamic>.from(jsonDecode(data) as Map);
+    return _decodeJoinedRow(rows.first);
   }
 
   @override
@@ -225,7 +234,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     String idField,
   ) async {
     final db = await _database;
-    await _ensureTable(tableName);
+    await _ensureTables(tableName);
     final resolvedTable = _tableName(tableName);
 
     final id = item[idField];
@@ -234,7 +243,8 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     }
 
     final schema = _schemaFor(tableName);
-    final row = _encodeRowForStorage(schema, item, id);
+    final lastEventId = item['_last_event_id'] as String?;
+    final row = _encodeDataRow(schema, item, id, lastEventId);
 
     await db.insert(
       resolvedTable,
@@ -252,23 +262,26 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     String idField,
   ) async {
     final db = await _database;
-    await _ensureTable(tableName, isEvent: true);
+    await _ensureTables(tableName);
     final resolvedTable = _tableName(tableName, isEvent: true);
 
-    final id = item[idField];
-    if (id is! String) {
+    final eventId = item[idField];
+    final dataId = item['_data_id'] ?? item[idField];
+    if (eventId is! String) {
       throw ArgumentError('Item is missing string id field "$idField".');
     }
+    if (dataId is! String) {
+      throw ArgumentError('Event item is missing data id reference.');
+    }
 
-    final schema = _schemaFor(tableName);
-    final row = _encodeRowForStorage(schema, item, id);
+    final row = _encodeEventRow(item, dataId, eventId);
 
     await db.insert(
       resolvedTable,
       row,
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
-
+    await _notifyWatchers(tableName);
   }
 
   @override
@@ -278,11 +291,12 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     Map<String, dynamic> item,
   ) async {
     final db = await _database;
-    await _ensureTable(tableName);
+    await _ensureTables(tableName);
     final resolvedTable = _tableName(tableName);
 
     final schema = _schemaFor(tableName);
-    final row = _encodeRowForStorage(schema, item, id);
+    final eventId = item['_last_event_id'] as String?;
+    final row = _encodeDataRow(schema, item, id, eventId);
 
     await db.insert(
       resolvedTable,
@@ -300,24 +314,28 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     Map<String, dynamic> item,
   ) async {
     final db = await _database;
-    await _ensureTable(tableName, isEvent: true);
+    await _ensureTables(tableName);
     final resolvedTable = _tableName(tableName, isEvent: true);
 
-    final schema = _schemaFor(tableName);
-    final row = _encodeRowForStorage(schema, item, id);
+    final dataId = item['_data_id'] ?? id;
+    if (dataId is! String) {
+      throw ArgumentError('Event item is missing data id reference.');
+    }
+    final row = _encodeEventRow(item, dataId, id);
 
     await db.insert(
       resolvedTable,
       row,
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+    await _notifyWatchers(tableName);
   }
 
   @override
   Future<void> delete(String repositoryName, String id) async {
     final db = await _database;
     final resolvedTable = _tableName(repositoryName);
-    await _ensureTable(repositoryName);
+    await _ensureDataTable(repositoryName);
 
     await db.delete(resolvedTable, where: 'id = ?', whereArgs: [id]);
     await _notifyWatchers(repositoryName);
@@ -327,15 +345,16 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   Future<void> deleteEvent(String repositoryName, String id) async {
     final db = await _database;
     final resolvedTable = _tableName(repositoryName, isEvent: true);
-    await _ensureTable(repositoryName, isEvent: true);
+    await _ensureEventTable(repositoryName);
 
     await db.delete(resolvedTable, where: 'id = ?', whereArgs: [id]);
+    await _notifyWatchers(repositoryName);
   }
 
   @override
   Future<void> deleteAll(String tableName) async {
     final db = await _database;
-    await _ensureTable(tableName);
+    await _ensureDataTable(tableName);
     final resolvedTable = _tableName(tableName);
 
     await db.delete(resolvedTable);
@@ -345,10 +364,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   @override
   Future<void> deleteAllEvents(String tableName) async {
     final db = await _database;
-    await _ensureTable(tableName, isEvent: true);
+    await _ensureEventTable(tableName);
     final resolvedTable = _tableName(tableName, isEvent: true);
 
     await db.delete(resolvedTable);
+    await _notifyWatchers(tableName);
   }
 
   @override
@@ -433,27 +453,21 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return _schemas[repositoryName] ?? const {};
   }
 
-  Future<void> _ensureTable(
-    String repositoryName, {
-    bool isEvent = false,
-  }) async {
+  Future<void> _ensureTables(String repositoryName) async {
+    await _ensureDataTable(repositoryName);
+    await _ensureEventTable(repositoryName);
+  }
+
+  Future<void> _ensureDataTable(String repositoryName) async {
     final db = await _database;
-    final resolvedTableName = _tableName(repositoryName, isEvent: isEvent);
+    final resolvedTableName = _tableName(repositoryName);
     final schema = _schemaFor(repositoryName);
-    const reservedColumns = {
-      'id',
-      'data',
-      '_sync_status',
-      '_sync_operation',
-      '_sync_created_at',
-    };
+    const reservedColumns = {'id', 'data', '_last_event_id'};
 
     final columnDefinitions = StringBuffer(
       'id TEXT PRIMARY KEY, '
       'data TEXT NOT NULL, '
-      '_sync_status INTEGER, '
-      '_sync_operation INTEGER, '
-      '_sync_created_at INTEGER',
+      '_last_event_id TEXT',
     );
 
     for (final entry in schema.entries) {
@@ -468,6 +482,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       'CREATE TABLE IF NOT EXISTS $resolvedTableName (${columnDefinitions.toString()})',
     );
 
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS ${resolvedTableName}__last_event '
+      'ON $resolvedTableName(_last_event_id)',
+    );
+
     for (final entry in schema.entries) {
       await db.execute(
         'CREATE INDEX IF NOT EXISTS ${resolvedTableName}__${entry.key} '
@@ -476,10 +495,27 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     }
   }
 
-  String _tableName(
-    String name, {
-    bool isEvent = false,
-  }) {
+  Future<void> _ensureEventTable(String repositoryName) async {
+    final db = await _database;
+    final resolvedTableName = _tableName(repositoryName, isEvent: true);
+
+    await db.execute(
+      'CREATE TABLE IF NOT EXISTS $resolvedTableName ('
+      '_event_id TEXT PRIMARY KEY, '
+      '_data_id TEXT NOT NULL, '
+      '_sync_status INTEGER, '
+      '_sync_operation INTEGER, '
+      '_sync_created_at INTEGER'
+      ')',
+    );
+
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS ${resolvedTableName}__data '
+      'ON $resolvedTableName(_data_id)',
+    );
+  }
+
+  String _tableName(String name, {bool isEvent = false}) {
     _validateIdentifier(name, 'tableName');
     final base = name;
     return isEvent ? '${base}__events' : base;
@@ -540,17 +576,27 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     }
   }
 
-  Map<String, Object?> _encodeRowForStorage(
+  Map<String, Object?> _encodeDataRow(
     Map<String, LocalFieldType> schema,
     Map<String, dynamic> item,
     String id,
+    String? lastEventId,
   ) {
+    final payload = Map<String, dynamic>.from(item);
+    const metaKeys = {
+      '_last_event_id',
+      '_event_id',
+      '_data_id',
+      '_sync_status',
+      '_sync_operation',
+      '_sync_created_at',
+    };
+    payload.removeWhere((key, _) => metaKeys.contains(key));
+
     final row = <String, Object?>{
       'id': id,
-      'data': jsonEncode(_normalizeJsonMap(item)),
-      '_sync_status': item['_sync_status'],
-      '_sync_operation': item['_sync_operation'],
-      '_sync_created_at': item['_sync_created_at'],
+      'data': jsonEncode(_normalizeJsonMap(payload)),
+      '_last_event_id': lastEventId,
     };
 
     for (final entry in schema.entries) {
@@ -558,6 +604,46 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     }
 
     return row;
+  }
+
+  Map<String, Object?> _encodeEventRow(
+    Map<String, dynamic> item,
+    String dataId,
+    String eventId,
+  ) {
+    return {
+      '_event_id': eventId,
+      '_data_id': dataId,
+      '_sync_status': item['_sync_status'],
+      '_sync_operation': item['_sync_operation'],
+      '_sync_created_at': item['_sync_created_at'],
+    };
+  }
+
+  Map<String, dynamic> _decodeJoinedRow(Map<String, Object?> row) {
+    final data = row['data'];
+    final map = data is String
+        ? Map<String, dynamic>.from(jsonDecode(data) as Map)
+        : <String, dynamic>{};
+
+    final lastEventId = row['_last_event_id'];
+    final eventId = row['_event_id'];
+    final syncStatus = row['_sync_status'];
+    final syncOperation = row['_sync_operation'];
+    final syncCreatedAt = row['_sync_created_at'];
+    final dataId = row['_data_id'];
+
+    if (lastEventId is String) map['_last_event_id'] = lastEventId;
+    if (eventId is String) map['_event_id'] = eventId;
+    if (dataId is String) {
+      map['_data_id'] = dataId;
+      map.putIfAbsent('id', () => dataId);
+    }
+    if (syncStatus != null) map['_sync_status'] = syncStatus;
+    if (syncOperation != null) map['_sync_operation'] = syncOperation;
+    if (syncCreatedAt != null) map['_sync_created_at'] = syncCreatedAt;
+
+    return map;
   }
 
   Map<String, dynamic> _normalizeJsonMap(Map<String, dynamic> map) {
@@ -598,12 +684,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> query(
-    LocalFirstQuery query,
-  ) async {
+  Future<List<Map<String, dynamic>>> query(LocalFirstQuery query) async {
     final db = await _database;
-    await _ensureTable(query.repositoryName);
+    await _ensureTables(query.repositoryName);
     final resolvedTable = _tableName(query.repositoryName);
+    final eventTable = _tableName(query.repositoryName, isEvent: true);
     final schema = _schemaFor(query.repositoryName);
 
     for (final filter in query.filters) {
@@ -618,10 +703,10 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     String columnExpr(String field) {
       if (schema.containsKey(field)) {
-        return '"$field"';
+        return 'd."$field"';
       }
       args.add('\$.$field');
-      return 'json_extract(data, ?)';
+      return 'json_extract(d.data, ?)';
     }
 
     Object? encode(String field, dynamic value) {
@@ -696,7 +781,12 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       orderClauses.add('$column ${sort.descending ? 'DESC' : 'ASC'}');
     }
 
-    final sql = StringBuffer('SELECT data FROM $resolvedTable');
+    final sql = StringBuffer(
+      'SELECT d.data, d._last_event_id, '
+      'e._event_id, e._sync_status, e._sync_operation, e._sync_created_at '
+      'FROM $resolvedTable d '
+      'LEFT JOIN $eventTable e ON d._last_event_id = e._event_id',
+    );
     if (whereClauses.isNotEmpty) {
       sql.write(' WHERE ${whereClauses.join(' AND ')}');
     }
@@ -721,10 +811,12 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     final rows = await db.rawQuery(sql.toString(), args);
 
-    return rows
-        .map((row) => row['data'])
-        .whereType<String>()
-        .map((json) => Map<String, dynamic>.from(jsonDecode(json) as Map))
+    final mapped = rows.map(_decodeJoinedRow);
+    if (query.includeDeleted) {
+      return mapped.toList();
+    }
+    return mapped
+        .where((row) => row['_sync_operation'] != SyncOperation.delete.index)
         .toList();
   }
 }

@@ -544,15 +544,12 @@ class RepositoryService {
   final LocalFirstRepository<UserModel> userRepository;
   final LocalFirstRepository<CounterLogModel> counterLogRepository;
   final MongoPeriodicSyncStrategy syncStrategy;
-  List<UserModel> _usersFromEvents(
-    List<LocalFirstEvent<UserModel>> events,
-  ) =>
+  List<UserModel> _usersFromEvents(List<LocalFirstEvent<UserModel>> events) =>
       events.map((e) => e.state).toList();
 
   List<CounterLogModel> _logsFromEvents(
     List<LocalFirstEvent<CounterLogModel>> events,
-  ) =>
-      events.map((e) => e.state).toList();
+  ) => events.map((e) => e.state).toList();
 
   RepositoryService._internal()
     : userRepository = _buildUserRepository(),
@@ -636,13 +633,12 @@ class RepositoryService {
   Future<List<UserModel>> getUsers() async =>
       _usersFromEvents(await userRepository.query().getAll());
 
-  Future<List<CounterLogModel>> getLogs() async =>
-      _logsFromEvents(
-        await counterLogRepository
-            .query()
-            .orderBy('created_at', descending: true)
-            .getAll(),
-      );
+  Future<List<CounterLogModel>> getLogs() async => _logsFromEvents(
+    await counterLogRepository
+        .query()
+        .orderBy('created_at', descending: true)
+        .getAll(),
+  );
 
   Stream<List<CounterLogModel>> watchLogs() => counterLogRepository
       .query()
@@ -658,11 +654,7 @@ class RepositoryService {
       watchLogs().map((logs) => logs.take(limit).toList());
 
   Stream<List<UserModel>> watchUsers() =>
-      userRepository
-          .query()
-          .orderBy('username')
-          .watch()
-          .map(_usersFromEvents);
+      userRepository.query().orderBy('username').watch().map(_usersFromEvents);
 
   Future<JsonMap<String?>> getAvatarsForUsers(Set<String> usernames) async {
     if (usernames.isEmpty) return {};
@@ -770,8 +762,6 @@ class UserModel {
     );
   }
 
-  @override
-  @override
   JsonMap<dynamic> toJson() {
     return {
       'id': id,
@@ -843,7 +833,6 @@ class CounterLogModel {
     );
   }
 
-  @override
   JsonMap<dynamic> toJson() {
     return {
       'id': id,
@@ -914,6 +903,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   Timer? _timer;
   final JsonMap<DateTime?> lastSyncedAt = {};
   final JsonMap<List<LocalFirstEvent>> pendingChanges = {};
+  bool _connected = true;
 
   void start() {
     stop();
@@ -930,15 +920,17 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
             : null;
       }
       _timer = Timer.periodic(period, _onTimerTick);
+      // Kick off an immediate sync on start (and effectively on reconnection).
+      unawaited(_onTimerTick(null));
     });
   }
 
   void stop() {
-      _timer?.cancel();
-      _timer = null;
-      pendingChanges.clear();
-      lastSyncedAt.clear();
-    }
+    _timer?.cancel();
+    _timer = null;
+    pendingChanges.clear();
+    lastSyncedAt.clear();
+  }
 
   void dispose() {
     stop();
@@ -955,15 +947,18 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   }
 
   Future<void> _onTimerTick(_) async {
-    if (pendingChanges.isNotEmpty) {
-      final changes = JsonMap<List<LocalFirstEvent>>.from(pendingChanges);
-      pendingChanges.clear();
+    final drained = <String, List<LocalFirstEvent>>{};
+    try {
+      if (pendingChanges.isNotEmpty) {
+        drained.addAll(pendingChanges);
+        pendingChanges.clear();
+        await _pushToRemote(drained);
+      }
 
-      await _pushToRemote(changes);
-    }
-    final remoteChanges = await mongoApi.pull(lastSyncedAt);
-    if (remoteChanges['changes']?.isNotEmpty) {
-      await pullChangesToLocal(remoteChanges);
+      final remoteChanges = await mongoApi.pull(lastSyncedAt);
+      if (remoteChanges['changes']?.isNotEmpty) {
+        await pullChangesToLocal(remoteChanges);
+      }
 
       // Use the latest updated_at seen in this pull as the new lastSyncedAt
       final latest = mongoApi.latestUpdatedAt(remoteChanges);
@@ -976,6 +971,17 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
           );
         }
       }
+
+      _setConnected(true);
+    } catch (e, st) {
+      dev.log('Sync tick failed: $e', name: logTag, error: e, stackTrace: st);
+      // Re-queue drained pending changes so they are retried on next tick.
+      if (drained.isNotEmpty) {
+        for (final entry in drained.entries) {
+          pendingChanges.putIfAbsent(entry.key, () => []).addAll(entry.value);
+        }
+      }
+      _setConnected(false);
     }
   }
 
@@ -994,11 +1000,20 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
       'changes': {
         for (final entry in changes.entries)
           entry.key: entry.value.toJson(
-            (payload) =>
-                client.getRepositoryByName(entry.key).toJson(payload),
+            (payload) => client.getRepositoryByName(entry.key).toJson(payload),
           ),
       },
     };
+  }
+
+  void _setConnected(bool connected) {
+    if (_connected == connected) return;
+    _connected = connected;
+    reportConnectionState(connected);
+    if (connected) {
+      // On reconnection, try to sync immediately.
+      unawaited(_onTimerTick(null));
+    }
   }
 
   Future<List<JsonMap<dynamic>>> fetchUsers() {
@@ -1135,10 +1150,7 @@ class MongoApi {
         final op = doc['operation'];
         if (op == 'delete') {
           if (doc['id'] != null) {
-            deletes.add({
-              'id': doc['id'],
-              'event_id': doc['event_id'],
-            });
+            deletes.add({'id': doc['id'], 'event_id': doc['event_id']});
           }
           return;
         }

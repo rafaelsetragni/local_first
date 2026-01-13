@@ -241,10 +241,7 @@ class _MyHomePageState extends State<MyHomePage> {
     Animation<double> animation, {
     required bool appearing,
   }) {
-    final curved = CurvedAnimation(
-      parent: animation,
-      curve: Curves.easeOut,
-    );
+    final curved = CurvedAnimation(parent: animation, curve: Curves.easeOut);
     final avatar = _avatarMap[log.username] ?? '';
     return FadeTransition(
       opacity: appearing ? curved : animation,
@@ -403,9 +400,7 @@ class _MyHomePageState extends State<MyHomePage> {
                     Text(
                       'Hello, ${user.username}!',
                       textAlign: TextAlign.center,
-                      style: Theme.of(context)
-                          .textTheme
-                          .headlineMedium
+                      style: Theme.of(context).textTheme.headlineMedium
                           ?.copyWith(fontWeight: FontWeight.bold),
                     ),
                   ],
@@ -729,6 +724,7 @@ class RepositoryService {
       counterLogRepository = _buildCounterLogRepository(),
       syncStrategy = MongoPeriodicSyncStrategy() {
     syncStrategy.setConnectionListener(connectionState.add);
+    syncStrategy.setNamespace(_currentNamespace);
   }
 
   Future<UserModel?> initialize() async {
@@ -895,6 +891,7 @@ class RepositoryService {
     final namespace = _sanitizeNamespace(username);
     if (_currentNamespace == namespace) return;
     _currentNamespace = namespace;
+    syncStrategy.setNamespace(namespace);
 
     final storage = db.localStorage;
     if (storage is HiveLocalFirstStorage) {
@@ -936,13 +933,15 @@ class UserModel {
     DateTime? updatedAt,
   }) {
     final now = DateTime.now().toUtc();
+    final created = createdAt ?? now;
+    final updated = updatedAt ?? created;
     final normalizedId = (id ?? username).trim().toLowerCase();
     return UserModel._(
       id: normalizedId,
       username: username,
       avatarUrl: avatarUrl,
-      createdAt: createdAt ?? now,
-      updatedAt: updatedAt ?? now,
+      createdAt: created,
+      updatedAt: updated,
     );
   }
 
@@ -958,12 +957,16 @@ class UserModel {
 
   factory UserModel.fromJson(JsonMap<dynamic> json) {
     final username = json['username'] ?? json['id'];
+    final created = DateTime.parse(json['created_at']).toUtc();
+    final updated = json['updated_at'] != null
+        ? DateTime.parse(json['updated_at']).toUtc()
+        : created;
     return UserModel(
       id: (json['id'] ?? username).toString().trim().toLowerCase(),
       username: username,
       avatarUrl: json['avatar_url'],
-      createdAt: DateTime.parse(json['created_at']).toUtc(),
-      updatedAt: DateTime.parse(json['updated_at']).toUtc(),
+      createdAt: created,
+      updatedAt: updated,
     );
   }
 
@@ -1008,12 +1011,14 @@ class CounterLogModel {
     DateTime? updatedAt,
   }) {
     final now = DateTime.now().toUtc();
+    final created = createdAt ?? now;
+    final updated = updatedAt ?? created;
     return CounterLogModel._(
       id: id ?? '${username}_${now.millisecondsSinceEpoch}',
       username: username,
       increment: increment,
-      createdAt: createdAt ?? now,
-      updatedAt: updatedAt ?? now,
+      createdAt: created,
+      updatedAt: updated,
     );
   }
 
@@ -1028,12 +1033,16 @@ class CounterLogModel {
   }
 
   factory CounterLogModel.fromJson(JsonMap<dynamic> json) {
+    final created = DateTime.parse(json['created_at']).toUtc();
+    final updated = json['updated_at'] != null
+        ? DateTime.parse(json['updated_at']).toUtc()
+        : created;
     return CounterLogModel(
       id: json['id'],
       username: json['username'],
       increment: json['increment'],
-      createdAt: DateTime.parse(json['created_at']).toUtc(),
-      updatedAt: DateTime.parse(json['updated_at']).toUtc(),
+      createdAt: created,
+      updatedAt: updated,
     );
   }
 
@@ -1051,8 +1060,10 @@ class CounterLogModel {
 
   String toFormattedDate() => () {
     final local = createdAt.toLocal();
-    return '${local.day.toString().padLeft(2, '0')}/${local.month.toString().padLeft(2, '0')}/${local.year} '
-        '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+    String two(int v) => v.toString().padLeft(2, '0');
+    String three(int v) => v.toString().padLeft(3, '0');
+    return '${two(local.day)}/${two(local.month)}/${local.year} '
+        '${two(local.hour)}:${two(local.minute)}:${two(local.second)}.${three(local.millisecond)}';
   }();
 }
 
@@ -1086,8 +1097,9 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     repositoryNames: const ['counter_log', 'user'],
   );
   void Function(bool) _onConnectionChange = _noopConnection;
-  bool? _lastConnected;
   bool _isSyncing = false;
+  bool _connected = true;
+  String _namespace = 'default';
 
   Timer? _timer;
   final JsonMap<DateTime?> lastSyncedAt = {};
@@ -1097,24 +1109,30 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     _onConnectionChange = listener;
   }
 
+  void setNamespace(String namespace) {
+    _namespace = namespace;
+  }
+
   void start() {
     stop();
     client.awaitInitialization.then((_) async {
       final initialConnected = await _quickPing();
-      reportConnectionState(initialConnected);
-      _lastConnected = initialConnected;
+      _connected = initialConnected;
+      _emitConnection(initialConnected);
       dev.log('Starting periodic sync', name: logTag);
       final pendingEvents = await getPendingEvents();
       for (final event in pendingEvents) {
         _addPending(event);
       }
       for (final repository in mongoApi.repositoryNames) {
-        final value = await client.getMeta('__last_sync__$repository');
+        final value = await client.getMeta(_lastSyncKey(repository));
         lastSyncedAt[repository] = value != null
             ? DateTime.tryParse(value)
             : null;
       }
       _timer = Timer.periodic(period, _onTimerTick);
+      // Trigger immediate sync on start (and on reconnection).
+      unawaited(_onTimerTick(null));
     });
   }
 
@@ -1133,6 +1151,8 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     pendingChanges.putIfAbsent(event.repositoryName, () => []).add(event);
   }
 
+  String _lastSyncKey(String repo) => '__last_sync__${_namespace}__$repo';
+
   @override
   Future<SyncStatus> onPushToRemote(LocalFirstEvent event) async {
     _addPending(event);
@@ -1142,14 +1162,24 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   Future<void> _onTimerTick(_) async {
     if (_isSyncing) return;
     _isSyncing = true;
+    final drained = <String, List<LocalFirstEvent>>{};
     try {
+      dev.log(
+        'Using lastSyncedAt: ${{
+          for (final entry in lastSyncedAt.entries)
+            entry.key: entry.value?.toIso8601String()
+        }}',
+        name: logTag,
+      );
       if (pendingChanges.isNotEmpty) {
-        final changes = JsonMap<List<LocalFirstEvent>>.from(pendingChanges);
+        drained.addAll(pendingChanges);
         pendingChanges.clear();
 
-        await _pushToRemote(changes).timeout(period * 2);
+        await _pushToRemote(drained).timeout(period * 2);
       }
-      final remoteChanges = await mongoApi.pull(lastSyncedAt).timeout(period * 2);
+      final remoteChanges = await mongoApi
+          .pull(lastSyncedAt)
+          .timeout(period * 2);
       if (remoteChanges['changes']?.isNotEmpty) {
         await pullChangesToLocal(remoteChanges);
 
@@ -1157,21 +1187,31 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
         final latest = mongoApi.latestUpdatedAt(remoteChanges);
         if (latest != null) {
           for (final repo in mongoApi.repositoryNames) {
+            dev.log(
+              'Updating lastSyncedAt for $repo => ${latest.toIso8601String()}',
+              name: logTag,
+            );
             lastSyncedAt[repo] = latest;
             await client.setKeyValue(
-              '__last_sync__$repo',
+              _lastSyncKey(repo),
               latest.toIso8601String(),
             );
           }
         }
       }
-      _emitConnection(true);
+      _setConnected(true);
     } on TimeoutException catch (e, s) {
       dev.log('Sync timeout: $e', name: logTag, error: e, stackTrace: s);
-      _emitConnection(false);
+      _setConnected(false);
     } catch (e, s) {
       dev.log('Sync error: $e', name: logTag, error: e, stackTrace: s);
-      _emitConnection(false);
+      // Re-queue drained changes so they retry on next tick.
+      if (drained.isNotEmpty) {
+        for (final entry in drained.entries) {
+          pendingChanges.putIfAbsent(entry.key, () => []).addAll(entry.value);
+        }
+      }
+      _setConnected(false);
     } finally {
       _isSyncing = false;
     }
@@ -1218,18 +1258,22 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   void _emitConnection(bool connected) {
     try {
       _onConnectionChange(connected);
-      final wasDisconnected = _lastConnected == false;
-      _lastConnected = connected;
-      if (connected && wasDisconnected && _timer != null && !_isSyncing) {
-        // Trigger an immediate sync when coming back online.
-        _onTimerTick(null);
-      }
       reportConnectionState(connected);
       dev.log(
         'Connection state: ${connected ? 'connected' : 'disconnected'}',
         name: logTag,
       );
     } catch (_) {}
+  }
+
+  void _setConnected(bool connected) {
+    if (_connected == connected) return;
+    _connected = connected;
+    _emitConnection(connected);
+    if (connected && _timer != null && !_isSyncing) {
+      // Trigger an immediate sync when coming back online.
+      unawaited(_onTimerTick(null));
+    }
   }
 
   static void _noopConnection(bool _) {}
@@ -1280,7 +1324,6 @@ class MongoApi {
     final operationsByNode = payload['changes'];
     if (operationsByNode is! JsonMap<dynamic>) return;
 
-    final now = DateTime.now().toUtc();
     final hasChanges = operationsByNode.values.any((op) {
       if (op is! JsonMap) return false;
       return (op['insert'] as List?)?.isNotEmpty == true ||
@@ -1302,11 +1345,11 @@ class MongoApi {
           if (item is! JsonMap<dynamic>) continue;
           final id = item['id']?.toString();
           if (id == null) continue;
+          final payload = _toMongoDateFields(item);
           await collection.insertOne({
-            ..._toMongoDateFields(item),
+            ...payload,
             'operation': 'insert',
             'event_id': item['event_id'],
-            'updated_at': now,
           });
         }
       }
@@ -1317,11 +1360,11 @@ class MongoApi {
           if (item is! JsonMap<dynamic>) continue;
           final id = item['id']?.toString();
           if (id == null) continue;
+          final payload = _toMongoDateFields(item);
           await collection.insertOne({
-            ..._toMongoDateFields(item),
+            ...payload,
             'operation': 'update',
             'event_id': item['event_id'],
-            'updated_at': now,
           });
         }
       }
@@ -1332,11 +1375,11 @@ class MongoApi {
           if (item is! Map) continue;
           final id = item['id']?.toString();
           if (id == null) continue;
+          final payload = _toMongoDateFields(item as JsonMap<dynamic>);
           await collection.insertOne({
-            'id': id,
+            ...payload,
             'operation': 'delete',
             'event_id': item['event_id'],
-            'updated_at': now,
           });
         }
       }
