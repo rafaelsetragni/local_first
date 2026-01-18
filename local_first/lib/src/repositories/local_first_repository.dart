@@ -429,3 +429,89 @@ final class _LocalFirstRepository<T> extends LocalFirstRepository<T> {
     super.schema = const {},
   });
 }
+
+/// Test helper exposing internal methods of [LocalFirstRepository] for unit tests.
+class TestHelperLocalFirstRepository<T> {
+  final LocalFirstRepository<T> repository;
+
+  TestHelperLocalFirstRepository(this.repository);
+
+  Future<LocalFirstEvent<T>> pushLocalEventToRemote(
+    LocalFirstEvent<T> event,
+  ) =>
+      repository._pushLocalEventToRemote(event);
+
+  Future<void> persistEvent(LocalFirstEvent<T> event) =>
+      repository._persistEvent(event);
+
+  Future<void> confirmEvent({
+    required LocalFirstEvent<T> remoteEvent,
+    required LocalFirstEvent<T> localPendingEvent,
+  }) =>
+      repository._confirmEvent(
+        remoteEvent: remoteEvent,
+        localPendingEvent: localPendingEvent,
+      );
+
+  Future<void> mergeInsertEvent({
+    required LocalFirstStateEvent<T> remoteEvent,
+    required LocalFirstEvent<T>? localPendingEvent,
+  }) =>
+      repository._mergeInsertEvent(
+        remoteEvent: remoteEvent,
+        localPendingEvent: localPendingEvent,
+      );
+
+  Future<void> mergeUpdateEvent({
+    required LocalFirstStateEvent<T> remoteEvent,
+    required LocalFirstEvent<T>? localPendingEvent,
+  }) =>
+      repository._mergeUpdateEvent(
+        remoteEvent: remoteEvent,
+        localPendingEvent: localPendingEvent,
+      );
+
+  Future<void> mergeDeleteEvent({
+    required LocalFirstEvent<T> remoteEvent,
+    required LocalFirstEvent<T>? localPendingEvent,
+  }) =>
+      repository._mergeDeleteEvent(
+        remoteEvent: remoteEvent,
+        localPendingEvent: localPendingEvent,
+      );
+
+  Future<List<LocalFirstEvent<T>>> getAllEvents() =>
+      repository._getAllEvents();
+
+  Future<void> markAllPreviousEventAsOk(LocalFirstEvent<T> reference) =>
+      repository._markAllPreviousEventAsOk(reference);
+
+  Future<void> insertDataAndEvent(LocalFirstStateEvent<T> event) =>
+      repository._insertDataAndEvent(event);
+
+  Future<void> updateDataAndEvent(LocalFirstEvent<T> event) =>
+      repository._updateDataAndEvent(event);
+
+  Future<void> deleteDataAndLogEvent(LocalFirstEvent<T> event) =>
+      repository._deleteDataAndLogEvent(event);
+
+  Future<void> insertDataFromEvent(LocalFirstStateEvent<T> event) =>
+      repository._insertDataFromEvent(event);
+
+  Future<void> updateDataFromEvent(LocalFirstStateEvent<T> event) =>
+      repository._updateDataFromEvent(event);
+
+  Future<void> insertEventRecord(LocalFirstEvent<T> event) =>
+      repository._insertEventRecord(event);
+
+  Future<void> updateEventRecord(LocalFirstEvent<T> event) =>
+      repository._updateEventRecord(event);
+
+  Future<void> deleteDataById(String id) => repository._deleteDataById(id);
+
+  Future<void> updateEventStatus(LocalFirstEvent<T> event) =>
+      repository._updateEventStatus(event);
+
+  JsonMap toDataJson(LocalFirstStateEvent<T> model) =>
+      repository._toDataJson(model);
+}

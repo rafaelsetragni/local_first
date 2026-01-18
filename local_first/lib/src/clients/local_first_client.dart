@@ -143,3 +143,16 @@ class LocalFirstClient {
     await localStorage.setMeta(key, value);
   }
 }
+
+/// Test helper exposing internal state of [LocalFirstClient] for unit tests.
+class TestHelperLocalFirstClient {
+  final LocalFirstClient client;
+
+  TestHelperLocalFirstClient(this.client);
+
+  List<LocalFirstRepository> get repositories => client._repositories;
+  Completer get onInitializeCompleter => client._onInitialize;
+  StreamController<bool> get connectionController =>
+      client._connectionController;
+  bool? get latestConnection => client._latestConnection;
+}
