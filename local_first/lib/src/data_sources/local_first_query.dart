@@ -12,13 +12,13 @@ class LocalFirstQuery<T> {
   final int? offset;
   final bool includeDeleted;
   final LocalFirstStorage _delegate;
-  final T Function(Map<String, dynamic>) _fromJson;
+  final T Function(JsonMap) _fromJson;
   final LocalFirstRepository<T> _repository;
 
   LocalFirstQuery({
     required this.repositoryName,
     required LocalFirstStorage delegate,
-    required T Function(Map<String, dynamic>) fromJson,
+    required T Function(JsonMap) fromJson,
     required LocalFirstRepository<T> repository,
     this.filters = const [],
     this.sorts = const [],
@@ -152,38 +152,11 @@ class LocalFirstQuery<T> {
     return _delegate.watchQuery(this).map(_mapResults).asBroadcastStream();
   }
 
-  List<LocalFirstEvent<T>> _mapResults(List<Map<String, dynamic>> results) {
+  List<LocalFirstEvent<T>> _mapResults(List<JsonMap> results) {
     final mapped = results.map((json) {
-      final itemJson = Map<String, dynamic>.from(json);
-      final eventId = itemJson.remove('_event_id') as String?;
-      final lastEventId = itemJson.remove('_last_event_id') as String?;
-      itemJson.remove('_data_id');
-      final item = _fromJson(
-        itemJson..removeWhere((key, _) => key.startsWith('_sync_')),
-      );
-
-      // Extract sync metadata stored alongside the model
-      final syncStatus = json['_sync_status'] != null
-          ? SyncStatus.values[json['_sync_status'] as int]
-          : SyncStatus.ok;
-
-      final syncOperation = json['_sync_operation'] != null
-          ? SyncOperation.values[json['_sync_operation'] as int]
-          : SyncOperation.insert;
-
-      final createdAt = json['_sync_created_at'] as int?;
-      final createdAtDate = DateTime.fromMillisecondsSinceEpoch(
-        createdAt ?? 0,
-        isUtc: true,
-      );
-
-      return LocalFirstEvent<T>(
-        state: item,
-        eventId: eventId ?? lastEventId,
-        syncStatus: syncStatus,
-        syncOperation: syncOperation,
-        syncCreatedAt: createdAtDate,
-        repositoryName: repositoryName,
+      return LocalFirstEvent<T>.fromLocalStorage(
+        repository: _repository,
+        json: json,
       );
     });
 
@@ -222,7 +195,7 @@ class QueryFilter {
   });
 
   /// Checks if an item matches this filter (fallback for DBs without native query support).
-  bool matches(Map<String, dynamic> item) {
+  bool matches(JsonMap item) {
     final value = item[field];
 
     if (isNull != null) {

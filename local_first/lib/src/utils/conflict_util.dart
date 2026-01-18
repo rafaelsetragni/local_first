@@ -1,7 +1,7 @@
 part of '../../local_first.dart';
 
 /// Helpers to resolve conflicts between local and remote events.
-class ConflictUtil {
+sealed class ConflictUtil {
   /// Picks the event considered newest by the provided selector, preserving
   /// sync metadata from the chosen event.
   static LocalFirstEvent<T> lastWriteWins<T>(

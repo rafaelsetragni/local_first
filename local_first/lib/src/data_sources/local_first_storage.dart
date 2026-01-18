@@ -44,6 +44,11 @@ abstract class LocalFirstStorage {
   /// Returns null if the item doesn't exist.
   Future<Map<String, dynamic>?> getById(String tableName, String id);
 
+  /// Checks if a single item exists by its ID.
+  ///
+  /// Returns null if the item doesn't exist.
+  Future<bool> containsId(String tableName, String id);
+
   /// Gets a single event by its event id.
   Future<Map<String, dynamic>?> getEventById(String tableName, String id);
 
@@ -65,7 +70,11 @@ abstract class LocalFirstStorage {
   Future<void> update(String tableName, String id, Map<String, dynamic> item);
 
   /// Updates an existing event in the event log.
-  Future<void> updateEvent(String tableName, String id, Map<String, dynamic> item);
+  Future<void> updateEvent(
+    String tableName,
+    String id,
+    Map<String, dynamic> item,
+  );
 
   /// Deletes an item by its ID in the state table.
   Future<void> delete(String repositoryName, String id);

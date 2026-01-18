@@ -1,9 +1,7 @@
 part of '../../local_first.dart';
 
 /// Generates unique IDs for local events.
-sealed class LocalFirstIdGenerator {
-  LocalFirstIdGenerator._();
-
+sealed class IdUtil {
   /// Generates a UUID v7-like identifier (time-ordered, 36-char with hyphens).
   static String uuidV7() {
     final timestamp = DateTime.now().toUtc().millisecondsSinceEpoch;
