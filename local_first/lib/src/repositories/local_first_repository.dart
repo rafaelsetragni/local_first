@@ -174,11 +174,11 @@ abstract class LocalFirstRepository<T> {
     final existing = events
         .where((event) => event.dataId == id)
         .fold<LocalFirstEvent<T>?>(null, (latest, current) {
-      if (latest == null) return current;
-      return current.syncCreatedAt.isAfter(latest.syncCreatedAt)
-          ? current
-          : latest;
-    });
+          if (latest == null) return current;
+          return current.syncCreatedAt.isAfter(latest.syncCreatedAt)
+              ? current
+              : latest;
+        });
     if (existing == null) return;
 
     final deleted = LocalFirstEvent<T>.createNewEvent(
@@ -209,7 +209,6 @@ abstract class LocalFirstRepository<T> {
     return LocalFirstQuery<T>(
       repositoryName: name,
       delegate: _client.localStorage,
-      fromJson: fromJson,
       repository: this,
       includeDeleted: includeDeleted,
     );
@@ -388,11 +387,7 @@ abstract class LocalFirstRepository<T> {
   }
 
   Future<void> _updateDataFromEvent(LocalFirstStateEvent<T> event) {
-    return _client.localStorage.update(
-      name,
-      event.dataId,
-      _toDataJson(event),
-    );
+    return _client.localStorage.update(name, event.dataId, _toDataJson(event));
   }
 
   Future<void> _insertEventRecord(LocalFirstEvent<T> event) {
