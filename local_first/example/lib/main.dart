@@ -1184,21 +1184,34 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   }
 
   Future<void> _pullRemoteChanges() => Future.wait([
-    _pullChangesFromMongoApi('user'),
-    _pullChangesFromMongoApi('counter_log'),
+    _pullUserChangesFromMongoApi(),
+    _pullLogChangesFromMongoApi(),
   ]);
 
-  Future<void> _pullChangesFromMongoApi(String repositoryName) async {
+  Future<void> _pullUserChangesFromMongoApi() async {
     final List<JsonMap> usersJson = await mongoApi.fetchUserEvents(
-      await _getLatest(repositoryName),
+      await _getLatest('user'),
     );
     if (usersJson.isEmpty) return;
-    pullChangesToLocal(usersJson);
-    await _updateLatest(repositoryName);
+    await pullChangesToLocal(usersJson);
+    await _updateLatest('user');
+  }
+
+  Future<void> _pullLogChangesFromMongoApi() async {
+    final List<JsonMap> logsJson = await mongoApi.fetchCounterLogEvents(
+      await _getLatest('counter_log'),
+    );
+    if (logsJson.isEmpty) return;
+    await pullChangesToLocal(logsJson);
+    await _updateLatest('counter_log');
   }
 
   Future<void> _updateLatest(String repo) async {
     final value = lastSyncedAt[repo] = DateTime.now().toUtc();
+    dev.log(
+      'Updated last sync for $repo to ${value.toIso8601String()}',
+      name: logTag,
+    );
     await client.setKeyValue(_lastSyncKey(repo), value.toIso8601String());
   }
 
@@ -1296,11 +1309,20 @@ class MongoApi {
     final collection = await _collection(repositoryName);
     for (final event in events) {
       final eventId = event[LocalFirstEvent.kEventId];
-      await collection.replaceOne(
-        where.eq(LocalFirstEvent.kEventId, eventId),
-        event,
-        upsert: true,
-      );
+      try {
+        await collection.replaceOne(
+          where.eq(LocalFirstEvent.kEventId, eventId),
+          event,
+          upsert: true,
+        );
+      } catch (e, s) {
+        dev.log(
+          'Failed to upsert event $eventId in $repositoryName: $e',
+          name: logTag,
+          error: e,
+          stackTrace: s,
+        );
+      }
     }
   }
 }
