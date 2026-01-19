@@ -27,14 +27,14 @@ enum SyncOperation {
 /// Base sync event carrying metadata.
 abstract class LocalFirstEvent<T> {
   // Shared payload keys for remote and local.
-  static const String kEventId = '_event_id';
+  static const String kEventId = 'eventId';
   static const String kRepository = 'repository';
-  static const String kOperation = '_sync_operation';
-  static const String kSyncCreatedAt = '_sync_created_at';
+  static const String kOperation = 'operation';
+  static const String kSyncCreatedAt = 'createdAt';
   static const String kData = 'data';
-  static const String kDataId = '_data_id';
-  static const String kSyncStatus = '_sync_status';
-  static const String kLastEventId = '_last_event_id';
+  static const String kDataId = 'dataId';
+  static const String kSyncStatus = 'syncStatus';
+  static const String kLastEventId = 'lastEventId';
 
   LocalFirstEvent._({
     required this.repository,
@@ -50,6 +50,7 @@ abstract class LocalFirstEvent<T> {
   final SyncOperation syncOperation;
   final DateTime syncCreatedAt;
 
+  T? get data;
   bool get needSync => syncStatus != SyncStatus.ok;
   bool get isDeleted => syncOperation == SyncOperation.delete;
 
@@ -129,8 +130,8 @@ abstract class LocalFirstEvent<T> {
   }
 
   /// Builds an event from a remote JSON map.
-  factory LocalFirstEvent.fromRemoteJson({
-    required LocalFirstRepository repository,
+  static LocalFirstEvent<T> fromRemoteJson<T>({
+    required LocalFirstRepository<T> repository,
     required JsonMap json,
   }) {
     try {
@@ -142,10 +143,17 @@ abstract class LocalFirstEvent<T> {
         ),
       );
       final rawCreatedAt = json[kSyncCreatedAt];
-      final createdAt = rawCreatedAt is String
-          ? (DateTime.tryParse(rawCreatedAt) ?? DateTime.now()).toUtc()
+      if (rawCreatedAt == null) {
+        throw FormatException(
+          'Missing createdAt for remote event in ${repository.name}',
+        );
+      }
+      final createdAt = rawCreatedAt is DateTime
+          ? rawCreatedAt.toUtc()
+          : rawCreatedAt is String
+          ? DateTime.parse(rawCreatedAt).toUtc()
           : DateTime.fromMillisecondsSinceEpoch(
-              (rawCreatedAt as int?) ?? 0,
+              rawCreatedAt as int,
               isUtc: true,
             );
 
@@ -252,13 +260,9 @@ final class LocalFirstStateEvent<T> extends LocalFirstEvent<T> {
   @override
   JsonMap toJson() => {
     LocalFirstEvent.kEventId: eventId,
-    LocalFirstEvent.kRepository: repositoryName,
     LocalFirstEvent.kOperation: syncOperation.index,
-    LocalFirstEvent.kSyncCreatedAt: syncCreatedAt
-        .toUtc()
-        .millisecondsSinceEpoch,
+    LocalFirstEvent.kSyncCreatedAt: syncCreatedAt.toUtc(),
     LocalFirstEvent.kData: repository.toJson(data),
-    LocalFirstEvent.kSyncStatus: syncStatus.index,
     LocalFirstEvent.kDataId: dataId,
   };
 
@@ -303,12 +307,8 @@ final class LocalFirstDeleteEvent<T> extends LocalFirstEvent<T> {
   @override
   JsonMap toJson() => {
     LocalFirstEvent.kEventId: eventId,
-    LocalFirstEvent.kRepository: repositoryName,
     LocalFirstEvent.kOperation: syncOperation.index,
-    LocalFirstEvent.kSyncCreatedAt: syncCreatedAt
-        .toUtc()
-        .millisecondsSinceEpoch,
-    LocalFirstEvent.kSyncStatus: syncStatus.index,
+    LocalFirstEvent.kSyncCreatedAt: syncCreatedAt.toUtc(),
     LocalFirstEvent.kDataId: dataId,
   };
 
@@ -335,6 +335,9 @@ final class LocalFirstDeleteEvent<T> extends LocalFirstEvent<T> {
     syncCreatedAt: syncCreatedAt,
     dataId: dataId,
   );
+
+  @override
+  T? get data => null;
 }
 
 /// Extension methods for lists of models with sync metadata.

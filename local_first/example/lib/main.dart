@@ -9,13 +9,13 @@ import 'package:mongo_dart/mongo_dart.dart' hide State, Center;
 // To use this example, first you need to start a MongoDB service, and
 // you can do it easily creating an container instance using Docker.
 // First, install docker desktop on your machine, then copy and
-// paste the command bellow at your terminal:
+// paste the command below at your terminal:
 //
 // docker run -d --name mongo_local -p 27017:27017 \
 //   -e MONGO_INITDB_ROOT_USERNAME=admin \
 //   -e MONGO_INITDB_ROOT_PASSWORD=admin mongo:7
 //
-// You can check the service status using the command bellow:
+// You can check the service status using the command below:
 //
 // docker stats mongo_local
 //
@@ -63,6 +63,7 @@ class SignInPage extends StatefulWidget {
 class _SignInPageState extends State<SignInPage> {
   final _formKey = GlobalKey<FormState>();
   final _usernameController = TextEditingController();
+  bool _isSigningIn = false;
 
   @override
   void dispose() {
@@ -70,10 +71,27 @@ class _SignInPageState extends State<SignInPage> {
     super.dispose();
   }
 
-  Future<void> _signIn() async {
+  Future<void> _signIn(BuildContext context) async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
+    final errorColor = Theme.of(context).colorScheme.error;
+    final scafold = ScaffoldMessenger.of(context);
     final username = _usernameController.text;
-    await RepositoryService().signIn(username: username);
+
+    setState(() => _isSigningIn = true);
+    try {
+      await RepositoryService().signIn(username: username);
+    } catch (_) {
+      scafold.showSnackBar(
+        SnackBar(
+          backgroundColor: errorColor,
+          content: Text('No connection to the server. Please try again.'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isSigningIn = false);
+      }
+    }
   }
 
   @override
@@ -113,7 +131,7 @@ class _SignInPageState extends State<SignInPage> {
                         labelText: 'Username',
                         border: OutlineInputBorder(),
                       ),
-                      onFieldSubmitted: (_) => _signIn(),
+                      onFieldSubmitted: (_) => _signIn(context),
                       validator: (value) =>
                           (value == null || value.trim().isEmpty)
                           ? 'Please enter a username.'
@@ -121,8 +139,14 @@ class _SignInPageState extends State<SignInPage> {
                     ),
                     SizedBox(height: 24),
                     ElevatedButton(
-                      onPressed: _signIn,
-                      child: const Text('Sign In'),
+                      onPressed: _isSigningIn ? null : () => _signIn(context),
+                      child: _isSigningIn
+                          ? const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Sign In'),
                     ),
                   ],
                 ),
@@ -731,22 +755,22 @@ class RepositoryService {
       .toList();
 
   Future<void> signIn({required String username}) async {
-    // On sign in, swap namespace, prefetch users from remote, and persist the new user.
+    // On sign in, swap namespace to the user, prefetch users from remote,
+    // and persist the new user.
     syncStrategy.stop();
-    await _switchUserDatabase('');
+    final localUser = UserModel(username: username, avatarUrl: null);
+    await _switchUserDatabase(localUser.id);
     await _syncRemoteUsersToLocal();
     final existing = await userRepository
         .query()
-        .where('username', isEqualTo: username)
+        .where(userRepository.idFieldName, isEqualTo: localUser.id)
         .getAll();
-    final preservedAvatar = existing.isNotEmpty
-        ? (existing.first as LocalFirstStateEvent<UserModel>).data.avatarUrl
-        : null;
-    final user = authenticatedUser = UserModel(
-      username: username,
-      avatarUrl: preservedAvatar,
-    );
-    await userRepository.upsert(user, needSync: existing.isEmpty);
+    if (existing.isNotEmpty) {
+      authenticatedUser = existing.first.data;
+    } else {
+      authenticatedUser = localUser;
+      await userRepository.upsert(localUser, needSync: true);
+    }
     await _persistLastUsername(username);
     syncStrategy.start();
     NavigatorService().navigateToHome();
@@ -755,12 +779,13 @@ class RepositoryService {
   Future<void> _syncRemoteUsersToLocal() async {
     final remote = await syncStrategy.fetchUsers();
     for (final data in remote) {
-      try {
-        final user = userRepository.fromJson(data);
-        await userRepository.upsert(user, needSync: false);
-      } catch (_) {
-        // ignore malformed user entries
-      }
+      final user = userRepository.fromJson(data);
+      final exists = await userRepository
+          .query()
+          .where(userRepository.idFieldName, isEqualTo: user.id)
+          .getAll();
+      if (exists.isNotEmpty) continue;
+      await userRepository.upsert(user, needSync: false);
     }
   }
 
@@ -774,14 +799,14 @@ class RepositoryService {
   }
 
   Future<UserModel?> restoreUser(String username) async {
-    await _switchUserDatabase('');
+    final normalizedId = UserModel(username: username, avatarUrl: null).id;
+    await _switchUserDatabase(normalizedId);
     final results = await userRepository
         .query()
-        .where('username', isEqualTo: username)
+        .where(userRepository.idFieldName, isEqualTo: normalizedId)
         .getAll();
-    final payloads = _usersFromEvents(results);
-    if (payloads.isEmpty) return null;
-    authenticatedUser = payloads.first;
+    if (results.isEmpty) return null;
+    authenticatedUser = (results.first as LocalFirstStateEvent<UserModel>).data;
     syncStrategy.start();
     return authenticatedUser;
   }
@@ -1110,16 +1135,8 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     stop();
     client.awaitInitialization.then((_) async {
       dev.log('Starting periodic sync', name: logTag);
-
-      await Future.wait([
-        for (final repository in ['counter_log', 'user'])
-          () async {
-            final value = await client.getMeta(_lastSyncKey(repository));
-            lastSyncedAt[repository] = _parseDate(value);
-          }(),
-      ]);
-
       _timer = Timer.periodic(period, _onTimerTick);
+
       // Trigger immediate sync on start (and on reconnection).
       unawaited(_onTimerTick(null));
     });
@@ -1138,13 +1155,13 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   String _lastSyncKey(String repo) => '__last_sync__${_namespace}__$repo';
 
   Future<List<JsonMap>> fetchUsers() async {
-    final events = await mongoApi.fetchUserEvents(null);
+    final events = await mongoApi.fetchUserEvents(null).timeout(period * 2);
     return events.map((e) => e['state']).whereType<JsonMap>().toList();
   }
 
   @override
   Future<SyncStatus> onPushToRemote(LocalFirstEvent _) async {
-    // Retorna pending porque esta estratégia sincroniza em lote. Use aqui se precisar de sync em tempo real.
+    // Return pending because this strategy syncs in batch; implement real-time sync if needed here.
     return SyncStatus.pending;
   }
 
@@ -1189,20 +1206,28 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   ]);
 
   Future<void> _pullUserChangesFromMongoApi() async {
-    final List<JsonMap> usersJson = await mongoApi.fetchUserEvents(
-      await _getLatest('user'),
+    final lastSynced = await _getLatest('user');
+    final List<JsonMap> remoteChanges = await mongoApi.fetchUserEvents(
+      lastSynced,
     );
-    if (usersJson.isEmpty) return;
-    await pullChangesToLocal(usersJson);
+    if (remoteChanges.isEmpty) return;
+    await pullChangesToLocal(
+      repositoryName: 'user',
+      remoteChanges: remoteChanges,
+    );
     await _updateLatest('user');
   }
 
   Future<void> _pullLogChangesFromMongoApi() async {
-    final List<JsonMap> logsJson = await mongoApi.fetchCounterLogEvents(
-      await _getLatest('counter_log'),
+    final lastSynced = await _getLatest('counter_log');
+    final List<JsonMap> remoteChanges = await mongoApi.fetchCounterLogEvents(
+      lastSynced,
     );
-    if (logsJson.isEmpty) return;
-    await pullChangesToLocal(logsJson);
+    if (remoteChanges.isEmpty) return;
+    await pullChangesToLocal(
+      repositoryName: 'counter_log',
+      remoteChanges: remoteChanges,
+    );
     await _updateLatest('counter_log');
   }
 
@@ -1237,6 +1262,9 @@ class MongoApi {
 
   MongoApi({required this.uri});
 
+  String get createdAtLabel => LocalFirstEvent.kSyncCreatedAt;
+  String get eventIdLabel => LocalFirstEvent.kEventId;
+
   Future<Db> _getDb() async {
     final current = _db;
     if (current != null && current.isConnected) return current;
@@ -1253,7 +1281,7 @@ class MongoApi {
     final collection = db.collection(repositoryName);
 
     try {
-      await collection.createIndex(keys: {'sync_created_at': 1});
+      await collection.createIndex(keys: {LocalFirstEvent.kSyncCreatedAt: 1});
       await collection.createIndex(
         keys: {LocalFirstEvent.kEventId: 1},
         unique: true,
@@ -1291,11 +1319,13 @@ class MongoApi {
     DateTime? since,
   ) async {
     final collection = await _collection(repositoryName);
-    final selector = since != null ? where.gt('sync_created_at', since) : where;
-    final cursor = collection.find(selector.sortBy('sync_created_at'));
+    final selector = since != null ? where.gt(createdAtLabel, since) : where;
+    final cursor = collection.find(selector.sortBy(createdAtLabel));
     final results = <JsonMap>[];
     await cursor.forEach((doc) {
-      final map = JsonMap.from(doc)..remove('_id');
+      final map = JsonMap.from(doc)
+        ..remove('_id')
+        ..putIfAbsent(LocalFirstEvent.kRepository, () => repositoryName);
       results.add(map);
     });
     return results;
@@ -1308,10 +1338,10 @@ class MongoApi {
     if (events.isEmpty) return;
     final collection = await _collection(repositoryName);
     for (final event in events) {
-      final eventId = event[LocalFirstEvent.kEventId];
+      final eventId = event[eventIdLabel];
       try {
         await collection.replaceOne(
-          where.eq(LocalFirstEvent.kEventId, eventId),
+          where.eq(eventIdLabel, eventId),
           event,
           upsert: true,
         );
@@ -1322,6 +1352,7 @@ class MongoApi {
           error: e,
           stackTrace: s,
         );
+        rethrow;
       }
     }
   }

@@ -37,8 +37,13 @@ abstract class DataSyncStrategy {
   Future<LocalFirstEvents> getPendingEvents({required String repositoryName}) =>
       _client.getAllPendingEvents(repositoryName: repositoryName);
 
-  Future<void> pullChangesToLocal(List<JsonMap> remoteChanges) =>
-      _client.pullChanges(remoteChanges);
+  Future<void> pullChangesToLocal({
+    required String repositoryName,
+    required List<JsonMap> remoteChanges,
+  }) => _client.pullChanges(
+    repositoryName: repositoryName,
+    changes: remoteChanges,
+  );
 
   /// Marks the provided events as successfully synchronized.
   ///

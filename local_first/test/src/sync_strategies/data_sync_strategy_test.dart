@@ -36,7 +36,10 @@ class _SpyLocalFirstClient extends LocalFirstClient {
   }
 
   @override
-  Future<void> pullChanges(List<JsonMap> changes) async {
+  Future<void> pullChanges({
+    required String repositoryName,
+    required List<JsonMap> changes,
+  }) async {
     pulledChanges.add(changes);
   }
 }
@@ -263,7 +266,10 @@ void main() {
         {LocalFirstEvent.kRepository: 'repo1'},
       ];
 
-      await strategy.pullChangesToLocal(payload);
+      await strategy.pullChangesToLocal(
+        repositoryName: 'repo1',
+        remoteChanges: payload,
+      );
 
       expect(client.pulledChanges.single, payload);
     });

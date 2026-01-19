@@ -40,12 +40,11 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   final Set<String> _lazyCollections;
 
   static const Set<String> _metadataKeys = {
-    '_last_event_id',
-    '_event_id',
-    '_data_id',
-    '_sync_status',
-    '_sync_operation',
-    '_sync_created_at',
+    LocalFirstEvent.kEventId,
+    LocalFirstEvent.kDataId,
+    LocalFirstEvent.kSyncStatus,
+    LocalFirstEvent.kOperation,
+    LocalFirstEvent.kSyncCreatedAt,
   };
 
   /// Creates a new HiveLocalFirstStorage.
@@ -160,7 +159,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
       final raw = await _readBoxValue(box, key);
       if (raw == null) continue;
       final merged = await _attachEventMetadata(tableName, raw);
-      if (merged['_sync_operation'] == SyncOperation.delete.index) continue;
+      if (merged['operation'] == SyncOperation.delete.index) continue;
       items.add(merged);
     }
     return items;
@@ -175,10 +174,10 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     for (final key in keys) {
       final meta = await _readBoxValue(eventBox, key);
       if (meta == null) continue;
-      final dataId = meta['_data_id'] as String?;
+      final dataId = meta['dataId'] as String?;
       final data = dataId != null ? await _readBoxValue(dataBox, dataId) : null;
       items.add(
-        _mergeEventWithData(meta, data, lastEventId: meta['_event_id']),
+        _mergeEventWithData(meta, data, lastEventId: meta['eventId']),
       );
     }
     return items;
@@ -190,7 +189,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
       final rawItem = await _readBoxValue(box, id);
       if (rawItem == null) return null;
       final merged = await _attachEventMetadata(tableName, rawItem);
-      if (merged['_sync_operation'] == SyncOperation.delete.index) return null;
+      if (merged['operation'] == SyncOperation.delete.index) return null;
       return merged;
     });
   }
@@ -200,10 +199,10 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     return _getBox(tableName, isEvent: true).then((eventBox) async {
       final meta = await _readBoxValue(eventBox, id);
       if (meta == null) return null;
-      final dataId = meta['_data_id'] as String?;
+      final dataId = meta['dataId'] as String?;
       final dataBox = await _getBox(tableName);
       final data = dataId != null ? await _readBoxValue(dataBox, dataId) : null;
-      return _mergeEventWithData(meta, data, lastEventId: meta['_event_id']);
+      return _mergeEventWithData(meta, data, lastEventId: meta['eventId']);
     });
   }
 
@@ -213,9 +212,9 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
     final id = item[idField] as String;
     final payload = _stripMetadata(item);
-    final lastEventId = item['_last_event_id'];
+    final lastEventId = item[LocalFirstEvent.kLastEventId];
     if (lastEventId is String) {
-      payload['_last_event_id'] = lastEventId;
+      payload[LocalFirstEvent.kLastEventId] = lastEventId;
     }
     await box.put(id, payload);
   }
@@ -230,11 +229,11 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
     final id = item[idField] as String;
     final meta = {
-      '_event_id': id,
-      '_data_id': item['_data_id'],
-      '_sync_status': item['_sync_status'],
-      '_sync_operation': item['_sync_operation'],
-      '_sync_created_at': item['_sync_created_at'],
+      'eventId': id,
+      'dataId': item['dataId'],
+      'syncStatus': item['syncStatus'],
+      'operation': item['operation'],
+      'createdAt': item['createdAt'],
     };
     await box.put(id, meta);
   }
@@ -244,9 +243,9 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     final box = await _getBox(tableName);
 
     final payload = _stripMetadata(item);
-    final lastEventId = item['_last_event_id'];
+    final lastEventId = item['_lasteventId'];
     if (lastEventId is String) {
-      payload['_last_event_id'] = lastEventId;
+      payload['_lasteventId'] = lastEventId;
     }
     await box.put(id, payload);
   }
@@ -256,11 +255,11 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     final box = await _getBox(tableName, isEvent: true);
 
     final meta = {
-      '_event_id': id,
-      '_data_id': item['_data_id'] ?? id,
-      '_sync_status': item['_sync_status'],
-      '_sync_operation': item['_sync_operation'],
-      '_sync_created_at': item['_sync_created_at'],
+      'eventId': id,
+      'dataId': item['dataId'] ?? id,
+      'syncStatus': item['syncStatus'],
+      'operation': item['operation'],
+      'createdAt': item['createdAt'],
     };
     await box.put(id, meta);
   }
@@ -388,12 +387,13 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     final raw = box is LazyBox<Map>
         ? await box.get(key)
         : (box as Box<Map<dynamic, dynamic>>).get(key);
-    return raw != null ? JsonMap.from(raw) : null;
+    if (raw == null) return null;
+    return _normalizeLegacyMap(JsonMap.from(raw));
   }
 
   Future<JsonMap> _attachEventMetadata(String tableName, JsonMap data) async {
     final merged = JsonMap.from(data);
-    final lastEventId = data['_last_event_id'];
+    final lastEventId = data[LocalFirstEvent.kLastEventId];
     if (lastEventId is! String) return merged;
 
     final eventBox = await _getBox(tableName, isEvent: true);
@@ -401,7 +401,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     if (meta != null) {
       merged.addAll(meta);
     }
-    merged['_last_event_id'] = lastEventId;
+    merged[LocalFirstEvent.kLastEventId] = lastEventId;
     return merged;
   }
 
@@ -411,14 +411,33 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     Object? lastEventId,
   }) {
     final merged = <String, dynamic>{if (data != null) ...data, ...meta};
-    final dataId = meta['_data_id'];
+    final dataId = meta[LocalFirstEvent.kDataId];
     if (dataId is String) {
       merged.putIfAbsent('id', () => dataId);
     }
     if (lastEventId is String) {
-      merged['_last_event_id'] = lastEventId;
+      merged[LocalFirstEvent.kLastEventId] = lastEventId;
     }
     return merged;
+  }
+
+  JsonMap _normalizeLegacyMap(JsonMap map) {
+    final normalized = JsonMap.from(map);
+    final legacyToNew = {
+      '_event_id': LocalFirstEvent.kEventId,
+      '_data_id': LocalFirstEvent.kDataId,
+      '_sync_status': LocalFirstEvent.kSyncStatus,
+      '_sync_operation': LocalFirstEvent.kOperation,
+      '_sync_created_at': LocalFirstEvent.kSyncCreatedAt,
+      '_last_event_id': LocalFirstEvent.kLastEventId,
+      '_lasteventId': LocalFirstEvent.kLastEventId,
+    };
+    for (final entry in legacyToNew.entries) {
+      if (normalized.containsKey(entry.key)) {
+        normalized[entry.value] = normalized.remove(entry.key);
+      }
+    }
+    return normalized;
   }
 
   // ============================================
@@ -446,7 +465,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
       final item = await _attachEventMetadata(query.repositoryName, rawItem);
       if (!query.includeDeleted &&
-          item['_sync_operation'] == SyncOperation.delete.index) {
+          item['operation'] == SyncOperation.delete.index) {
         continue;
       }
 
@@ -495,10 +514,17 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
           )
         : results;
 
-    final events = <LocalFirstEvent<T>>[
-      for (final json in sliced)
-        LocalFirstEvent.fromLocalStorage(repository: repo, json: json),
-    ];
+    final events = <LocalFirstEvent<T>>[];
+    for (final json in sliced) {
+      if (!_hasRequiredEventFields(json)) continue;
+      try {
+        events.add(
+          LocalFirstEvent.fromLocalStorage(repository: repo, json: json),
+        );
+      } catch (_) {
+        // ignore malformed legacy entries
+      }
+    }
     return query.includeDeleted
         ? events
         : events.where((e) => !e.isDeleted).toList();
@@ -545,5 +571,12 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     };
 
     return controller.stream;
+  }
+
+  bool _hasRequiredEventFields(JsonMap json) {
+    return json.containsKey(LocalFirstEvent.kEventId) &&
+        json.containsKey(LocalFirstEvent.kSyncStatus) &&
+        json.containsKey(LocalFirstEvent.kOperation) &&
+        json.containsKey(LocalFirstEvent.kSyncCreatedAt);
   }
 }

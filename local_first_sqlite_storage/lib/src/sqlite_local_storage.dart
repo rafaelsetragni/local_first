@@ -149,15 +149,15 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     final eventTable = _tableName(tableName, isEvent: true);
 
     final rows = await db.rawQuery(
-      'SELECT d.data, d._last_event_id, '
-      'e._event_id, e._sync_status, e._sync_operation, e._sync_created_at '
+      'SELECT d.data, d._lasteventId, '
+      'e.eventId, e.syncStatus, e.operation, e.createdAt '
       'FROM $dataTable d '
-      'LEFT JOIN $eventTable e ON d._last_event_id = e._event_id',
+      'LEFT JOIN $eventTable e ON d._lasteventId = e.eventId',
     );
 
     return rows
         .map(_decodeJoinedRow)
-        .where((row) => row['_sync_operation'] != SyncOperation.delete.index)
+        .where((row) => row['operation'] != SyncOperation.delete.index)
         .toList();
   }
 
@@ -169,11 +169,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     final dataTable = _tableName(tableName);
 
     final rows = await db.rawQuery(
-      'SELECT d.data, d._last_event_id, '
-      'e._event_id, e._data_id, e._sync_status, '
-      'e._sync_operation, e._sync_created_at '
+      'SELECT d.data, d._lasteventId, '
+      'e.eventId, e.dataId, e.syncStatus, '
+      'e.operation, e.createdAt '
       'FROM $eventTable e '
-      'LEFT JOIN $dataTable d ON e._data_id = d.id',
+      'LEFT JOIN $dataTable d ON e.dataId = d.id',
     );
 
     return rows.map(_decodeJoinedRow).toList();
@@ -187,10 +187,10 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     final eventTable = _tableName(tableName, isEvent: true);
 
     final rows = await db.rawQuery(
-      'SELECT d.data, d._last_event_id, '
-      'e._event_id, e._sync_status, e._sync_operation, e._sync_created_at '
+      'SELECT d.data, d._lasteventId, '
+      'e.eventId, e.syncStatus, e.operation, e.createdAt '
       'FROM $dataTable d '
-      'LEFT JOIN $eventTable e ON d._last_event_id = e._event_id '
+      'LEFT JOIN $eventTable e ON d._lasteventId = e.eventId '
       'WHERE d.id = ? '
       'LIMIT 1',
       [id],
@@ -208,12 +208,12 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     final dataTable = _tableName(tableName);
 
     final rows = await db.rawQuery(
-      'SELECT d.data, d._last_event_id, '
-      'e._event_id, e._data_id, e._sync_status, '
-      'e._sync_operation, e._sync_created_at '
+      'SELECT d.data, d._lasteventId, '
+      'e.eventId, e.dataId, e.syncStatus, '
+      'e.operation, e.createdAt '
       'FROM $eventTable e '
-      'LEFT JOIN $dataTable d ON e._data_id = d.id '
-      'WHERE e._event_id = ? '
+      'LEFT JOIN $dataTable d ON e.dataId = d.id '
+      'WHERE e.eventId = ? '
       'LIMIT 1',
       [id],
     );
@@ -234,7 +234,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     }
 
     final schema = _schemaFor(tableName);
-    final lastEventId = item['_last_event_id'] as String?;
+    final lastEventId = item['_lasteventId'] as String?;
     final row = _encodeDataRow(schema, item, id, lastEventId);
 
     await db.insert(
@@ -257,7 +257,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     final resolvedTable = _tableName(tableName, isEvent: true);
 
     final eventId = item[idField];
-    final dataId = item['_data_id'] ?? item[idField];
+    final dataId = item['dataId'] ?? item[idField];
     if (eventId is! String) {
       throw ArgumentError('Item is missing string id field "$idField".');
     }
@@ -282,7 +282,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     final resolvedTable = _tableName(tableName);
 
     final schema = _schemaFor(tableName);
-    final eventId = item['_last_event_id'] as String?;
+    final eventId = item['_lasteventId'] as String?;
     final row = _encodeDataRow(schema, item, id, eventId);
 
     await db.insert(
@@ -300,7 +300,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     await _ensureTables(tableName);
     final resolvedTable = _tableName(tableName, isEvent: true);
 
-    final dataId = item['_data_id'] ?? id;
+    final dataId = item['dataId'] ?? id;
     if (dataId is! String) {
       throw ArgumentError('Event item is missing data id reference.');
     }
@@ -460,12 +460,12 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     final db = await _database;
     final resolvedTableName = _tableName(repositoryName);
     final schema = _schemaFor(repositoryName);
-    const reservedColumns = {'id', 'data', '_last_event_id'};
+    const reservedColumns = {'id', 'data', '_lasteventId'};
 
     final columnDefinitions = StringBuffer(
       'id TEXT PRIMARY KEY, '
       'data TEXT NOT NULL, '
-      '_last_event_id TEXT',
+      '_lasteventId TEXT',
     );
 
     for (final entry in schema.entries) {
@@ -482,7 +482,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     await db.execute(
       'CREATE INDEX IF NOT EXISTS ${resolvedTableName}__last_event '
-      'ON $resolvedTableName(_last_event_id)',
+      'ON $resolvedTableName(_lasteventId)',
     );
 
     for (final entry in schema.entries) {
@@ -499,17 +499,17 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     await db.execute(
       'CREATE TABLE IF NOT EXISTS $resolvedTableName ('
-      '_event_id TEXT PRIMARY KEY, '
-      '_data_id TEXT NOT NULL, '
-      '_sync_status INTEGER, '
-      '_sync_operation INTEGER, '
-      '_sync_created_at INTEGER'
+      'eventId TEXT PRIMARY KEY, '
+      'dataId TEXT NOT NULL, '
+      'syncStatus INTEGER, '
+      'operation INTEGER, '
+      'createdAt INTEGER'
       ')',
     );
 
     await db.execute(
       'CREATE INDEX IF NOT EXISTS ${resolvedTableName}__data '
-      'ON $resolvedTableName(_data_id)',
+      'ON $resolvedTableName(dataId)',
     );
   }
 
@@ -582,19 +582,19 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   ) {
     final payload = JsonMap.from(item);
     const metaKeys = {
-      '_last_event_id',
-      '_event_id',
-      '_data_id',
-      '_sync_status',
-      '_sync_operation',
-      '_sync_created_at',
+      '_lasteventId',
+      'eventId',
+      'dataId',
+      'syncStatus',
+      'operation',
+      'createdAt',
     };
     payload.removeWhere((key, _) => metaKeys.contains(key));
 
     final row = <String, Object?>{
       'id': id,
       'data': jsonEncode(_normalizeJsonMap(payload)),
-      '_last_event_id': lastEventId,
+      '_lasteventId': lastEventId,
     };
 
     for (final entry in schema.entries) {
@@ -610,11 +610,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     String eventId,
   ) {
     return {
-      '_event_id': eventId,
-      '_data_id': dataId,
-      '_sync_status': item['_sync_status'],
-      '_sync_operation': item['_sync_operation'],
-      '_sync_created_at': item['_sync_created_at'],
+      'eventId': eventId,
+      'dataId': dataId,
+      'syncStatus': item['syncStatus'],
+      'operation': item['operation'],
+      'createdAt': item['createdAt'],
     };
   }
 
@@ -624,22 +624,22 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
         ? JsonMap.from(jsonDecode(data) as Map)
         : <String, dynamic>{};
 
-    final lastEventId = row['_last_event_id'];
-    final eventId = row['_event_id'];
-    final syncStatus = row['_sync_status'];
-    final syncOperation = row['_sync_operation'];
-    final syncCreatedAt = row['_sync_created_at'];
-    final dataId = row['_data_id'];
+    final lastEventId = row['_lasteventId'];
+    final eventId = row['eventId'];
+    final syncStatus = row['syncStatus'];
+    final syncOperation = row['operation'];
+    final syncCreatedAt = row['createdAt'];
+    final dataId = row['dataId'];
 
-    if (lastEventId is String) map['_last_event_id'] = lastEventId;
-    if (eventId is String) map['_event_id'] = eventId;
+    if (lastEventId is String) map['_lasteventId'] = lastEventId;
+    if (eventId is String) map['eventId'] = eventId;
     if (dataId is String) {
-      map['_data_id'] = dataId;
+      map['dataId'] = dataId;
       map.putIfAbsent('id', () => dataId);
     }
-    if (syncStatus != null) map['_sync_status'] = syncStatus;
-    if (syncOperation != null) map['_sync_operation'] = syncOperation;
-    if (syncCreatedAt != null) map['_sync_created_at'] = syncCreatedAt;
+    if (syncStatus != null) map['syncStatus'] = syncStatus;
+    if (syncOperation != null) map['operation'] = syncOperation;
+    if (syncCreatedAt != null) map['createdAt'] = syncCreatedAt;
 
     return map;
   }
@@ -780,17 +780,17 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     }
 
     final sql = StringBuffer(
-      'SELECT d.data, d._last_event_id, '
-      'e._event_id, e._sync_status, e._sync_operation, e._sync_created_at '
+      'SELECT d.data, d._lasteventId, '
+      'e.eventId, e.syncStatus, e.operation, e.createdAt '
       'FROM $resolvedTable d '
-      'LEFT JOIN $eventTable e ON d._last_event_id = e._event_id',
+      'LEFT JOIN $eventTable e ON d._lasteventId = e.eventId',
     );
     if (whereClauses.isNotEmpty) {
       sql.write(' WHERE ${whereClauses.join(' AND ')}');
     }
     if (!query.includeDeleted) {
       sql.write(whereClauses.isEmpty ? ' WHERE ' : ' AND ');
-      sql.write('e._sync_operation != ?');
+      sql.write('e.operation != ?');
       args.add(SyncOperation.delete.index);
     }
     if (orderClauses.isNotEmpty) {

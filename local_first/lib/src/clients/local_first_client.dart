@@ -108,19 +108,19 @@ class LocalFirstClient {
     await _localStorage.close();
   }
 
-  Future<void> pullChanges(List<JsonMap> changes) async {
+  Future<void> pullChanges({
+    required String repositoryName,
+    required List<JsonMap> changes,
+  }) async {
+    final repository = getRepositoryByName(repositoryName);
     for (final rawEvent in changes) {
-      final repositoryName = rawEvent[LocalFirstEvent.kRepository]?.toString();
-      if (repositoryName == null) continue;
-      final repository = getRepositoryByName(repositoryName);
       try {
-        final event = LocalFirstEvent.fromRemoteJson(
-          repository: repository,
-          json: rawEvent,
-        );
+        final event = repository.createEventFromRemote(rawEvent);
         await repository.mergeRemoteEvent(remoteEvent: event);
-      } catch (_) {
-        // ignore malformed events
+      } catch (e) {
+        throw FormatException(
+          'Malformed remote event for $repositoryName: $e | payload=$rawEvent',
+        );
       }
     }
   }

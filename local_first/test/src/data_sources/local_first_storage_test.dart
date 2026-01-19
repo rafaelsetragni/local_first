@@ -60,7 +60,7 @@ class _FakeStorage extends LocalFirstStorage {
   @override
   Future<JsonMap?> getEventById(String tableName, String id) async => events
       .cast<JsonMap?>()
-      .firstWhere((e) => e != null && e['_event_id'] == id, orElse: () => null);
+      .firstWhere((e) => e != null && e['eventId'] == id, orElse: () => null);
 
   @override
   Future<void> insert(String tableName, JsonMap item, String idField) async {
@@ -84,7 +84,7 @@ class _FakeStorage extends LocalFirstStorage {
 
   @override
   Future<void> updateEvent(String tableName, String id, JsonMap item) async {
-    events.removeWhere((e) => e['_event_id'] == id);
+    events.removeWhere((e) => e['eventId'] == id);
     events.add(item);
   }
 
@@ -95,7 +95,7 @@ class _FakeStorage extends LocalFirstStorage {
 
   @override
   Future<void> deleteEvent(String repositoryName, String id) async {
-    events.removeWhere((e) => e['_event_id'] == id);
+    events.removeWhere((e) => e['eventId'] == id);
   }
 
   @override
@@ -170,10 +170,10 @@ void main() {
     });
 
     test('insert/update/delete events', () async {
-      await storage.insertEvent('t', {'_event_id': 'e1'}, '_event_id');
+      await storage.insertEvent('t', {'eventId': 'e1'}, 'eventId');
       expect(await storage.getEventById('t', 'e1'), isNotNull);
 
-      await storage.updateEvent('t', 'e1', {'_event_id': 'e1', 'v': 1});
+      await storage.updateEvent('t', 'e1', {'eventId': 'e1', 'v': 1});
       expect((await storage.getEventById('t', 'e1'))?['v'], 1);
 
       await storage.deleteEvent('t', 'e1');
@@ -185,7 +185,7 @@ void main() {
       await storage.deleteAll('t');
       expect(await storage.getAll('t'), isEmpty);
 
-      await storage.insertEvent('t', {'_event_id': 'e'}, '_event_id');
+      await storage.insertEvent('t', {'eventId': 'e'}, 'eventId');
       await storage.deleteAllEvents('t');
       expect(await storage.getAllEvents('t'), isEmpty);
     });

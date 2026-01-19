@@ -96,7 +96,7 @@ void main() {
 
     Future<void> insertRow(JsonMap item) => storage.insert('users', {
       ...item,
-      '_last_event_id': item['_last_event_id'] ?? 'evt-${item['id']}',
+      '_lasteventId': item['_lasteventId'] ?? 'evt-${item['id']}',
     }, 'id');
 
     Future<void> insertEvent({
@@ -108,12 +108,12 @@ void main() {
     }) {
       final id = eventId ?? 'evt-$dataId';
       return storage.insertEvent('users', {
-        '_event_id': id,
-        '_data_id': dataId,
-        '_sync_status': status.index,
-        '_sync_operation': op.index,
-        '_sync_created_at': createdAt ?? DateTime.now().millisecondsSinceEpoch,
-      }, '_event_id');
+        'eventId': id,
+        'dataId': dataId,
+        'syncStatus': status.index,
+        'operation': op.index,
+        'createdAt': createdAt ?? DateTime.now().millisecondsSinceEpoch,
+      }, 'eventId');
     }
 
     setUp(() async {
@@ -156,21 +156,21 @@ void main() {
         'username': 'alice',
         'age': 20,
         'score': 1.1,
-        '_last_event_id': 'evt-1',
+        '_lasteventId': 'evt-1',
       });
       await insertRow({
         'id': '2',
         'username': 'bob',
         'age': 25,
         'score': 2.2,
-        '_last_event_id': 'evt-2',
+        '_lasteventId': 'evt-2',
       });
       await insertRow({
         'id': '3',
         'username': 'carol',
         'age': 30,
         'score': 3.3,
-        '_last_event_id': 'evt-3',
+        '_lasteventId': 'evt-3',
       });
       await insertEvent(
         dataId: '1',
@@ -215,7 +215,7 @@ void main() {
         'avatar': avatarBytes,
         'nullable': null,
         'nickname': 'nick',
-        '_last_event_id': 'evt-enc',
+        '_lasteventId': 'evt-enc',
       });
       await insertEvent(
         dataId: 'enc',
@@ -239,7 +239,7 @@ void main() {
         'username': 'mix',
         'age': 10,
         'verified': 1,
-        '_last_event_id': 'evt-mix',
+        '_lasteventId': 'evt-mix',
       });
       await insertEvent(
         dataId: 'mix_bool',
@@ -258,7 +258,7 @@ void main() {
         'username': 'timey',
         'age': 11,
         'birth': '2024-01-01T00:00:00.000Z',
-        '_last_event_id': 'evt-time',
+        '_lasteventId': 'evt-time',
       });
       await insertEvent(
         dataId: 'time',
@@ -286,11 +286,11 @@ void main() {
         'age': 31,
       });
       await storage.updateEvent('users', 'evt-update', {
-        '_event_id': 'evt-update',
-        '_data_id': 'merge',
-        '_sync_status': SyncStatus.ok.index,
-        '_sync_operation': SyncOperation.update.index,
-        '_sync_created_at': DateTime.now().millisecondsSinceEpoch,
+        'eventId': 'evt-update',
+        'dataId': 'merge',
+        'syncStatus': SyncStatus.ok.index,
+        'operation': SyncOperation.update.index,
+        'createdAt': DateTime.now().millisecondsSinceEpoch,
       });
 
       final merged = await storage.getById('users', 'merge');

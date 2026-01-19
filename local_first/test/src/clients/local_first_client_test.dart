@@ -290,7 +290,6 @@ void main() {
         syncStrategies: [strategy],
       );
       final payload = {
-        LocalFirstEvent.kRepository: 'r1',
         LocalFirstEvent.kEventId: IdUtil.uuidV7(),
         LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
         LocalFirstEvent.kOperation: SyncOperation.insert.index,
@@ -301,13 +300,13 @@ void main() {
         LocalFirstEvent.kData: {'id': '1'},
       };
 
-      await client.pullChanges([payload]);
+      await client.pullChanges(repositoryName: 'r1', changes: [payload]);
 
       expect(repo.mergedRemote, hasLength(1));
       expect(repo.mergedRemote.single.dataId, '1');
     });
 
-    test('should ignore changes without repository', () async {
+    test('should throw on malformed remote events', () async {
       final repo = _SpyRepository('r1');
       final client = LocalFirstClient(
         repositories: [repo],
@@ -315,29 +314,14 @@ void main() {
         syncStrategies: [strategy],
       );
 
-      await client.pullChanges([
-        {LocalFirstEvent.kEventId: 'no_repo'}
-      ]);
-
-      expect(repo.mergedRemote, isEmpty);
-    });
-
-    test('should ignore malformed remote events', () async {
-      final repo = _SpyRepository('r1');
-      final client = LocalFirstClient(
-        repositories: [repo],
-        localStorage: storage,
-        syncStrategies: [strategy],
+      expect(
+        () => client.pullChanges(repositoryName: 'r1', changes: [
+          {
+            LocalFirstEvent.kEventId: 'invalid',
+          }
+        ]),
+        throwsFormatException,
       );
-
-      await client.pullChanges([
-        {
-          LocalFirstEvent.kRepository: 'r1',
-          LocalFirstEvent.kEventId: 'invalid',
-        }
-      ]);
-
-      expect(repo.mergedRemote, isEmpty);
     });
 
     test('should get pending events for repository', () async {

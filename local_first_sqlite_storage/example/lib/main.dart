@@ -6,8 +6,6 @@ import 'package:local_first/local_first.dart';
 import 'package:local_first_sqlite_storage/local_first_sqlite_storage.dart';
 import 'package:mongo_dart/mongo_dart.dart' hide State, Center;
 
-typedef JsonMap<T> = JsonMap<T>;
-
 // To use this example, first you need to start a MongoDB service, and
 // you can do it easily creating an container instance using Docker.
 // First, install docker desktop on your machine, then copy and

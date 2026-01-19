@@ -56,10 +56,10 @@ void main() {
       if (event is LocalFirstStateEvent<_TestModel>) {
         await storage.insert(table, {
           ...event.toJson(),
-          '_last_event_id': event.eventId,
+          '_lasteventId': event.eventId,
         }, 'id');
       }
-      await storage.insertEvent(table, event.toLocalStorageJson(), '_event_id');
+      await storage.insertEvent(table, event.toLocalStorageJson(), 'eventId');
     }
 
     setUp(() async {
@@ -220,11 +220,11 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
       await storage.updateEvent('users', 'evt-1', {
-        '_event_id': 'evt-1',
-        '_data_id': '1',
-        '_sync_status': SyncStatus.ok.index,
-        '_sync_operation': SyncOperation.insert.index,
-        '_sync_created_at': DateTime.now().millisecondsSinceEpoch,
+        'eventId': 'evt-1',
+        'dataId': '1',
+        'syncStatus': SyncStatus.ok.index,
+        'operation': SyncOperation.insert.index,
+        'createdAt': DateTime.now().millisecondsSinceEpoch,
       });
       await Future<void>.delayed(const Duration(milliseconds: 50));
 

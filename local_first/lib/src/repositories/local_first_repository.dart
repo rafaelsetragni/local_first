@@ -248,6 +248,10 @@ abstract class LocalFirstRepository<T> {
     };
   }
 
+  /// Factory helper to parse a remote event using this repository's type.
+  LocalFirstEvent<T> createEventFromRemote(JsonMap json) =>
+      LocalFirstEvent.fromRemoteJson(repository: this, json: json);
+
   Future<void> _confirmEvent({
     required LocalFirstEvent<T> remoteEvent,
     required LocalFirstEvent<T> localPendingEvent,

@@ -154,11 +154,11 @@ void main() {
           final repo = _dummyRepo();
           final now = DateTime.now().toUtc().millisecondsSinceEpoch;
           final json = {
-            '_event_id': 'evt-1',
-            '_data_id': '1',
-            '_sync_status': SyncStatus.ok.index,
-            '_sync_operation': SyncOperation.insert.index,
-            '_sync_created_at': now,
+            'eventId': 'evt-1',
+            'dataId': '1',
+            'syncStatus': SyncStatus.ok.index,
+            'operation': SyncOperation.insert.index,
+            'createdAt': now,
             'id': '1',
           };
 
@@ -189,11 +189,11 @@ void main() {
           final repo = _dummyRepo();
           final now = DateTime.now().toUtc().millisecondsSinceEpoch;
           final json = {
-            '_event_id': 'evt-1',
-            '_data_id': '1',
-            '_sync_status': SyncStatus.pending.index,
-            '_sync_operation': SyncOperation.update.index,
-            '_sync_created_at': now,
+            'eventId': 'evt-1',
+            'dataId': '1',
+            'syncStatus': SyncStatus.pending.index,
+            'operation': SyncOperation.update.index,
+            'createdAt': now,
             'id': '1',
           };
 
@@ -214,10 +214,10 @@ void main() {
         test('should build event with correct sync defaults', () {
           final repo = _dummyRepo();
           final json = {
-            '_event_id': 'evt-remote',
-            '_sync_operation': SyncOperation.insert.index,
-            '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
-            '_data_id': '1',
+            'eventId': 'evt-remote',
+            'operation': SyncOperation.insert.index,
+            'createdAt': DateTime.now().toUtc().millisecondsSinceEpoch,
+            'dataId': '1',
             'data': {'id': '1'},
           };
 
@@ -242,6 +242,22 @@ void main() {
             throwsFormatException,
           );
         });
+
+        test('should throw when createdAt is missing', () {
+          final repo = _dummyRepo();
+          expect(
+            () => LocalFirstEvent<_DummyModel>.fromRemoteJson(
+              repository: repo,
+              json: {
+                'eventId': 'evt-missing-date',
+                'operation': SyncOperation.insert.index,
+                'dataId': '1',
+                'data': {'id': '1'},
+              },
+            ),
+            throwsFormatException,
+          );
+        });
       });
     });
 
@@ -249,20 +265,21 @@ void main() {
       group('business rules', () {
         test('should output normalized payload for remote', () {
           final repo = _dummyRepo();
-          final event = LocalFirstEvent.createNewInsertEvent(
-            repository: repo,
-            needSync: false,
-            data: _DummyModel('1', value: 'a'),
-          );
+      final event = LocalFirstEvent.createNewInsertEvent(
+        repository: repo,
+        needSync: false,
+        data: _DummyModel('1', value: 'a'),
+      );
 
-          final json = event.toJson();
+      final json = event.toJson();
 
-          expect(json[LocalFirstEvent.kEventId], event.eventId);
-          expect(json[LocalFirstEvent.kOperation], SyncOperation.insert.index);
-          expect(json[LocalFirstEvent.kDataId], '1');
-          expect(json[LocalFirstEvent.kData], containsPair('id', '1'));
-        });
-      });
+      expect(json[LocalFirstEvent.kEventId], event.eventId);
+      expect(json[LocalFirstEvent.kOperation], SyncOperation.insert.index);
+      expect(json[LocalFirstEvent.kDataId], '1');
+      expect(json[LocalFirstEvent.kData], containsPair('id', '1'));
+      expect(json[LocalFirstEvent.kSyncCreatedAt], isA<DateTime>());
+    });
+  });
     });
 
     group('toLocalStorageJson', () {
