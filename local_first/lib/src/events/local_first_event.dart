@@ -25,13 +25,13 @@ enum SyncOperation {
 }
 
 /// Base sync event carrying metadata.
-sealed class LocalFirstEvent<T> {
+abstract class LocalFirstEvent<T> {
   // Shared payload keys for remote and local.
   static const String kEventId = '_event_id';
   static const String kRepository = 'repository';
   static const String kOperation = '_sync_operation';
   static const String kSyncCreatedAt = '_sync_created_at';
-  static const String kState = 'state';
+  static const String kData = 'data';
   static const String kDataId = '_data_id';
   static const String kSyncStatus = '_sync_status';
   static const String kLastEventId = '_last_event_id';
@@ -42,7 +42,6 @@ sealed class LocalFirstEvent<T> {
     required this.syncStatus,
     required this.syncOperation,
     required this.syncCreatedAt,
-    required this.repositoryName,
   });
 
   final LocalFirstRepository repository;
@@ -50,13 +49,14 @@ sealed class LocalFirstEvent<T> {
   final SyncStatus syncStatus;
   final SyncOperation syncOperation;
   final DateTime syncCreatedAt;
-  final String repositoryName;
 
   bool get needSync => syncStatus != SyncStatus.ok;
   bool get isDeleted => syncOperation == SyncOperation.delete;
 
   /// Must be available for all event kinds.
   String get dataId;
+
+  String get repositoryName => repository.name;
 
   /// Serialize event to remote JSON.
   JsonMap toJson();
@@ -65,14 +65,9 @@ sealed class LocalFirstEvent<T> {
   JsonMap toLocalStorageJson();
 
   /// Clone preserving subtype.
-  LocalFirstEvent<T> copyWith({
+  LocalFirstEvent<T> updateEventState({
     SyncStatus? syncStatus,
     SyncOperation? syncOperation,
-    String? repositoryName,
-    String? eventId,
-    DateTime? syncCreatedAt,
-    T? state,
-    String? dataId,
   });
 
   /// Factory used internally to hydrate events stored locally with full metadata.
@@ -101,10 +96,7 @@ sealed class LocalFirstEvent<T> {
     final baseMeta = (
       id: eventId ?? lastEventId!,
       status: SyncStatus.values[statusIndex],
-      createdAt: DateTime.fromMillisecondsSinceEpoch(
-        createdAtMs,
-        isUtc: true,
-      ),
+      createdAt: DateTime.fromMillisecondsSinceEpoch(createdAtMs, isUtc: true),
     );
 
     if (operation == SyncOperation.delete) {
@@ -115,7 +107,6 @@ sealed class LocalFirstEvent<T> {
       }
       return LocalFirstDeleteEvent<T>._internal(
         repository: repository,
-        repositoryName: repository.name,
         eventId: baseMeta.id,
         syncStatus: baseMeta.status,
         syncOperation: operation,
@@ -126,11 +117,10 @@ sealed class LocalFirstEvent<T> {
 
     itemJson.remove(kDataId);
     itemJson.putIfAbsent(repository.idFieldName, () => dataId);
-    final model = repository.fromJson(itemJson);
+    final data = repository.fromJson(itemJson);
     return LocalFirstStateEvent<T>._internal(
       repository: repository,
-      repositoryName: repository.name,
-      state: model,
+      data: data,
       eventId: baseMeta.id,
       syncStatus: baseMeta.status,
       syncOperation: operation,
@@ -143,117 +133,131 @@ sealed class LocalFirstEvent<T> {
     required LocalFirstRepository repository,
     required JsonMap json,
   }) {
-    final operation = SyncOperation.values.firstWhere(
-      (o) => o.index == json[kOperation] || o.name == json[kOperation],
-    );
-    final rawCreatedAt = json[kSyncCreatedAt];
-    final createdAt = rawCreatedAt is String
-        ? (DateTime.tryParse(rawCreatedAt) ?? DateTime.now()).toUtc()
-        : DateTime.fromMillisecondsSinceEpoch(
-          (rawCreatedAt as int?) ?? 0,
-          isUtc: true,
-        );
+    try {
+      final rawOp = json[kOperation];
+      final operation = SyncOperation.values.firstWhere(
+        (o) => o.index == rawOp || o.name == rawOp,
+        orElse: () => throw FormatException(
+          'Invalid sync operation for remote event in ${repository.name}',
+        ),
+      );
+      final rawCreatedAt = json[kSyncCreatedAt];
+      final createdAt = rawCreatedAt is String
+          ? (DateTime.tryParse(rawCreatedAt) ?? DateTime.now()).toUtc()
+          : DateTime.fromMillisecondsSinceEpoch(
+              (rawCreatedAt as int?) ?? 0,
+              isUtc: true,
+            );
 
-    if (operation == SyncOperation.delete) {
-      final dataId = json[kDataId] as String?;
-      if (dataId == null) {
-        throw FormatException(
-          'Missing data id for remote delete event in ${repository.name}',
+      if (operation == SyncOperation.delete) {
+        final dataId = json[kDataId] as String?;
+        if (dataId == null) {
+          throw FormatException(
+            'Missing data id for remote delete event in ${repository.name}',
+          );
+        }
+        return LocalFirstDeleteEvent<T>._internal(
+          repository: repository,
+          eventId: json[kEventId],
+          syncStatus: SyncStatus.ok,
+          syncOperation: operation,
+          syncCreatedAt: createdAt,
+          dataId: dataId,
         );
       }
-      return LocalFirstDeleteEvent<T>._internal(
+
+      final stateJson = json[kData];
+      if (stateJson == null) {
+        throw FormatException(
+          'Missing state for remote ${operation.name} event in ${repository.name}',
+        );
+      }
+      return LocalFirstStateEvent<T>._internal(
         repository: repository,
-        repositoryName: repository.name,
+        data: repository.fromJson(JsonMap.from(stateJson)),
         eventId: json[kEventId],
         syncStatus: SyncStatus.ok,
         syncOperation: operation,
         syncCreatedAt: createdAt,
-        dataId: dataId,
       );
-    }
-
-    final stateJson = json[kState];
-    if (stateJson == null) {
+    } catch (e) {
+      if (e is FormatException) rethrow;
       throw FormatException(
-        'Missing state for remote ${operation.name} event in ${repository.name}',
+        'Invalid remote event format for ${repository.name}: $e',
       );
     }
-    return LocalFirstStateEvent<T>._internal(
-      repository: repository,
-      repositoryName: repository.name,
-      state: repository.fromJson(JsonMap.from(stateJson)),
-      eventId: json[kEventId],
-      syncStatus: SyncStatus.ok,
-      syncOperation: operation,
-      syncCreatedAt: createdAt,
-    );
   }
 
-  /// Factory for new local events.
-  factory LocalFirstEvent.createNewEvent({
+  /// Factory for new insert events.
+  static LocalFirstStateEvent<T> createNewInsertEvent<T>({
     required LocalFirstRepository repository,
-    required SyncStatus syncStatus,
-    required SyncOperation syncOperation,
-    T? state,
-    String? dataId,
+    required bool needSync,
+    required T data,
+  }) => LocalFirstStateEvent<T>._internal(
+    repository: repository,
+    data: data,
+    eventId: IdUtil.uuidV7(),
+    syncStatus: needSync ? SyncStatus.pending : SyncStatus.ok,
+    syncOperation: SyncOperation.insert,
+    syncCreatedAt: DateTime.now().toUtc(),
+  );
+
+  /// Factory for new update events.
+  static LocalFirstEvent<T> createNewUpdateEvent<T>({
+    required LocalFirstRepository repository,
+    required bool needSync,
+    required T data,
+  }) => LocalFirstStateEvent<T>._internal(
+    repository: repository,
+    data: data,
+    eventId: IdUtil.uuidV7(),
+    syncStatus: needSync ? SyncStatus.pending : SyncStatus.ok,
+    syncOperation: SyncOperation.update,
+    syncCreatedAt: DateTime.now().toUtc(),
+  );
+
+  /// Factory for new delete events.
+  static LocalFirstEvent<T> createNewDeleteEvent<T>({
+    required LocalFirstRepository repository,
+    required bool needSync,
+    required String dataId,
   }) {
-    switch (syncOperation) {
-      case SyncOperation.insert:
-      case SyncOperation.update:
-        if (state == null) {
-          throw ArgumentError('State is required for $syncOperation events');
-        }
-        return LocalFirstStateEvent<T>._internal(
-          repository: repository,
-          repositoryName: repository.name,
-          state: state,
-          eventId: IdUtil.uuidV7(),
-          syncStatus: syncStatus,
-          syncOperation: syncOperation,
-          syncCreatedAt: DateTime.now().toUtc(),
-        );
-      case SyncOperation.delete:
-        final resolvedId =
-            dataId ?? (state != null ? repository.getId(state) : null);
-        if (resolvedId == null) {
-          throw ArgumentError('dataId or state is required for delete events');
-        }
-        return LocalFirstDeleteEvent<T>._internal(
-          repository: repository,
-          repositoryName: repository.name,
-          eventId: IdUtil.uuidV7(),
-          syncStatus: syncStatus,
-          syncOperation: SyncOperation.delete,
-          syncCreatedAt: DateTime.now().toUtc(),
-          dataId: resolvedId,
-        );
-    }
+    assert(T != dynamic, 'Type of data must be specified at delete events');
+    return LocalFirstDeleteEvent<T>._internal(
+      repository: repository,
+      eventId: IdUtil.uuidV7(),
+      syncStatus: needSync ? SyncStatus.pending : SyncStatus.ok,
+      syncOperation: SyncOperation.delete,
+      syncCreatedAt: DateTime.now().toUtc(),
+      dataId: dataId,
+    );
   }
 }
 
 final class LocalFirstStateEvent<T> extends LocalFirstEvent<T> {
   LocalFirstStateEvent._internal({
     required super.repository,
-    required this.state,
+    required this.data,
     required super.eventId,
     required super.syncStatus,
     required super.syncOperation,
     required super.syncCreatedAt,
-    required super.repositoryName,
   }) : super._();
 
-  final T state;
+  final T data;
 
   @override
-  String get dataId => repository.getId(state);
+  String get dataId => repository.getId(data);
 
   @override
   JsonMap toJson() => {
     LocalFirstEvent.kEventId: eventId,
     LocalFirstEvent.kRepository: repositoryName,
     LocalFirstEvent.kOperation: syncOperation.index,
-    LocalFirstEvent.kSyncCreatedAt: syncCreatedAt.toUtc().millisecondsSinceEpoch,
-    LocalFirstEvent.kState: repository.toJson(state),
+    LocalFirstEvent.kSyncCreatedAt: syncCreatedAt
+        .toUtc()
+        .millisecondsSinceEpoch,
+    LocalFirstEvent.kData: repository.toJson(data),
     LocalFirstEvent.kSyncStatus: syncStatus.index,
     LocalFirstEvent.kDataId: dataId,
   };
@@ -264,26 +268,22 @@ final class LocalFirstStateEvent<T> extends LocalFirstEvent<T> {
     LocalFirstEvent.kDataId: dataId,
     LocalFirstEvent.kSyncStatus: syncStatus.index,
     LocalFirstEvent.kOperation: syncOperation.index,
-    LocalFirstEvent.kSyncCreatedAt: syncCreatedAt.toUtc().millisecondsSinceEpoch,
+    LocalFirstEvent.kSyncCreatedAt: syncCreatedAt
+        .toUtc()
+        .millisecondsSinceEpoch,
   };
 
   @override
-  LocalFirstStateEvent<T> copyWith({
+  LocalFirstStateEvent<T> updateEventState({
     SyncStatus? syncStatus,
     SyncOperation? syncOperation,
-    String? repositoryName,
-    String? eventId,
-    DateTime? syncCreatedAt,
-    T? state,
-    String? dataId,
   }) => LocalFirstStateEvent<T>._internal(
+    eventId: eventId,
     repository: repository,
-    repositoryName: repositoryName ?? this.repositoryName,
-    state: state ?? this.state,
-    eventId: eventId ?? this.eventId,
+    data: data,
     syncStatus: syncStatus ?? this.syncStatus,
     syncOperation: syncOperation ?? this.syncOperation,
-    syncCreatedAt: (syncCreatedAt ?? this.syncCreatedAt).toUtc(),
+    syncCreatedAt: syncCreatedAt,
   );
 }
 
@@ -294,7 +294,6 @@ final class LocalFirstDeleteEvent<T> extends LocalFirstEvent<T> {
     required super.syncStatus,
     required super.syncOperation,
     required super.syncCreatedAt,
-    required super.repositoryName,
     required this.dataId,
   }) : super._();
 
@@ -306,7 +305,9 @@ final class LocalFirstDeleteEvent<T> extends LocalFirstEvent<T> {
     LocalFirstEvent.kEventId: eventId,
     LocalFirstEvent.kRepository: repositoryName,
     LocalFirstEvent.kOperation: syncOperation.index,
-    LocalFirstEvent.kSyncCreatedAt: syncCreatedAt.toUtc().millisecondsSinceEpoch,
+    LocalFirstEvent.kSyncCreatedAt: syncCreatedAt
+        .toUtc()
+        .millisecondsSinceEpoch,
     LocalFirstEvent.kSyncStatus: syncStatus.index,
     LocalFirstEvent.kDataId: dataId,
   };
@@ -317,26 +318,22 @@ final class LocalFirstDeleteEvent<T> extends LocalFirstEvent<T> {
     LocalFirstEvent.kDataId: dataId,
     LocalFirstEvent.kSyncStatus: syncStatus.index,
     LocalFirstEvent.kOperation: syncOperation.index,
-    LocalFirstEvent.kSyncCreatedAt: syncCreatedAt.toUtc().millisecondsSinceEpoch,
+    LocalFirstEvent.kSyncCreatedAt: syncCreatedAt
+        .toUtc()
+        .millisecondsSinceEpoch,
   };
 
   @override
-  LocalFirstDeleteEvent<T> copyWith({
+  LocalFirstDeleteEvent<T> updateEventState({
     SyncStatus? syncStatus,
     SyncOperation? syncOperation,
-    String? repositoryName,
-    String? eventId,
-    DateTime? syncCreatedAt,
-    T? state,
-    String? dataId,
   }) => LocalFirstDeleteEvent<T>._internal(
     repository: repository,
-    repositoryName: repositoryName ?? this.repositoryName,
-    eventId: eventId ?? this.eventId,
+    eventId: eventId,
     syncStatus: syncStatus ?? this.syncStatus,
     syncOperation: syncOperation ?? this.syncOperation,
-    syncCreatedAt: (syncCreatedAt ?? this.syncCreatedAt).toUtc(),
-    dataId: dataId ?? this.dataId,
+    syncCreatedAt: syncCreatedAt,
+    dataId: dataId,
   );
 }
 

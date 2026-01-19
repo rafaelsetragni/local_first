@@ -1,2 +1,390 @@
-// Placeholder for LocalFirstClient tests.
-void main() {}
+import 'dart:async';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:local_first/local_first.dart';
+
+class _SpyStorage implements LocalFirstStorage {
+  int initialized = 0;
+  int cleared = 0;
+  int closed = 0;
+  final Map<String, String> meta = {};
+
+  @override
+  Future<void> clearAllData() async {
+    cleared++;
+  }
+
+  @override
+  Future<void> close() async {
+    closed++;
+  }
+
+  @override
+  Future<bool> containsId(String tableName, String id) async => false;
+
+  @override
+  Future<void> delete(String repositoryName, String id) async {}
+
+  @override
+  Future<void> deleteAll(String tableName) async {}
+
+  @override
+  Future<void> deleteAllEvents(String tableName) async {}
+
+  @override
+  Future<void> deleteEvent(String repositoryName, String id) async {}
+
+  @override
+  Future<void> ensureSchema(
+    String tableName,
+    Map<String, LocalFieldType> schema, {
+    required String idFieldName,
+  }) async {}
+
+  @override
+  Future<List<Map<String, dynamic>>> getAll(String tableName) async => [];
+
+  @override
+  Future<List<Map<String, dynamic>>> getAllEvents(String tableName) async => [];
+
+  @override
+  Future<Map<String, dynamic>?> getById(String tableName, String id) async =>
+      null;
+
+  @override
+  Future<Map<String, dynamic>?> getEventById(
+    String tableName,
+    String id,
+  ) async =>
+      null;
+
+  @override
+  Future<String?> getMeta(String key) async => meta[key];
+
+  @override
+  Future<void> initialize() async {
+    initialized++;
+  }
+
+  @override
+  Future<void> insert(
+    String tableName,
+    Map<String, dynamic> item,
+    String idField,
+  ) async {}
+
+  @override
+  Future<void> insertEvent(
+    String tableName,
+    Map<String, dynamic> item,
+    String idField,
+  ) async {}
+
+  @override
+  Future<List<LocalFirstEvent<T>>> query<T>(LocalFirstQuery<T> query) async =>
+      [];
+
+  @override
+  Future<void> setMeta(String key, String value) async {
+    meta[key] = value;
+  }
+
+  @override
+  Future<void> update(
+    String tableName,
+    String id,
+    Map<String, dynamic> item,
+  ) async {}
+
+  @override
+  Future<void> updateEvent(
+    String tableName,
+    String id,
+    Map<String, dynamic> item,
+  ) async {}
+
+  @override
+  Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query) =>
+      const Stream.empty();
+}
+
+class _SpyRepository extends LocalFirstRepository<dynamic> {
+  _SpyRepository(String name)
+      : super(
+          name: name,
+          getId: (item) => item['id'] as String,
+          toJson: (item) => item,
+          fromJson: (json) => json,
+        );
+
+  bool initialized = false;
+  bool resetCalled = false;
+  int pendingCalls = 0;
+  List<LocalFirstEvent<dynamic>> pendingToReturn = const [];
+  final List<LocalFirstEvent<dynamic>> mergedRemote = [];
+
+  @override
+  Future<void> initialize() async {
+    initialized = true;
+  }
+
+  @override
+  Future<void> reset() async {
+    resetCalled = true;
+  }
+
+  @override
+  Future<List<LocalFirstEvent<dynamic>>> getPendingEvents() async {
+    pendingCalls++;
+    return pendingToReturn;
+  }
+
+  @override
+  Future<void> mergeRemoteEvent({
+    required LocalFirstEvent<dynamic> remoteEvent,
+  }) async {
+    mergedRemote.add(remoteEvent);
+  }
+}
+
+class _SpyStrategy extends DataSyncStrategy {
+  LocalFirstClient? attached;
+
+  @override
+  void attach(LocalFirstClient client) {
+    attached = client;
+    super.attach(client);
+  }
+}
+
+void main() {
+  group('LocalFirstClient', () {
+    late _SpyStorage storage;
+    late _SpyStrategy strategy;
+
+    setUp(() {
+      storage = _SpyStorage();
+      strategy = _SpyStrategy();
+    });
+
+    test('should require at least one sync strategy', () {
+      expect(
+        () => LocalFirstClient(
+          repositories: [],
+          localStorage: storage,
+          syncStrategies: [],
+        ),
+        throwsAssertionError,
+      );
+    });
+
+    test('should throw on duplicate repository names', () {
+      final repo1 = _SpyRepository('repo');
+      final repo2 = _SpyRepository('repo');
+
+      expect(
+        () => LocalFirstClient(
+          repositories: [repo1, repo2],
+          localStorage: storage,
+          syncStrategies: [strategy],
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('should attach strategy and expose client', () {
+      final repo = _SpyRepository('r1');
+      final client = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        syncStrategies: [strategy],
+      );
+
+      expect(strategy.attached, same(client));
+    });
+
+    test('should initialize storage and repositories', () async {
+      final repo = _SpyRepository('r1');
+      final client = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        syncStrategies: [strategy],
+      );
+
+      await client.initialize();
+      await client.awaitInitialization;
+
+      expect(storage.initialized, 1);
+      expect(repo.initialized, isTrue);
+    });
+
+    test('should clear data and reinitialize repositories', () async {
+      final repo = _SpyRepository('r1');
+      final client = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        syncStrategies: [strategy],
+      );
+
+      await client.clearAllData();
+
+      expect(storage.cleared, 1);
+      expect(repo.resetCalled, isTrue);
+      expect(repo.initialized, isTrue);
+    });
+
+    test('should dispose storage and close connection stream', () async {
+      final repo = _SpyRepository('r1');
+      final client = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        syncStrategies: [strategy],
+      );
+      await client.dispose();
+
+      expect(storage.closed, 1);
+      expect(client.latestConnectionState, isNull);
+      // Should not throw when reporting after dispose.
+      client.reportConnectionState(true);
+    });
+
+    test('should return repository by name', () {
+      final repo = _SpyRepository('r1');
+      final client = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        syncStrategies: [strategy],
+      );
+
+      expect(client.getRepositoryByName('r1'), same(repo));
+      expect(
+        () => client.getRepositoryByName('missing'),
+        throwsStateError,
+      );
+    });
+
+    test('should stream connection changes', () async {
+      final repo = _SpyRepository('r1');
+      final client = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        syncStrategies: [strategy],
+      );
+      final values = <bool>[];
+      final sub = client.connectionChanges.listen(values.add);
+
+      client.reportConnectionState(true);
+      client.reportConnectionState(false);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(values, [true, false]);
+      expect(client.latestConnectionState, isFalse);
+      await sub.cancel();
+    });
+
+    test('should pull changes and forward to repository', () async {
+      final repo = _SpyRepository('r1');
+      final client = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        syncStrategies: [strategy],
+      );
+      final payload = {
+        LocalFirstEvent.kRepository: 'r1',
+        LocalFirstEvent.kEventId: IdUtil.uuidV7(),
+        LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
+        LocalFirstEvent.kOperation: SyncOperation.insert.index,
+        LocalFirstEvent.kSyncCreatedAt: DateTime.now()
+            .toUtc()
+            .millisecondsSinceEpoch,
+        LocalFirstEvent.kDataId: '1',
+        LocalFirstEvent.kData: {'id': '1'},
+      };
+
+      await client.pullChanges([payload]);
+
+      expect(repo.mergedRemote, hasLength(1));
+      expect(repo.mergedRemote.single.dataId, '1');
+    });
+
+    test('should ignore changes without repository', () async {
+      final repo = _SpyRepository('r1');
+      final client = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        syncStrategies: [strategy],
+      );
+
+      await client.pullChanges([
+        {LocalFirstEvent.kEventId: 'no_repo'}
+      ]);
+
+      expect(repo.mergedRemote, isEmpty);
+    });
+
+    test('should ignore malformed remote events', () async {
+      final repo = _SpyRepository('r1');
+      final client = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        syncStrategies: [strategy],
+      );
+
+      await client.pullChanges([
+        {
+          LocalFirstEvent.kRepository: 'r1',
+          LocalFirstEvent.kEventId: 'invalid',
+        }
+      ]);
+
+      expect(repo.mergedRemote, isEmpty);
+    });
+
+    test('should get pending events for repository', () async {
+      final repo1 = _SpyRepository('r1')
+        ..pendingToReturn = [];
+      final repo2 = _SpyRepository('r2')
+        ..pendingToReturn = [];
+      final client = LocalFirstClient(
+        repositories: [repo1, repo2],
+        localStorage: storage,
+        syncStrategies: [strategy],
+      );
+
+      repo1.pendingToReturn = [
+        LocalFirstEvent.createNewInsertEvent(
+          repository: repo1,
+          data: {'id': '1'},
+          needSync: true,
+        ),
+      ];
+      repo2.pendingToReturn = [
+        LocalFirstEvent.createNewInsertEvent(
+          repository: repo2,
+          data: {'id': '2'},
+          needSync: true,
+        ),
+      ];
+
+      final result = await client.getAllPendingEvents(repositoryName: 'r1');
+
+      expect(result.map((e) => e.dataId), ['1']);
+      expect(repo1.pendingCalls, 1);
+      expect(repo2.pendingCalls, 0);
+    });
+
+    test('should delegate meta operations to storage', () async {
+      final repo = _SpyRepository('r1');
+      final client = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        syncStrategies: [strategy],
+      );
+
+      await client.setKeyValue('k', 'v');
+      final value = await client.getMeta('k');
+
+      expect(value, 'v');
+    });
+  });
+}

@@ -34,15 +34,15 @@ abstract class LocalFirstStorage {
   Future<void> clearAllData();
 
   /// Gets all items from the state table/collection.
-  Future<List<Map<String, dynamic>>> getAll(String tableName);
+  Future<List<JsonMap>> getAll(String tableName);
 
   /// Gets all items from the event log table/collection.
-  Future<List<Map<String, dynamic>>> getAllEvents(String tableName);
+  Future<List<JsonMap>> getAllEvents(String tableName);
 
   /// Gets a single item by its ID.
   ///
   /// Returns null if the item doesn't exist.
-  Future<Map<String, dynamic>?> getById(String tableName, String id);
+  Future<JsonMap?> getById(String tableName, String id);
 
   /// Checks if a single item exists by its ID.
   ///
@@ -50,31 +50,19 @@ abstract class LocalFirstStorage {
   Future<bool> containsId(String tableName, String id);
 
   /// Gets a single event by its event id.
-  Future<Map<String, dynamic>?> getEventById(String tableName, String id);
+  Future<JsonMap?> getEventById(String tableName, String id);
 
   /// Inserts a new item into the state table/collection.
-  Future<void> insert(
-    String tableName,
-    Map<String, dynamic> item,
-    String idField,
-  );
+  Future<void> insert(String tableName, JsonMap item, String idField);
 
-  /// Inserts a new event into the event log table/collection.
-  Future<void> insertEvent(
-    String tableName,
-    Map<String, dynamic> item,
-    String idField,
-  );
+  /// Inserts a new event into the event log table/co'llection.
+  Future<void> insertEvent(String tableName, JsonMap item, String idField);
 
   /// Updates an existing item in the state table/collection.
-  Future<void> update(String tableName, String id, Map<String, dynamic> item);
+  Future<void> update(String tableName, String id, JsonMap item);
 
   /// Updates an existing event in the event log.
-  Future<void> updateEvent(
-    String tableName,
-    String id,
-    Map<String, dynamic> item,
-  );
+  Future<void> updateEvent(String tableName, String id, JsonMap item);
 
   /// Deletes an item by its ID in the state table.
   Future<void> delete(String repositoryName, String id);
@@ -99,7 +87,7 @@ abstract class LocalFirstStorage {
   /// Backends that do not use schemas can ignore this call.
   Future<void> ensureSchema(
     String tableName,
-    Map<String, LocalFieldType> schema, {
+    JsonMap<LocalFieldType> schema, {
     required String idFieldName,
   });
 

@@ -6,7 +6,7 @@ import 'package:local_first/local_first.dart';
 import 'package:local_first_sqlite_storage/local_first_sqlite_storage.dart';
 import 'package:mongo_dart/mongo_dart.dart' hide State, Center;
 
-typedef JsonMap<T> = Map<String, T>;
+typedef JsonMap<T> = JsonMap<T>;
 
 // To use this example, first you need to start a MongoDB service, and
 // you can do it easily creating an container instance using Docker.
@@ -764,7 +764,7 @@ class UserModel {
     );
   }
 
-  JsonMap<dynamic> toJson() {
+  JsonMap toJson() {
     return {
       'id': id,
       'username': username,
@@ -774,7 +774,7 @@ class UserModel {
     };
   }
 
-  factory UserModel.fromJson(JsonMap<dynamic> json) {
+  factory UserModel.fromJson(JsonMap json) {
     final username = json['username'] ?? json['id'];
     return UserModel(
       id: (json['id'] ?? username).toString().trim().toLowerCase(),
@@ -835,7 +835,7 @@ class CounterLogModel {
     );
   }
 
-  JsonMap<dynamic> toJson() {
+  JsonMap toJson() {
     return {
       'id': id,
       'username': username,
@@ -845,7 +845,7 @@ class CounterLogModel {
     };
   }
 
-  factory CounterLogModel.fromJson(JsonMap<dynamic> json) {
+  factory CounterLogModel.fromJson(JsonMap json) {
     return CounterLogModel(
       id: json['id'],
       username: json['username'],
@@ -991,7 +991,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     await mongoApi.push(_buildUploadPayload(changes));
   }
 
-  JsonMap<dynamic> _buildUploadPayload(JsonMap<List<LocalFirstEvent>> changes) {
+  JsonMap _buildUploadPayload(JsonMap<List<LocalFirstEvent>> changes) {
     return {
       'lastSyncedAt': DateTime.now().toUtc().toIso8601String(),
       'changes': {
@@ -1003,7 +1003,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     };
   }
 
-  Future<List<JsonMap<dynamic>>> fetchUsers() {
+  Future<List<JsonMap>> fetchUsers() {
     return mongoApi.fetchUsers();
   }
 }
@@ -1048,9 +1048,9 @@ class MongoApi {
     return collection;
   }
 
-  Future<void> push(JsonMap<dynamic> payload) async {
+  Future<void> push(JsonMap payload) async {
     final operationsByNode = payload['changes'];
-    if (operationsByNode is! JsonMap<dynamic>) return;
+    if (operationsByNode is! JsonMap) return;
 
     final now = DateTime.now().toUtc();
     final hasChanges = operationsByNode.values.any((op) {
@@ -1065,13 +1065,13 @@ class MongoApi {
     for (final entry in operationsByNode.entries) {
       final repositoryName = entry.key;
       final operations = entry.value;
-      if (operations is! JsonMap<dynamic>) continue;
+      if (operations is! JsonMap) continue;
       final collection = await _collection(repositoryName);
 
       final insertItems = operations['insert'];
       if (insertItems is List) {
         for (final item in insertItems) {
-          if (item is! JsonMap<dynamic>) continue;
+          if (item is! JsonMap) continue;
           final id = item['id']?.toString();
           if (id == null) continue;
           await collection.insertOne({
@@ -1086,7 +1086,7 @@ class MongoApi {
       final updateItems = operations['update'];
       if (updateItems is List) {
         for (final item in updateItems) {
-          if (item is! JsonMap<dynamic>) continue;
+          if (item is! JsonMap) continue;
           final id = item['id']?.toString();
           if (id == null) continue;
           await collection.insertOne({
@@ -1115,7 +1115,7 @@ class MongoApi {
     }
   }
 
-  Future<JsonMap<dynamic>> pull(JsonMap<DateTime?> lastSyncByNode) async {
+  Future<JsonMap> pull(JsonMap<DateTime?> lastSyncByNode) async {
     final timestamp = DateTime.now().toUtc();
 
     final changes = <String, JsonMap<List<dynamic>>>{};
@@ -1141,7 +1141,7 @@ class MongoApi {
           }
           return;
         }
-        final item = Map<String, dynamic>.from(doc)
+        final item = JsonMap.from(doc)
           ..remove('operation')
           ..remove('_id');
         if (op == 'insert') {
@@ -1168,17 +1168,17 @@ class MongoApi {
     return {'timestamp': timestamp.toIso8601String(), 'changes': changes};
   }
 
-  Future<List<JsonMap<dynamic>>> fetchUsers() async {
+  Future<List<JsonMap>> fetchUsers() async {
     dev.log('Fetching users snapshot', name: logTag);
     final collection = await _collection('user');
     final cursor = collection.find(where.ne('operation', 'delete'));
 
-    final users = <String, JsonMap<dynamic>>{};
+    final users = <String, JsonMap>{};
 
     await cursor.forEach((doc) {
       final id = doc['id'];
       if (id is! String) return;
-      final data = Map<String, dynamic>.from(doc)
+      final data = JsonMap.from(doc)
         ..remove('_id')
         ..remove('operation');
       users[id] = _fromMongoDateFields(data);
@@ -1187,7 +1187,7 @@ class MongoApi {
     return users.values.toList();
   }
 
-  DateTime? latestUpdatedAt(JsonMap<dynamic> pullResult) {
+  DateTime? latestUpdatedAt(JsonMap pullResult) {
     final changes = pullResult['changes'];
     if (changes is! JsonMap) return null;
     DateTime? latest;
@@ -1200,7 +1200,7 @@ class MongoApi {
         final list = repositoryChanges[key];
         if (list is! List) continue;
         for (final item in list) {
-          if (item is! Map<String, dynamic>) continue;
+          if (item is! JsonMap) continue;
           final updatedValue = item['updated_at'];
           DateTime? candidate;
           if (updatedValue is DateTime) {
@@ -1218,8 +1218,8 @@ class MongoApi {
     return latest;
   }
 
-  JsonMap<dynamic> _toMongoDateFields(JsonMap<dynamic> item) {
-    final map = Map<String, dynamic>.from(item);
+  JsonMap _toMongoDateFields(JsonMap item) {
+    final map = JsonMap.from(item);
     for (final key in ['created_at', 'updated_at']) {
       final value = map[key];
       if (value is String) {
@@ -1232,8 +1232,8 @@ class MongoApi {
     return map;
   }
 
-  JsonMap<dynamic> _fromMongoDateFields(JsonMap<dynamic> item) {
-    final map = Map<String, dynamic>.from(item);
+  JsonMap _fromMongoDateFields(JsonMap item) {
+    final map = JsonMap.from(item);
     for (final key in ['created_at', 'updated_at']) {
       final value = map[key];
       if (value is DateTime) {

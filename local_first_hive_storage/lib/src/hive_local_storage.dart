@@ -19,7 +19,7 @@ import 'package:path/path.dart' as p;
 /// - Supports reactive queries with box.watch()
 class HiveLocalFirstStorage implements LocalFirstStorage {
   /// Boxes for each table (lazy-loaded)
-  final Map<String, BoxBase<Map<dynamic, dynamic>>> _boxes = {};
+  final JsonMap<BoxBase<Map<dynamic, dynamic>>> _boxes = {};
 
   /// Box for sync metadata
   late Box<dynamic> _metadataBox;
@@ -152,10 +152,10 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> getAll(String tableName) async {
+  Future<List<JsonMap>> getAll(String tableName) async {
     final box = await _getBox(tableName);
     final keys = box.keys.cast<String>();
-    final List<Map<String, dynamic>> items = [];
+    final List<JsonMap> items = [];
     for (final key in keys) {
       final raw = await _readBoxValue(box, key);
       if (raw == null) continue;
@@ -167,11 +167,11 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> getAllEvents(String tableName) async {
+  Future<List<JsonMap>> getAllEvents(String tableName) async {
     final eventBox = await _getBox(tableName, isEvent: true);
     final dataBox = await _getBox(tableName);
     final keys = eventBox.keys.cast<String>();
-    final List<Map<String, dynamic>> items = [];
+    final List<JsonMap> items = [];
     for (final key in keys) {
       final meta = await _readBoxValue(eventBox, key);
       if (meta == null) continue;
@@ -185,7 +185,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<Map<String, dynamic>?> getById(String tableName, String id) {
+  Future<JsonMap?> getById(String tableName, String id) {
     return _getBox(tableName).then((box) async {
       final rawItem = await _readBoxValue(box, id);
       if (rawItem == null) return null;
@@ -196,7 +196,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<Map<String, dynamic>?> getEventById(String tableName, String id) {
+  Future<JsonMap?> getEventById(String tableName, String id) {
     return _getBox(tableName, isEvent: true).then((eventBox) async {
       final meta = await _readBoxValue(eventBox, id);
       if (meta == null) return null;
@@ -208,11 +208,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<void> insert(
-    String tableName,
-    Map<String, dynamic> item,
-    String idField,
-  ) async {
+  Future<void> insert(String tableName, JsonMap item, String idField) async {
     final box = await _getBox(tableName);
 
     final id = item[idField] as String;
@@ -227,7 +223,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   @override
   Future<void> insertEvent(
     String tableName,
-    Map<String, dynamic> item,
+    JsonMap item,
     String idField,
   ) async {
     final box = await _getBox(tableName, isEvent: true);
@@ -244,11 +240,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<void> update(
-    String tableName,
-    String id,
-    Map<String, dynamic> item,
-  ) async {
+  Future<void> update(String tableName, String id, JsonMap item) async {
     final box = await _getBox(tableName);
 
     final payload = _stripMetadata(item);
@@ -260,11 +252,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<void> updateEvent(
-    String tableName,
-    String id,
-    Map<String, dynamic> item,
-  ) async {
+  Future<void> updateEvent(String tableName, String id, JsonMap item) async {
     final box = await _getBox(tableName, isEvent: true);
 
     final meta = {
@@ -323,9 +311,15 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
+  Future<bool> containsId(String tableName, String id) async {
+    final box = await _getBox(tableName);
+    return box.containsKey(id);
+  }
+
+  @override
   Future<void> ensureSchema(
     String tableName,
-    Map<String, LocalFieldType> schema, {
+    JsonMap<LocalFieldType> schema, {
     required String idFieldName,
   }) async {
     // Hive stores Map payloads; no schema enforcement required.
@@ -381,27 +375,24 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     await initialize();
   }
 
-  Map<String, dynamic> _stripMetadata(Map<String, dynamic> source) {
-    final copy = Map<String, dynamic>.from(source);
+  JsonMap _stripMetadata(JsonMap source) {
+    final copy = JsonMap.from(source);
     copy.removeWhere((key, _) => _metadataKeys.contains(key));
     return copy;
   }
 
-  Future<Map<String, dynamic>?> _readBoxValue(
+  Future<JsonMap?> _readBoxValue(
     BoxBase<Map<dynamic, dynamic>> box,
     String key,
   ) async {
     final raw = box is LazyBox<Map>
         ? await box.get(key)
         : (box as Box<Map<dynamic, dynamic>>).get(key);
-    return raw != null ? Map<String, dynamic>.from(raw) : null;
+    return raw != null ? JsonMap.from(raw) : null;
   }
 
-  Future<Map<String, dynamic>> _attachEventMetadata(
-    String tableName,
-    Map<String, dynamic> data,
-  ) async {
-    final merged = Map<String, dynamic>.from(data);
+  Future<JsonMap> _attachEventMetadata(String tableName, JsonMap data) async {
+    final merged = JsonMap.from(data);
     final lastEventId = data['_last_event_id'];
     if (lastEventId is! String) return merged;
 
@@ -414,9 +405,9 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     return merged;
   }
 
-  Map<String, dynamic> _mergeEventWithData(
-    Map<String, dynamic> meta,
-    Map<String, dynamic>? data, {
+  JsonMap _mergeEventWithData(
+    JsonMap meta,
+    JsonMap? data, {
     Object? lastEventId,
   }) {
     final merged = <String, dynamic>{if (data != null) ...data, ...meta};
@@ -435,7 +426,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   // ============================================
 
   @override
-  Future<List<Map<String, dynamic>>> query(LocalFirstQuery query) async {
+  Future<List<LocalFirstEvent<T>>> query<T>(LocalFirstQuery<T> query) async {
     if (!_initialized) {
       throw StateError(
         'HiveLocalFirstStorage not initialized. Call initialize() first.',
@@ -443,9 +434,10 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     }
 
     final box = await _getBox(query.repositoryName);
+    final repo = query.repository;
 
     // Optimization: iterate lazily instead of loading everything at once
-    final results = <Map<String, dynamic>>[];
+    final results = <JsonMap>[];
 
     // Collect items that match filters
     for (var key in box.keys) {
@@ -496,31 +488,37 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     int start = query.offset ?? 0;
     int? end = query.limit != null ? start + query.limit! : null;
 
-    if (start > 0 || end != null) {
-      return results.sublist(
-        start,
-        end != null && end < results.length ? end : results.length,
-      );
-    }
+    final sliced = (start > 0 || end != null)
+        ? results.sublist(
+            start,
+            end != null && end < results.length ? end : results.length,
+          )
+        : results;
 
-    return results;
+    final events = <LocalFirstEvent<T>>[
+      for (final json in sliced)
+        LocalFirstEvent.fromLocalStorage(repository: repo, json: json),
+    ];
+    return query.includeDeleted
+        ? events
+        : events.where((e) => !e.isDeleted).toList();
   }
 
   @override
-  Stream<List<Map<String, dynamic>>> watchQuery(LocalFirstQuery query) {
+  Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query) {
     if (!_initialized) {
       throw StateError(
         'HiveLocalFirstStorage not initialized. Call initialize() first.',
       );
     }
 
-    final controller = StreamController<List<Map<String, dynamic>>>.broadcast();
+    final controller = StreamController<List<LocalFirstEvent<T>>>.broadcast();
     StreamSubscription? dataSub;
     StreamSubscription? eventSub;
 
     Future<void> emitCurrent() async {
       try {
-        final results = await this.query(query);
+        final results = await this.query<T>(query);
         controller.add(results);
       } catch (e, st) {
         controller.addError(e, st);

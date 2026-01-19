@@ -45,13 +45,13 @@ class Todo {
   final String title;
   final DateTime updatedAt;
 
-  Map<String, dynamic> toJson() => {
+  JsonMaptoJson() => {
         'id': id,
         'title': title,
         'updated_at': updatedAt.toUtc().toIso8601String(),
       };
 
-  factory Todo.fromJson(Map<String, dynamic> json) => Todo(
+  factory Todo.fromJson(JsonMapjson) => Todo(
         id: json['id'] as String,
         title: json['title'] as String,
         updatedAt: DateTime.parse(json['updated_at']).toUtc(),

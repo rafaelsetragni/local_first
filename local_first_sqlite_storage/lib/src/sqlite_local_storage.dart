@@ -6,8 +6,6 @@ import 'package:local_first/local_first.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
-part 'sqlite_local_storage_test_helpers.dart';
-
 /// SQLite implementation of [LocalFirstStorage].
 ///
 /// Stores each repository as a table with `id` and `data` (JSON string) columns,
@@ -34,8 +32,8 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   Database? _db;
   bool _initialized = false;
 
-  final Map<String, Set<_SqliteQueryObserver>> _observers = {};
-  final Map<String, Map<String, LocalFieldType>> _schemas = {};
+  final JsonMap<Set<_SqliteQueryObserver>> _observers = {};
+  final JsonMap<JsonMap<LocalFieldType>> _schemas = {};
 
   static final RegExp _validName = RegExp(r'^[a-zA-Z0-9_]+$');
 
@@ -136,7 +134,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   @override
   Future<void> ensureSchema(
     String tableName,
-    Map<String, LocalFieldType> schema, {
+    JsonMap<LocalFieldType> schema, {
     required String idFieldName,
   }) async {
     _schemas[tableName] = Map.unmodifiable(schema);
@@ -144,7 +142,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> getAll(String tableName) async {
+  Future<List<JsonMap>> getAll(String tableName) async {
     final db = await _database;
     await _ensureTables(tableName);
     final dataTable = _tableName(tableName);
@@ -164,7 +162,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> getAllEvents(String tableName) async {
+  Future<List<JsonMap>> getAllEvents(String tableName) async {
     final db = await _database;
     await _ensureTables(tableName);
     final eventTable = _tableName(tableName, isEvent: true);
@@ -182,7 +180,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<Map<String, dynamic>?> getById(String tableName, String id) async {
+  Future<JsonMap?> getById(String tableName, String id) async {
     final db = await _database;
     await _ensureTables(tableName);
     final dataTable = _tableName(tableName);
@@ -203,10 +201,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<Map<String, dynamic>?> getEventById(
-    String tableName,
-    String id,
-  ) async {
+  Future<JsonMap?> getEventById(String tableName, String id) async {
     final db = await _database;
     await _ensureTables(tableName);
     final eventTable = _tableName(tableName, isEvent: true);
@@ -228,11 +223,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<void> insert(
-    String tableName,
-    Map<String, dynamic> item,
-    String idField,
-  ) async {
+  Future<void> insert(String tableName, JsonMap item, String idField) async {
     final db = await _database;
     await _ensureTables(tableName);
     final resolvedTable = _tableName(tableName);
@@ -258,7 +249,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   @override
   Future<void> insertEvent(
     String tableName,
-    Map<String, dynamic> item,
+    JsonMap item,
     String idField,
   ) async {
     final db = await _database;
@@ -285,11 +276,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<void> update(
-    String tableName,
-    String id,
-    Map<String, dynamic> item,
-  ) async {
+  Future<void> update(String tableName, String id, JsonMap item) async {
     final db = await _database;
     await _ensureTables(tableName);
     final resolvedTable = _tableName(tableName);
@@ -308,11 +295,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<void> updateEvent(
-    String tableName,
-    String id,
-    Map<String, dynamic> item,
-  ) async {
+  Future<void> updateEvent(String tableName, String id, JsonMap item) async {
     final db = await _database;
     await _ensureTables(tableName);
     final resolvedTable = _tableName(tableName, isEvent: true);
@@ -383,6 +366,21 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
+  Future<bool> containsId(String tableName, String id) async {
+    final db = await _database;
+    await _ensureTables(tableName);
+    final resolvedTable = _tableName(tableName);
+    final rows = await db.query(
+      resolvedTable,
+      columns: ['id'],
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return rows.isNotEmpty;
+  }
+
+  @override
   Future<String?> getMeta(String key) async {
     final db = await _database;
     await _ensureMetadataTable();
@@ -400,16 +398,16 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Stream<List<Map<String, dynamic>>> watchQuery(LocalFirstQuery query) {
+  Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query) {
     if (!_initialized) {
       throw StateError(
         'SqliteLocalFirstStorage not initialized. Call initialize() first.',
       );
     }
 
-    final observer = _SqliteQueryObserver(
+    final observer = _SqliteQueryObserver<T>(
       query,
-      StreamController<List<Map<String, dynamic>>>.broadcast(),
+      StreamController<List<LocalFirstEvent<T>>>.broadcast(),
     );
 
     _observers
@@ -418,7 +416,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     Future<void> emit() async {
       try {
-        final results = await this.query(query);
+        final results = await this.query<T>(query);
         if (!observer.controller.isClosed) {
           observer.controller.add(results);
         }
@@ -449,7 +447,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     );
   }
 
-  Map<String, LocalFieldType> _schemaFor(String repositoryName) {
+  JsonMap<LocalFieldType> _schemaFor(String repositoryName) {
     return _schemas[repositoryName] ?? const {};
   }
 
@@ -576,13 +574,13 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     }
   }
 
-  Map<String, Object?> _encodeDataRow(
-    Map<String, LocalFieldType> schema,
-    Map<String, dynamic> item,
+  JsonMap<Object?> _encodeDataRow(
+    JsonMap<LocalFieldType> schema,
+    JsonMap item,
     String id,
     String? lastEventId,
   ) {
-    final payload = Map<String, dynamic>.from(item);
+    final payload = JsonMap.from(item);
     const metaKeys = {
       '_last_event_id',
       '_event_id',
@@ -606,8 +604,8 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return row;
   }
 
-  Map<String, Object?> _encodeEventRow(
-    Map<String, dynamic> item,
+  JsonMap<Object?> _encodeEventRow(
+    JsonMap item,
     String dataId,
     String eventId,
   ) {
@@ -620,10 +618,10 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     };
   }
 
-  Map<String, dynamic> _decodeJoinedRow(Map<String, Object?> row) {
+  JsonMap _decodeJoinedRow(JsonMap<Object?> row) {
     final data = row['data'];
     final map = data is String
-        ? Map<String, dynamic>.from(jsonDecode(data) as Map)
+        ? JsonMap.from(jsonDecode(data) as Map)
         : <String, dynamic>{};
 
     final lastEventId = row['_last_event_id'];
@@ -646,7 +644,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return map;
   }
 
-  Map<String, dynamic> _normalizeJsonMap(Map<String, dynamic> map) {
+  JsonMap _normalizeJsonMap(JsonMap map) {
     return map.map((key, value) => MapEntry(key, _normalizeJsonValue(value)));
   }
 
@@ -684,7 +682,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> query(LocalFirstQuery query) async {
+  Future<List<LocalFirstEvent<T>>> query<T>(LocalFirstQuery<T> query) async {
     final db = await _database;
     await _ensureTables(query.repositoryName);
     final resolvedTable = _tableName(query.repositoryName);
@@ -790,6 +788,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     if (whereClauses.isNotEmpty) {
       sql.write(' WHERE ${whereClauses.join(' AND ')}');
     }
+    if (!query.includeDeleted) {
+      sql.write(whereClauses.isEmpty ? ' WHERE ' : ' AND ');
+      sql.write('e._sync_operation != ?');
+      args.add(SyncOperation.delete.index);
+    }
     if (orderClauses.isNotEmpty) {
       sql.write(' ORDER BY ${orderClauses.join(', ')}');
     }
@@ -811,19 +814,50 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     final rows = await db.rawQuery(sql.toString(), args);
 
+    final repo = query.repository;
     final mapped = rows.map(_decodeJoinedRow);
-    if (query.includeDeleted) {
-      return mapped.toList();
-    }
     return mapped
-        .where((row) => row['_sync_operation'] != SyncOperation.delete.index)
+        .map(
+          (json) =>
+              LocalFirstEvent<T>.fromLocalStorage(repository: repo, json: json),
+        )
         .toList();
   }
 }
 
-class _SqliteQueryObserver {
+class _SqliteQueryObserver<T> {
   _SqliteQueryObserver(this.query, this.controller);
 
-  final LocalFirstQuery query;
-  final StreamController<List<Map<String, dynamic>>> controller;
+  final LocalFirstQuery<T> query;
+  final StreamController<List<LocalFirstEvent<T>>> controller;
+}
+
+/// Test helper exposing internal methods of [SqliteLocalFirstStorage] for unit tests.
+class TestHelperSqliteLocalFirstStorage {
+  final SqliteLocalFirstStorage storage;
+
+  TestHelperSqliteLocalFirstStorage(this.storage);
+
+  Future<Database> get database async => storage._database;
+  JsonMap<Set<dynamic>> get observers => storage._observers;
+  JsonMap<JsonMap<LocalFieldType>> get schemas => storage._schemas;
+
+  String tableName(String name, {bool isEvent = false}) =>
+      storage._tableName(name, isEvent: isEvent);
+  JsonMap decodeJoinedRow(JsonMap row) => storage._decodeJoinedRow(row);
+  JsonMap<Object?> encodeDataRow(
+    JsonMap<LocalFieldType> schema,
+    JsonMap item,
+    String id,
+    String? lastEventId,
+  ) => storage._encodeDataRow(schema, item, id, lastEventId);
+  Future<void> notifyWatchers(String repositoryName) =>
+      storage._notifyWatchers(repositoryName);
+  Future<void> ensureTables(String repositoryName) =>
+      storage._ensureTables(repositoryName);
+  Future<void> ensureDataTable(String repositoryName) =>
+      storage._ensureDataTable(repositoryName);
+  Future<void> ensureEventTable(String repositoryName) =>
+      storage._ensureEventTable(repositoryName);
+  Future<void> ensureMetadataTable() => storage._ensureMetadataTable();
 }

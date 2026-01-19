@@ -29,9 +29,9 @@ abstract class LocalFirstRepository<T> {
   final String Function(T item) _getId;
   final JsonMap Function(T item) _toJson;
   final T Function(JsonMap json) _fromJson;
-  final LocalFirstEvent<T> Function(
-    LocalFirstEvent<T> local,
-    LocalFirstEvent<T> remote,
+  final LocalFirstStateEvent<T> Function(
+    LocalFirstStateEvent<T> local,
+    LocalFirstStateEvent<T> remote,
   )?
   _resolveConflictEvent;
 
@@ -61,9 +61,9 @@ abstract class LocalFirstRepository<T> {
     required String Function(T item) getId,
     required JsonMap Function(T item) toJson,
     required T Function(JsonMap) fromJson,
-    LocalFirstEvent<T> Function(
-      LocalFirstEvent<T> local,
-      LocalFirstEvent<T> remote,
+    LocalFirstStateEvent<T> Function(
+      LocalFirstStateEvent<T> local,
+      LocalFirstStateEvent<T> remote,
     )?
     onConflictEvent,
     this.idFieldName = 'id',
@@ -82,9 +82,9 @@ abstract class LocalFirstRepository<T> {
     required String Function(T item) getId,
     required JsonMap Function(T item) toJson,
     required T Function(JsonMap) fromJson,
-    LocalFirstEvent<T> Function(
-      LocalFirstEvent<T> local,
-      LocalFirstEvent<T> remote,
+    LocalFirstStateEvent<T> Function(
+      LocalFirstStateEvent<T> local,
+      LocalFirstStateEvent<T> remote,
     )?
     onConflictEvent,
     String idFieldName,
@@ -95,14 +95,15 @@ abstract class LocalFirstRepository<T> {
   JsonMap toJson(T item) => _toJson(item);
   T fromJson(JsonMap json) => _fromJson(json);
 
-  LocalFirstEvent<T> resolveConflictEvent(
-    LocalFirstEvent<T> local,
-    LocalFirstEvent<T> remote,
+  LocalFirstStateEvent<T> resolveConflictEvent(
+    LocalFirstStateEvent<T> local,
+    LocalFirstStateEvent<T> remote,
   ) {
     if (_resolveConflictEvent != null) {
       return _resolveConflictEvent(local, remote);
     }
-    return ConflictUtil.lastWriteWins(local, remote);
+    return ConflictUtil.lastWriteWins(local, remote)
+        as LocalFirstStateEvent<T>;
   }
 
   bool _isInitialized = false;
@@ -136,13 +137,13 @@ abstract class LocalFirstRepository<T> {
     for (var strategy in _syncStrategies) {
       try {
         final syncResult = await strategy.onPushToRemote(current);
-        current = current.copyWith(syncStatus: syncResult);
+        current = current.updateEventState(syncStatus: syncResult);
         if (syncResult == SyncStatus.ok) {
           await _updateEventStatus(current);
           return current;
         }
       } catch (_) {
-        current = current.copyWith(syncStatus: SyncStatus.failed);
+        current = current.updateEventState(syncStatus: SyncStatus.failed);
       }
     }
 
@@ -155,11 +156,16 @@ abstract class LocalFirstRepository<T> {
     final exists = await _client.localStorage.containsId(name, getId(item));
     final LocalFirstEvent<T> event = item is LocalFirstEvent<T>
         ? item
-        : LocalFirstEvent<T>.createNewEvent(
+        : exists
+        ? LocalFirstEvent.createNewUpdateEvent(
             repository: this,
-            state: item as T,
-            syncOperation: exists ? SyncOperation.update : SyncOperation.insert,
-            syncStatus: needSync ? SyncStatus.pending : SyncStatus.ok,
+            data: item as T,
+            needSync: needSync,
+          )
+        : LocalFirstEvent.createNewInsertEvent(
+            repository: this,
+            data: item as T,
+            needSync: needSync,
           );
     await Future.wait([
       if (exists) _updateDataAndEvent(event as LocalFirstStateEvent<T>),
@@ -181,12 +187,10 @@ abstract class LocalFirstRepository<T> {
         });
     if (existing == null) return;
 
-    final deleted = LocalFirstEvent<T>.createNewEvent(
+    final deleted = LocalFirstEvent.createNewDeleteEvent<T>(
       repository: this,
-      syncStatus: needSync ? SyncStatus.pending : SyncStatus.ok,
-      syncOperation: SyncOperation.delete,
+      needSync: needSync,
       dataId: id,
-      state: existing is LocalFirstStateEvent<T> ? existing.state : null,
     );
 
     await _deleteDataAndLogEvent(deleted);
@@ -194,10 +198,7 @@ abstract class LocalFirstRepository<T> {
   }
 
   JsonMap _toDataJson(LocalFirstStateEvent<T> model) {
-    return {
-      ...toJson(model.state),
-      LocalFirstEvent.kLastEventId: model.eventId,
-    };
+    return {...toJson(model.data), LocalFirstEvent.kLastEventId: model.eventId};
   }
 
   Future<void> _persistEvent(LocalFirstEvent<T> event) async {
@@ -218,7 +219,7 @@ abstract class LocalFirstRepository<T> {
   Future<void> mergeRemoteEvent({
     required LocalFirstEvent<T> remoteEvent,
   }) async {
-    final typedRemote = remoteEvent.copyWith(syncStatus: SyncStatus.ok);
+    final typedRemote = remoteEvent.updateEventState(syncStatus: SyncStatus.ok);
 
     final LocalFirstEvent<T>? localPendingEvent =
         await getLastRespectivePendingEvent(reference: typedRemote);
@@ -251,8 +252,7 @@ abstract class LocalFirstRepository<T> {
     required LocalFirstEvent<T> remoteEvent,
     required LocalFirstEvent<T> localPendingEvent,
   }) async {
-    final confirmed = remoteEvent.copyWith(
-      syncCreatedAt: localPendingEvent.syncCreatedAt,
+    final confirmed = remoteEvent.updateEventState(
       syncOperation: localPendingEvent.syncOperation,
     );
     await _persistEvent(confirmed);
@@ -282,7 +282,7 @@ abstract class LocalFirstRepository<T> {
     required LocalFirstEvent<T>? localPendingEvent,
   }) async {
     if (localPendingEvent == null) {
-      final insertLike = remoteEvent.copyWith(
+      final insertLike = remoteEvent.updateEventState(
         syncStatus: SyncStatus.ok,
         syncOperation: SyncOperation.insert,
       );
@@ -292,9 +292,8 @@ abstract class LocalFirstRepository<T> {
     }
 
     if (remoteEvent.eventId == localPendingEvent.eventId) {
-      final confirmed = remoteEvent.copyWith(
+      final confirmed = remoteEvent.updateEventState(
         syncStatus: SyncStatus.ok,
-        syncCreatedAt: localPendingEvent.syncCreatedAt,
         syncOperation: localPendingEvent.syncOperation,
       );
       await _updateDataAndEvent(confirmed);
@@ -314,7 +313,7 @@ abstract class LocalFirstRepository<T> {
     required LocalFirstEvent<T> remoteEvent,
     required LocalFirstEvent<T>? localPendingEvent,
   }) async {
-    final deleted = remoteEvent.copyWith(syncStatus: SyncStatus.ok);
+    final deleted = remoteEvent.updateEventState(syncStatus: SyncStatus.ok);
     await _deleteDataAndLogEvent(deleted);
     await _markAllPreviousEventAsOk(localPendingEvent ?? deleted);
   }
@@ -359,7 +358,7 @@ abstract class LocalFirstRepository<T> {
       );
       if (!sameData || isCurrentOrNewer) continue;
 
-      final updated = event.copyWith(syncStatus: SyncStatus.ok);
+      final updated = event.updateEventState(syncStatus: SyncStatus.ok);
       await _updateEventRecord(updated);
     }
   }
@@ -436,9 +435,7 @@ class TestHelperLocalFirstRepository<T> {
 
   TestHelperLocalFirstRepository(this.repository);
 
-  Future<LocalFirstEvent<T>> pushLocalEventToRemote(
-    LocalFirstEvent<T> event,
-  ) =>
+  Future<LocalFirstEvent<T>> pushLocalEventToRemote(LocalFirstEvent<T> event) =>
       repository._pushLocalEventToRemote(event);
 
   Future<void> persistEvent(LocalFirstEvent<T> event) =>
@@ -447,41 +444,36 @@ class TestHelperLocalFirstRepository<T> {
   Future<void> confirmEvent({
     required LocalFirstEvent<T> remoteEvent,
     required LocalFirstEvent<T> localPendingEvent,
-  }) =>
-      repository._confirmEvent(
-        remoteEvent: remoteEvent,
-        localPendingEvent: localPendingEvent,
-      );
+  }) => repository._confirmEvent(
+    remoteEvent: remoteEvent,
+    localPendingEvent: localPendingEvent,
+  );
 
   Future<void> mergeInsertEvent({
     required LocalFirstStateEvent<T> remoteEvent,
     required LocalFirstEvent<T>? localPendingEvent,
-  }) =>
-      repository._mergeInsertEvent(
-        remoteEvent: remoteEvent,
-        localPendingEvent: localPendingEvent,
-      );
+  }) => repository._mergeInsertEvent(
+    remoteEvent: remoteEvent,
+    localPendingEvent: localPendingEvent,
+  );
 
   Future<void> mergeUpdateEvent({
     required LocalFirstStateEvent<T> remoteEvent,
     required LocalFirstEvent<T>? localPendingEvent,
-  }) =>
-      repository._mergeUpdateEvent(
-        remoteEvent: remoteEvent,
-        localPendingEvent: localPendingEvent,
-      );
+  }) => repository._mergeUpdateEvent(
+    remoteEvent: remoteEvent,
+    localPendingEvent: localPendingEvent,
+  );
 
   Future<void> mergeDeleteEvent({
     required LocalFirstEvent<T> remoteEvent,
     required LocalFirstEvent<T>? localPendingEvent,
-  }) =>
-      repository._mergeDeleteEvent(
-        remoteEvent: remoteEvent,
-        localPendingEvent: localPendingEvent,
-      );
+  }) => repository._mergeDeleteEvent(
+    remoteEvent: remoteEvent,
+    localPendingEvent: localPendingEvent,
+  );
 
-  Future<List<LocalFirstEvent<T>>> getAllEvents() =>
-      repository._getAllEvents();
+  Future<List<LocalFirstEvent<T>>> getAllEvents() => repository._getAllEvents();
 
   Future<void> markAllPreviousEventAsOk(LocalFirstEvent<T> reference) =>
       repository._markAllPreviousEventAsOk(reference);
