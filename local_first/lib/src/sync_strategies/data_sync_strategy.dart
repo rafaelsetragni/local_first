@@ -39,4 +39,30 @@ abstract class DataSyncStrategy {
 
   Future<void> pullChangesToLocal(List<JsonMap> remoteChanges) =>
       _client.pullChanges(remoteChanges);
+
+  /// Marks the provided events as successfully synchronized.
+  ///
+  /// Use this after pushing events to the remote endpoint to persist the
+  /// `ok` status locally (and cascade the update to earlier events of
+  /// the same record).
+  Future<void> markEventsAsSynced(LocalFirstEvents events) async {
+    final latestByRepoAndId = <LocalFirstRepository, Map<String, LocalFirstEvent>>{};
+
+    for (final event in events) {
+      final repo = event.repository;
+      final repoEvents = latestByRepoAndId.putIfAbsent(repo, () => {});
+      final current = repoEvents[event.dataId];
+      if (current == null || event.syncCreatedAt.isAfter(current.syncCreatedAt)) {
+        repoEvents[event.dataId] = event;
+      }
+    }
+
+    for (final repoEvents in latestByRepoAndId.values) {
+      for (final event in repoEvents.values) {
+        final updated = event.updateEventState(syncStatus: SyncStatus.ok);
+        await updated.repository._updateEventStatus(updated);
+        await updated.repository._markAllPreviousEventAsOk(updated);
+      }
+    }
+  }
 }

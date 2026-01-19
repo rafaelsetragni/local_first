@@ -1173,40 +1173,40 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     final pendingEvents = await getPendingEvents(repositoryName: 'user');
     if (pendingEvents.isEmpty) return;
     await mongoApi.pushUserEvents(pendingEvents.toJson());
+    await markEventsAsSynced(pendingEvents);
   }
 
   Future<void> _pushPendingCounterLogEvents() async {
     final pendingEvents = await getPendingEvents(repositoryName: 'counter_log');
     if (pendingEvents.isEmpty) return;
     await mongoApi.pushCounterLogEvents(pendingEvents.toJson());
+    await markEventsAsSynced(pendingEvents);
   }
 
-  Future<void> _pullRemoteChanges() async {
-    final userSince = lastSyncedAt['user'];
-    final counterSince = lastSyncedAt['counter_log'];
+  Future<void> _pullRemoteChanges() => Future.wait([
+    _pullChangesFromMongoApi('user'),
+    _pullChangesFromMongoApi('counter_log'),
+  ]);
 
-    final List<List<JsonMap>> results = await Future.wait([
-      mongoApi.fetchUserEvents(userSince),
-      mongoApi.fetchCounterLogEvents(counterSince),
-    ]);
-
-    final usersJson = results.first;
-    final countersJson = results.last;
-
-    await Future.wait([
-      if (usersJson.isNotEmpty) pullChangesToLocal(usersJson),
-      if (countersJson.isNotEmpty) pullChangesToLocal(countersJson),
-    ]);
-
-    final now = DateTime.now().toUtc();
-    await _updateLatest('user', now);
-    await _updateLatest('counter_log', now);
+  Future<void> _pullChangesFromMongoApi(String repositoryName) async {
+    final List<JsonMap> usersJson = await mongoApi.fetchUserEvents(
+      await _getLatest(repositoryName),
+    );
+    if (usersJson.isEmpty) return;
+    pullChangesToLocal(usersJson);
+    await _updateLatest(repositoryName);
   }
 
-  Future<void> _updateLatest(String repo, DateTime? value) async {
-    if (value == null) return;
-    lastSyncedAt[repo] = value;
+  Future<void> _updateLatest(String repo) async {
+    final value = lastSyncedAt[repo] = DateTime.now().toUtc();
     await client.setKeyValue(_lastSyncKey(repo), value.toIso8601String());
+  }
+
+  Future<DateTime?> _getLatest(String repo) async {
+    return lastSyncedAt[repo] ??= await () async {
+      final value = await client.getMeta(_lastSyncKey(repo));
+      return _parseDate(value);
+    }();
   }
 
   DateTime? _parseDate(dynamic value) {
@@ -1241,23 +1241,28 @@ class MongoApi {
 
     try {
       await collection.createIndex(keys: {'sync_created_at': 1});
-    } catch (_) {
-      // Ignora erros de índice existente
+      await collection.createIndex(
+        keys: {LocalFirstEvent.kEventId: 1},
+        unique: true,
+      );
+    } catch (e, s) {
+      dev.log(
+        'Failed to ensure indexes for $repositoryName: $e',
+        name: logTag,
+        error: e,
+        stackTrace: s,
+      );
     }
 
     return collection;
   }
 
   Future<void> pushUserEvents(List<JsonMap> events) async {
-    if (events.isEmpty) return;
-    final collection = await _collection('user');
-    await collection.insertMany(events);
+    await _upsertEvents('user', events);
   }
 
   Future<void> pushCounterLogEvents(List<JsonMap> events) async {
-    if (events.isEmpty) return;
-    final collection = await _collection('counter_log');
-    await collection.insertMany(events);
+    await _upsertEvents('counter_log', events);
   }
 
   Future<List<JsonMap>> fetchUserEvents(DateTime? since) async {
@@ -1281,5 +1286,21 @@ class MongoApi {
       results.add(map);
     });
     return results;
+  }
+
+  Future<void> _upsertEvents(
+    String repositoryName,
+    List<JsonMap> events,
+  ) async {
+    if (events.isEmpty) return;
+    final collection = await _collection(repositoryName);
+    for (final event in events) {
+      final eventId = event[LocalFirstEvent.kEventId];
+      await collection.replaceOne(
+        where.eq(LocalFirstEvent.kEventId, eventId),
+        event,
+        upsert: true,
+      );
+    }
   }
 }

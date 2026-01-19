@@ -116,6 +116,94 @@ class _NoopStorage implements LocalFirstStorage {
       const Stream.empty();
 }
 
+class _RecordingStorage implements LocalFirstStorage {
+  final List<JsonMap> events = [];
+  final List<JsonMap> updatedEvents = [];
+  int updateCount = 0;
+  int updateEventCount = 0;
+  JsonMap? lastUpdatedData;
+
+  @override
+  Future<void> clearAllData() async {}
+
+  @override
+  Future<void> close() async {}
+
+  @override
+  Future<bool> containsId(String tableName, String id) async => false;
+
+  @override
+  Future<void> delete(String repositoryName, String id) async {}
+
+  @override
+  Future<void> deleteAll(String tableName) async {}
+
+  @override
+  Future<void> deleteAllEvents(String tableName) async {}
+
+  @override
+  Future<void> deleteEvent(String repositoryName, String id) async {}
+
+  @override
+  Future<void> ensureSchema(
+    String tableName,
+    JsonMap<LocalFieldType> schema, {
+    required String idFieldName,
+  }) async {}
+
+  @override
+  Future<List<JsonMap>> getAll(String tableName) async => [];
+
+  @override
+  Future<List<JsonMap>> getAllEvents(String tableName) async =>
+      List.unmodifiable(events);
+
+  @override
+  Future<JsonMap?> getById(String tableName, String id) async => null;
+
+  @override
+  Future<JsonMap?> getEventById(String tableName, String id) async => null;
+
+  @override
+  Future<String?> getMeta(String key) async => null;
+
+  @override
+  Future<void> initialize() async {}
+
+  @override
+  Future<void> insert(String tableName, JsonMap item, String idField) async {}
+
+  @override
+  Future<void> insertEvent(
+    String tableName,
+    JsonMap item,
+    String idField,
+  ) async {}
+
+  @override
+  Future<List<LocalFirstEvent<T>>> query<T>(LocalFirstQuery<T> query) async =>
+      [];
+
+  @override
+  Future<void> setMeta(String key, String value) async {}
+
+  @override
+  Future<void> update(String tableName, String id, JsonMap item) async {
+    updateCount++;
+    lastUpdatedData = item;
+  }
+
+  @override
+  Future<void> updateEvent(String tableName, String id, JsonMap item) async {
+    updateEventCount++;
+    updatedEvents.add(item);
+  }
+
+  @override
+  Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query) =>
+      const Stream.empty();
+}
+
 void main() {
   group('DataSyncStrategy', () {
     late _TestStrategy strategy;
@@ -178,6 +266,71 @@ void main() {
       await strategy.pullChangesToLocal(payload);
 
       expect(client.pulledChanges.single, payload);
+    });
+
+    test('markEventsAsSynced should mark current and previous events as ok',
+        () async {
+      final storage = _RecordingStorage();
+      final repo = LocalFirstRepository<JsonMap>.create(
+        name: 'repo',
+        getId: (item) => item['id'] as String,
+        toJson: (item) => item,
+        fromJson: (json) => json,
+      );
+      LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        syncStrategies: [strategy],
+      );
+      final older = LocalFirstEvent.createNewInsertEvent(
+        repository: repo,
+        data: {'id': '1'},
+        needSync: true,
+      );
+      final latest = LocalFirstEvent.createNewUpdateEvent(
+        repository: repo,
+        data: {'id': '1'},
+        needSync: true,
+      );
+      final otherId = LocalFirstEvent.createNewInsertEvent(
+        repository: repo,
+        data: {'id': '2'},
+        needSync: true,
+      );
+      final referenceCreatedAt =
+          latest.syncCreatedAt.millisecondsSinceEpoch;
+      storage.events.addAll([
+        older.toLocalStorageJson()
+          ..[LocalFirstEvent.kSyncCreatedAt] = referenceCreatedAt - 1,
+        latest.toLocalStorageJson()
+          ..[LocalFirstEvent.kSyncCreatedAt] = referenceCreatedAt + 1,
+        otherId.toLocalStorageJson()
+          ..[LocalFirstEvent.kSyncCreatedAt] = referenceCreatedAt - 1,
+      ]);
+
+      await strategy.markEventsAsSynced([latest]);
+
+      expect(storage.updateCount, greaterThanOrEqualTo(1));
+      expect(storage.updateEventCount, 2); // latest + older
+      expect(
+        storage.updatedEvents
+            .where(
+              (e) => e[LocalFirstEvent.kEventId] == latest.eventId,
+            )
+            .single[LocalFirstEvent.kSyncStatus],
+        SyncStatus.ok.index,
+      );
+      expect(
+        storage.updatedEvents
+            .where((e) => e[LocalFirstEvent.kEventId] == older.eventId)
+            .single[LocalFirstEvent.kSyncStatus],
+        SyncStatus.ok.index,
+      );
+      expect(
+        storage.updatedEvents
+            .where((e) => e[LocalFirstEvent.kEventId] == otherId.eventId),
+        isEmpty,
+      );
     });
   });
 }
