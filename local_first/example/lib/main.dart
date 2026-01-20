@@ -25,6 +25,34 @@ import 'package:mongo_dart/mongo_dart.dart' hide State, Center;
 const mongoConnectionString =
     'mongodb://admin:admin@127.0.0.1:27017/remote_counter_db?authSource=admin';
 
+/// Centralized string keys to avoid magic field names.
+class RepositoryNames {
+  static const user = 'user';
+  static const counterLog = 'counter_log';
+  static const sessionCounter = 'session_counter';
+}
+
+class CommonFields {
+  static const id = 'id';
+  static const username = 'username';
+  static const createdAt = 'created_at';
+  static const updatedAt = 'updated_at';
+}
+
+class UserFields {
+  static const avatarUrl = 'avatar_url';
+}
+
+class CounterLogFields {
+  static const sessionId = 'session_id';
+  static const increment = 'increment';
+}
+
+class SessionCounterFields {
+  static const sessionId = 'session_id';
+  static const count = 'count';
+}
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   RepositoryService().initialize().then((signedUser) {
@@ -896,7 +924,7 @@ class RepositoryService {
   Future<List<CounterLogModel>> getLogs() async => _logsFromEvents(
     await counterLogRepository
         .query()
-        .orderBy('created_at', descending: true)
+        .orderBy(CommonFields.createdAt, descending: true)
         .limitTo(5)
         .getAll(),
   );
@@ -904,7 +932,7 @@ class RepositoryService {
   Stream<List<CounterLogModel>> watchLogs({int limit = 5}) =>
       counterLogRepository
           .query()
-          .orderBy('created_at', descending: true)
+          .orderBy(CommonFields.createdAt, descending: true)
           .limitTo(min(limit, 5))
           .watch()
           .map(_logsFromEvents);
@@ -921,13 +949,17 @@ class RepositoryService {
       watchLogs(limit: min(limit, 5));
 
   Stream<List<UserModel>> watchUsers() =>
-      userRepository.query().orderBy('username').watch().map(_usersFromEvents);
+      userRepository
+          .query()
+          .orderBy(CommonFields.username)
+          .watch()
+          .map(_usersFromEvents);
 
   Future<JsonMap<String?>> getAvatarsForUsers(Set<String> usernames) async {
     if (usernames.isEmpty) return {};
     final results = await userRepository
         .query()
-        .where('username', whereIn: usernames.toList())
+        .where(CommonFields.username, whereIn: usernames.toList())
         .getAll();
 
     final map = <String, String?>{
@@ -1056,24 +1088,24 @@ class UserModel {
 
   JsonMap toJson() {
     return {
-      'id': id,
-      'username': username,
-      'avatar_url': avatarUrl,
-      'created_at': createdAt.toUtc().toIso8601String(),
-      'updated_at': updatedAt.toUtc().toIso8601String(),
+      CommonFields.id: id,
+      CommonFields.username: username,
+      UserFields.avatarUrl: avatarUrl,
+      CommonFields.createdAt: createdAt.toUtc().toIso8601String(),
+      CommonFields.updatedAt: updatedAt.toUtc().toIso8601String(),
     };
   }
 
   factory UserModel.fromJson(JsonMap json) {
-    final username = json['username'] ?? json['id'];
-    final created = DateTime.parse(json['created_at']).toUtc();
-    final updated = json['updated_at'] != null
-        ? DateTime.parse(json['updated_at']).toUtc()
+    final username = json[CommonFields.username] ?? json[CommonFields.id];
+    final created = DateTime.parse(json[CommonFields.createdAt]).toUtc();
+    final updated = json[CommonFields.updatedAt] != null
+        ? DateTime.parse(json[CommonFields.updatedAt]).toUtc()
         : created;
     return UserModel(
-      id: (json['id'] ?? username).toString().trim().toLowerCase(),
+      id: (json[CommonFields.id] ?? username).toString().trim().toLowerCase(),
       username: username,
-      avatarUrl: json['avatar_url'],
+      avatarUrl: json[UserFields.avatarUrl],
       createdAt: created,
       updatedAt: updated,
     );
@@ -1156,26 +1188,27 @@ class SessionCounterModel {
 
   JsonMap toJson() {
     return {
-      'id': id,
-      'username': username,
-      'session_id': sessionId,
-      'count': count,
-      'created_at': createdAt.toUtc().toIso8601String(),
-      'updated_at': updatedAt.toUtc().toIso8601String(),
+      CommonFields.id: id,
+      CommonFields.username: username,
+      SessionCounterFields.sessionId: sessionId,
+      SessionCounterFields.count: count,
+      CommonFields.createdAt: createdAt.toUtc().toIso8601String(),
+      CommonFields.updatedAt: updatedAt.toUtc().toIso8601String(),
     };
   }
 
   factory SessionCounterModel.fromJson(JsonMap json) {
-    final created = DateTime.parse(json['created_at']).toUtc();
-    final updated = json['updated_at'] != null
-        ? DateTime.parse(json['updated_at']).toUtc()
+    final created = DateTime.parse(json[CommonFields.createdAt]).toUtc();
+    final updated = json[CommonFields.updatedAt] != null
+        ? DateTime.parse(json[CommonFields.updatedAt]).toUtc()
         : created;
-    final sessionId = json['session_id'] ?? json['id'];
+    final sessionId = json[SessionCounterFields.sessionId] ??
+        json[CommonFields.id];
     return SessionCounterModel(
-      id: json['id'] ?? sessionId,
-      username: json['username'],
+      id: json[CommonFields.id] ?? sessionId,
+      username: json[CommonFields.username],
       sessionId: sessionId,
-      count: json['count'] ?? 0,
+      count: json[SessionCounterFields.count] ?? 0,
       createdAt: created,
       updatedAt: updated,
     );
@@ -1227,25 +1260,25 @@ class CounterLogModel {
 
   JsonMap toJson() {
     return {
-      'id': id,
-      'username': username,
-      'session_id': sessionId,
-      'increment': increment,
-      'created_at': createdAt.toUtc().toIso8601String(),
-      'updated_at': updatedAt.toUtc().toIso8601String(),
+      CommonFields.id: id,
+      CommonFields.username: username,
+      CounterLogFields.sessionId: sessionId,
+      CounterLogFields.increment: increment,
+      CommonFields.createdAt: createdAt.toUtc().toIso8601String(),
+      CommonFields.updatedAt: updatedAt.toUtc().toIso8601String(),
     };
   }
 
   factory CounterLogModel.fromJson(JsonMap json) {
-    final created = DateTime.parse(json['created_at']).toUtc();
-    final updated = json['updated_at'] != null
-        ? DateTime.parse(json['updated_at']).toUtc()
+    final created = DateTime.parse(json[CommonFields.createdAt]).toUtc();
+    final updated = json[CommonFields.updatedAt] != null
+        ? DateTime.parse(json[CommonFields.updatedAt]).toUtc()
         : created;
     return CounterLogModel(
-      id: json['id'],
-      username: json['username'],
-      sessionId: json['session_id'],
-      increment: json['increment'],
+      id: json[CommonFields.id],
+      username: json[CommonFields.username],
+      sessionId: json[CounterLogFields.sessionId],
+      increment: json[CounterLogFields.increment],
       createdAt: created,
       updatedAt: updated,
     );
@@ -1274,7 +1307,7 @@ class CounterLogModel {
 
 LocalFirstRepository<UserModel> _buildUserRepository() {
   return LocalFirstRepository.create(
-    name: 'user',
+    name: RepositoryNames.user,
     getId: (user) => user.id,
     toJson: (user) => user.toJson(),
     fromJson: (json) => UserModel.fromJson(json),
@@ -1291,7 +1324,7 @@ LocalFirstRepository<UserModel> _buildUserRepository() {
 
 LocalFirstRepository<CounterLogModel> _buildCounterLogRepository() {
   return LocalFirstRepository.create(
-    name: 'counter_log',
+    name: RepositoryNames.counterLog,
     getId: (log) => log.id,
     toJson: (log) => log.toJson(),
     fromJson: (json) => CounterLogModel.fromJson(json),
@@ -1308,7 +1341,7 @@ LocalFirstRepository<CounterLogModel> _buildCounterLogRepository() {
 
 LocalFirstRepository<SessionCounterModel> _buildSessionCounterRepository() {
   return LocalFirstRepository.create(
-    name: 'session_counter',
+    name: RepositoryNames.sessionCounter,
     getId: (session) => session.id,
     toJson: (session) => session.toJson(),
     fromJson: (json) => SessionCounterModel.fromJson(json),
@@ -1374,7 +1407,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
         .fetchUserEvents(null)
         .timeout(period * 2);
     return fetchResult.events
-        .map((e) => e['state'])
+        .map((e) => e[MongoApi.dataField])
         .whereType<JsonMap>()
         .toList();
   }
@@ -1416,22 +1449,26 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
       ]);
 
   Future<void> _pushPendingUserEvents() async {
-    final pendingEvents = await getPendingEvents(repositoryName: 'user');
+    final pendingEvents =
+        await getPendingEvents(repositoryName: RepositoryNames.user);
     if (pendingEvents.isEmpty) return;
     await mongoApi.pushUserEvents(pendingEvents.toJson());
     await markEventsAsSynced(pendingEvents);
   }
 
   Future<void> _pushPendingCounterLogEvents() async {
-    final pendingEvents = await getPendingEvents(repositoryName: 'counter_log');
+    final pendingEvents = await getPendingEvents(
+      repositoryName: RepositoryNames.counterLog,
+    );
     if (pendingEvents.isEmpty) return;
     await mongoApi.pushCounterLogEvents(pendingEvents.toJson());
     await markEventsAsSynced(pendingEvents);
   }
 
   Future<void> _pushPendingSessionCounterEvents() async {
-    final pendingEvents =
-        await getPendingEvents(repositoryName: 'session_counter');
+    final pendingEvents = await getPendingEvents(
+      repositoryName: RepositoryNames.sessionCounter,
+    );
     if (pendingEvents.isEmpty) return;
     await mongoApi.pushSessionCounterEvents(pendingEvents.toJson());
     await markEventsAsSynced(pendingEvents);
@@ -1444,41 +1481,47 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   ]);
 
   Future<void> _pullUserChangesFromMongoApi() async {
-    final lastSynced = await _getLatest('user');
+    final lastSynced = await _getLatest(RepositoryNames.user);
     final result = await mongoApi.fetchUserEvents(lastSynced);
     if (result.events.isEmpty) return;
     await pullChangesToLocal(
-      repositoryName: 'user',
+      repositoryName: RepositoryNames.user,
       remoteChanges: result.events,
     );
     if (result.maxServerCreatedAt != null) {
-      await _updateLatest('user', result.maxServerCreatedAt!);
+      await _updateLatest(RepositoryNames.user, result.maxServerCreatedAt!);
     }
   }
 
   Future<void> _pullLogChangesFromMongoApi() async {
-    final lastSynced = await _getLatest('counter_log');
+    final lastSynced = await _getLatest(RepositoryNames.counterLog);
     final result = await mongoApi.fetchCounterLogEvents(lastSynced);
     if (result.events.isEmpty) return;
     await pullChangesToLocal(
-      repositoryName: 'counter_log',
+      repositoryName: RepositoryNames.counterLog,
       remoteChanges: result.events,
     );
     if (result.maxServerCreatedAt != null) {
-      await _updateLatest('counter_log', result.maxServerCreatedAt!);
+      await _updateLatest(
+        RepositoryNames.counterLog,
+        result.maxServerCreatedAt!,
+      );
     }
   }
 
   Future<void> _pullSessionCounterChangesFromMongoApi() async {
-    final lastSynced = await _getLatest('session_counter');
+    final lastSynced = await _getLatest(RepositoryNames.sessionCounter);
     final result = await mongoApi.fetchSessionCounterEvents(lastSynced);
     if (result.events.isEmpty) return;
     await pullChangesToLocal(
-      repositoryName: 'session_counter',
+      repositoryName: RepositoryNames.sessionCounter,
       remoteChanges: result.events,
     );
     if (result.maxServerCreatedAt != null) {
-      await _updateLatest('session_counter', result.maxServerCreatedAt!);
+      await _updateLatest(
+        RepositoryNames.sessionCounter,
+        result.maxServerCreatedAt!,
+      );
     }
   }
 
@@ -1510,6 +1553,7 @@ typedef FetchResult = ({List<JsonMap> events, DateTime? maxServerCreatedAt});
 class MongoApi {
   static const logTag = 'MongoApi';
   static const serverCreatedAtLabel = 'serverCreatedAt';
+  static const dataField = LocalFirstEvent.kData;
   final String uri;
 
   Db? _db;
@@ -1563,27 +1607,27 @@ class MongoApi {
   }
 
   Future<void> pushUserEvents(List<JsonMap> events) async {
-    await _upsertEvents('user', events);
+    await _upsertEvents(RepositoryNames.user, events);
   }
 
   Future<void> pushCounterLogEvents(List<JsonMap> events) async {
-    await _upsertEvents('counter_log', events);
+    await _upsertEvents(RepositoryNames.counterLog, events);
   }
 
   Future<void> pushSessionCounterEvents(List<JsonMap> events) async {
-    await _upsertEvents('session_counter', events);
+    await _upsertEvents(RepositoryNames.sessionCounter, events);
   }
 
   Future<FetchResult> fetchUserEvents(DateTime? since) async {
-    return _fetchEvents('user', since);
+    return _fetchEvents(RepositoryNames.user, since);
   }
 
   Future<FetchResult> fetchCounterLogEvents(DateTime? since) async {
-    return _fetchEvents('counter_log', since);
+    return _fetchEvents(RepositoryNames.counterLog, since);
   }
 
   Future<FetchResult> fetchSessionCounterEvents(DateTime? since) async {
-    return _fetchEvents('session_counter', since);
+    return _fetchEvents(RepositoryNames.sessionCounter, since);
   }
 
   Future<FetchResult> _fetchEvents(
