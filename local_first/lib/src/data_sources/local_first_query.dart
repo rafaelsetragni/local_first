@@ -2,8 +2,8 @@ part of '../../local_first.dart';
 
 /// Represents a query with filters and sorting.
 ///
-/// Provides a fluent API for building complex queries with filtering,
-/// ordering, and pagination capabilities.
+/// Concrete storage backends must apply filtering/sorting; this class only
+/// carries the query shape and delegates execution.
 class LocalFirstQuery<T> {
   final String repositoryName;
   final List<QueryFilter> filters;
@@ -12,13 +12,13 @@ class LocalFirstQuery<T> {
   final int? offset;
   final bool includeDeleted;
   final LocalFirstStorage _delegate;
-  final T Function(Map<String, dynamic>) _fromJson;
   final LocalFirstRepository<T> _repository;
+
+  LocalFirstRepository<T> get repository => _repository;
 
   LocalFirstQuery({
     required this.repositoryName,
     required LocalFirstStorage delegate,
-    required T Function(Map<String, dynamic>) fromJson,
     required LocalFirstRepository<T> repository,
     this.filters = const [],
     this.sorts = const [],
@@ -26,7 +26,6 @@ class LocalFirstQuery<T> {
     this.offset,
     this.includeDeleted = false,
   }) : _delegate = delegate,
-       _fromJson = fromJson,
        _repository = repository;
 
   LocalFirstQuery<T> copyWith({
@@ -39,7 +38,6 @@ class LocalFirstQuery<T> {
     return LocalFirstQuery<T>(
       repositoryName: repositoryName,
       delegate: _delegate,
-      fromJson: _fromJson,
       repository: _repository,
       filters: filters ?? this.filters,
       sorts: sorts ?? this.sorts,
@@ -131,65 +129,17 @@ class LocalFirstQuery<T> {
 
   /// Executes the query and returns all matching results.
   ///
-  /// Returns a list of models with sync metadata.
+  /// Storage backends are responsible for applying filters/sorts and
+  /// hydrating events.
   Future<List<LocalFirstEvent<T>>> getAll() async {
-    final results = await _delegate.query(this);
-    return _mapResults(results);
+    return _delegate.query<T>(this);
   }
 
   /// Returns a reactive stream of query results.
   ///
   /// The stream will emit new values whenever the underlying data changes.
-  ///
-  /// Example:
-  /// ```dart
-  /// query()
-  ///   .where('status', isEqualTo: 'active')
-  ///   .watch()
-  ///   .listen((items) => print('Active items: ${items.length}'));
-  /// ```
   Stream<List<LocalFirstEvent<T>>> watch() {
-    return _delegate.watchQuery(this).map(_mapResults).asBroadcastStream();
-  }
-
-  List<LocalFirstEvent<T>> _mapResults(List<Map<String, dynamic>> results) {
-    final mapped = results.map((json) {
-      final itemJson = Map<String, dynamic>.from(json);
-      final eventId = itemJson.remove('_event_id') as String?;
-      final lastEventId = itemJson.remove('_last_event_id') as String?;
-      itemJson.remove('_data_id');
-      final item = _fromJson(
-        itemJson..removeWhere((key, _) => key.startsWith('_sync_')),
-      );
-
-      // Extract sync metadata stored alongside the model
-      final syncStatus = json['_sync_status'] != null
-          ? SyncStatus.values[json['_sync_status'] as int]
-          : SyncStatus.ok;
-
-      final syncOperation = json['_sync_operation'] != null
-          ? SyncOperation.values[json['_sync_operation'] as int]
-          : SyncOperation.insert;
-
-      final createdAt = json['_sync_created_at'] as int?;
-      final createdAtDate = DateTime.fromMillisecondsSinceEpoch(
-        createdAt ?? 0,
-        isUtc: true,
-      );
-
-      return LocalFirstEvent<T>(
-        state: item,
-        eventId: eventId ?? lastEventId,
-        syncStatus: syncStatus,
-        syncOperation: syncOperation,
-        syncCreatedAt: createdAtDate,
-        repositoryName: repositoryName,
-      );
-    });
-
-    return includeDeleted
-        ? mapped.toList()
-        : mapped.where((obj) => !obj.isDeleted).toList();
+    return _delegate.watchQuery<T>(this).asBroadcastStream();
   }
 }
 
@@ -222,7 +172,7 @@ class QueryFilter {
   });
 
   /// Checks if an item matches this filter (fallback for DBs without native query support).
-  bool matches(Map<String, dynamic> item) {
+  bool matches(JsonMap item) {
     final value = item[field];
 
     if (isNull != null) {

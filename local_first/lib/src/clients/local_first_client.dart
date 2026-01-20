@@ -108,27 +108,29 @@ class LocalFirstClient {
     await _localStorage.close();
   }
 
-  Future<void> _pullRemoteChanges(Map<String, dynamic> map) async {
-    final LocalFirstResponse response = await _buildOfflineResponse(map);
-
-    for (final MapEntry<LocalFirstRepository, LocalFirstEvents> entry
-        in response.changes.entries) {
-      final LocalFirstRepository repository = entry.key;
-      final LocalFirstEvents remoteEvents = entry.value;
-      await repository._mergeRemoteEvents(remoteEvents);
-    }
-
-    for (final repository in _repositories) {
-      await setKeyValue(
-        '__last_sync__${repository.name}',
-        response.timestamp.toIso8601String(),
-      );
+  Future<void> pullChanges({
+    required String repositoryName,
+    required List<JsonMap> changes,
+  }) async {
+    final repository = getRepositoryByName(repositoryName);
+    for (final rawEvent in changes) {
+      try {
+        final event = repository.createEventFromRemote(rawEvent);
+        await repository.mergeRemoteEvent(remoteEvent: event);
+      } catch (e) {
+        throw FormatException(
+          'Malformed remote event for $repositoryName: $e | payload=$rawEvent',
+        );
+      }
     }
   }
 
-  Future<LocalFirstEvents> getAllPendingEvents() async {
+  Future<LocalFirstEvents> getAllPendingEvents({
+    required String repositoryName,
+  }) async {
+    final targets = _repositories.where((r) => r.name == repositoryName);
     final results = await Future.wait([
-      for (var repository in _repositories) repository.getPendingEvents(),
+      for (var repository in targets) repository.getPendingEvents(),
     ]);
     return results.expand((e) => e).toList();
   }
@@ -140,69 +142,17 @@ class LocalFirstClient {
   Future<void> setKeyValue(String key, String value) async {
     await localStorage.setMeta(key, value);
   }
+}
 
-  Future<LocalFirstResponse> _buildOfflineResponse(
-    Map<String, dynamic> json,
-  ) async {
-    if (json['timestamp'] == null || json['changes'] == null) {
-      throw FormatException('Invalid offline response format');
-    }
+/// Test helper exposing internal state of [LocalFirstClient] for unit tests.
+class TestHelperLocalFirstClient {
+  final LocalFirstClient client;
 
-    final timestamp = DateTime.parse(json['timestamp'] as String).toUtc();
-    final changesJson = json['changes'] as Map;
-    final repositoryEvents = <LocalFirstRepository, List<LocalFirstEvent>>{};
+  TestHelperLocalFirstClient(this.client);
 
-    for (var repositoryName in changesJson.keys) {
-      final repository = getRepositoryByName(repositoryName as String);
-      final events = <LocalFirstEvent>[];
-
-      final repositoryChangeJson =
-          changesJson[repositoryName] as Map<String, dynamic>;
-
-      if (repositoryChangeJson.containsKey('insert')) {
-        final inserts = (repositoryChangeJson['insert'] as List);
-        for (var element in inserts) {
-          final object = repository._buildRemoteObject(
-            Map<String, dynamic>.from(element),
-            operation: SyncOperation.insert,
-          );
-          events.add(object);
-        }
-      } else if (repositoryChangeJson.containsKey('update')) {
-        final updates = (repositoryChangeJson['update'] as List);
-        for (var element in updates) {
-          final object = repository._buildRemoteObject(
-            Map<String, dynamic>.from(element),
-            operation: SyncOperation.update,
-          );
-          events.add(object);
-        }
-      } else if (repositoryChangeJson.containsKey('delete')) {
-        final deletes = (repositoryChangeJson['delete'] as List);
-        for (var element in deletes) {
-          String? id;
-          String? eventId;
-          if (element is Map) {
-            id = element['id']?.toString();
-            eventId = element['event_id']?.toString();
-          } else if (element is String) {
-            id = element;
-          }
-          if (id == null) continue;
-          final object = await repository._getById(id);
-          if (object == null) continue;
-          events.add(
-            object.copyWith(
-              eventId: eventId ?? object.eventId,
-              syncStatus: SyncStatus.ok,
-              syncOperation: SyncOperation.delete,
-            ),
-          );
-        }
-      }
-
-      repositoryEvents[repository] = events;
-    }
-    return LocalFirstResponse(changes: repositoryEvents, timestamp: timestamp);
-  }
+  List<LocalFirstRepository> get repositories => client._repositories;
+  Completer get onInitializeCompleter => client._onInitialize;
+  StreamController<bool> get connectionController =>
+      client._connectionController;
+  bool? get latestConnection => client._latestConnection;
 }

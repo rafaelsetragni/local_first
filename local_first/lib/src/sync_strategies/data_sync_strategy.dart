@@ -19,7 +19,8 @@ abstract class DataSyncStrategy {
   @protected
   LocalFirstClient get client => _client;
 
-  Future<SyncStatus> onPushToRemote(LocalFirstEvent localData);
+  Future<SyncStatus> onPushToRemote(LocalFirstEvent localData) =>
+      Future.value(SyncStatus.pending);
 
   /// Notifies listeners about connection state changes (e.g. connectivity loss).
   @protected
@@ -33,11 +34,40 @@ abstract class DataSyncStrategy {
   /// Latest known connection state.
   bool? get latestConnectionState => _client.latestConnectionState;
 
-  Future<List<LocalFirstEvent>> getPendingEvents() {
-    return _client.getAllPendingEvents();
-  }
+  Future<LocalFirstEvents> getPendingEvents({required String repositoryName}) =>
+      _client.getAllPendingEvents(repositoryName: repositoryName);
 
-  Future<void> pullChangesToLocal(Map<String, dynamic> remoteChanges) {
-    return _client._pullRemoteChanges(remoteChanges);
+  Future<void> pullChangesToLocal({
+    required String repositoryName,
+    required List<JsonMap> remoteChanges,
+  }) => _client.pullChanges(
+    repositoryName: repositoryName,
+    changes: remoteChanges,
+  );
+
+  /// Marks the provided events as successfully synchronized.
+  ///
+  /// Use this after pushing events to the remote endpoint to persist the
+  /// `ok` status locally (and cascade the update to earlier events of
+  /// the same record).
+  Future<void> markEventsAsSynced(LocalFirstEvents events) async {
+    final latestByRepoAndId = <LocalFirstRepository, Map<String, LocalFirstEvent>>{};
+
+    for (final event in events) {
+      final repo = event.repository;
+      final repoEvents = latestByRepoAndId.putIfAbsent(repo, () => {});
+      final current = repoEvents[event.dataId];
+      if (current == null || event.syncCreatedAt.isAfter(current.syncCreatedAt)) {
+        repoEvents[event.dataId] = event;
+      }
+    }
+
+    for (final repoEvents in latestByRepoAndId.values) {
+      for (final event in repoEvents.values) {
+        final updated = event.updateEventState(syncStatus: SyncStatus.ok);
+        await updated.repository._updateEventStatus(updated);
+        await updated.repository._markAllPreviousEventAsOk(updated);
+      }
+    }
   }
 }

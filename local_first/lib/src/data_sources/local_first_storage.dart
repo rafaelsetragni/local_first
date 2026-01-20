@@ -34,38 +34,35 @@ abstract class LocalFirstStorage {
   Future<void> clearAllData();
 
   /// Gets all items from the state table/collection.
-  Future<List<Map<String, dynamic>>> getAll(String tableName);
+  Future<List<JsonMap>> getAll(String tableName);
 
   /// Gets all items from the event log table/collection.
-  Future<List<Map<String, dynamic>>> getAllEvents(String tableName);
+  Future<List<JsonMap>> getAllEvents(String tableName);
 
   /// Gets a single item by its ID.
   ///
   /// Returns null if the item doesn't exist.
-  Future<Map<String, dynamic>?> getById(String tableName, String id);
+  Future<JsonMap?> getById(String tableName, String id);
+
+  /// Checks if a single item exists by its ID.
+  ///
+  /// Returns null if the item doesn't exist.
+  Future<bool> containsId(String tableName, String id);
 
   /// Gets a single event by its event id.
-  Future<Map<String, dynamic>?> getEventById(String tableName, String id);
+  Future<JsonMap?> getEventById(String tableName, String id);
 
   /// Inserts a new item into the state table/collection.
-  Future<void> insert(
-    String tableName,
-    Map<String, dynamic> item,
-    String idField,
-  );
+  Future<void> insert(String tableName, JsonMap item, String idField);
 
-  /// Inserts a new event into the event log table/collection.
-  Future<void> insertEvent(
-    String tableName,
-    Map<String, dynamic> item,
-    String idField,
-  );
+  /// Inserts a new event into the event log table/co'llection.
+  Future<void> insertEvent(String tableName, JsonMap item, String idField);
 
   /// Updates an existing item in the state table/collection.
-  Future<void> update(String tableName, String id, Map<String, dynamic> item);
+  Future<void> update(String tableName, String id, JsonMap item);
 
   /// Updates an existing event in the event log.
-  Future<void> updateEvent(String tableName, String id, Map<String, dynamic> item);
+  Future<void> updateEvent(String tableName, String id, JsonMap item);
 
   /// Deletes an item by its ID in the state table.
   Future<void> delete(String repositoryName, String id);
@@ -90,75 +87,15 @@ abstract class LocalFirstStorage {
   /// Backends that do not use schemas can ignore this call.
   Future<void> ensureSchema(
     String tableName,
-    Map<String, LocalFieldType> schema, {
+    JsonMap<LocalFieldType> schema, {
     required String idFieldName,
-  }) async {}
+  });
 
   /// Executes a query and returns results from the state table.
-  ///
-  /// Delegates that support native queries (like Isar, Drift) can
-  /// override this for optimization. Simple delegates (like Hive) use
-  /// the default implementation which filters efficiently in-memory.
-  Future<List<Map<String, dynamic>>> query(LocalFirstQuery query) async {
-    // Default implementation: fetch all and filter efficiently in memory
-    var items = await getAll(query.repositoryName);
-
-    // Apply filters
-    if (query.filters.isNotEmpty) {
-      items = items.where((item) {
-        for (var filter in query.filters) {
-          if (!filter.matches(item)) {
-            return false;
-          }
-        }
-        return true;
-      }).toList();
-    }
-
-    // Apply sorting
-    if (query.sorts.isNotEmpty) {
-      items.sort((a, b) {
-        for (var sort in query.sorts) {
-          final aValue = a[sort.field];
-          final bValue = b[sort.field];
-
-          int comparison = 0;
-          if (aValue is Comparable && bValue is Comparable) {
-            comparison = aValue.compareTo(bValue);
-          }
-
-          if (comparison != 0) {
-            return sort.descending ? -comparison : comparison;
-          }
-        }
-        return 0;
-      });
-    }
-
-    // Apply offset
-    if (query.offset != null && query.offset! > 0) {
-      items = items.skip(query.offset!).toList();
-    }
-
-    // Apply limit
-    if (query.limit != null) {
-      items = items.take(query.limit!).toList();
-    }
-
-    return items;
-  }
+  Future<List<LocalFirstEvent<T>>> query<T>(LocalFirstQuery<T> query);
 
   /// Returns a reactive stream of query results.
   ///
   /// Delegates that support native streams (like Isar) can override this.
-  /// The default implementation emits the initial query result only.
-  /// More sophisticated delegates can provide automatic updates when data changes.
-  Stream<List<Map<String, dynamic>>> watchQuery(LocalFirstQuery query) async* {
-    // Default implementation: emit initial result
-    yield await this.query(query);
-
-    // More sophisticated delegates can have native streams with
-    // change notifications. The default implementation only emits
-    // the initial value.
-  }
+  Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query);
 }

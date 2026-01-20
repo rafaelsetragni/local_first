@@ -1,23 +1,22 @@
 import 'dart:async';
 import 'dart:developer' as dev;
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:local_first/local_first.dart';
 import 'package:local_first_hive_storage/local_first_hive_storage.dart';
 import 'package:mongo_dart/mongo_dart.dart' hide State, Center;
 
-typedef JsonMap<T> = Map<String, T>;
-
 // To use this example, first you need to start a MongoDB service, and
 // you can do it easily creating an container instance using Docker.
 // First, install docker desktop on your machine, then copy and
-// paste the command bellow at your terminal:
+// paste the command below at your terminal:
 //
 // docker run -d --name mongo_local -p 27017:27017 \
 //   -e MONGO_INITDB_ROOT_USERNAME=admin \
 //   -e MONGO_INITDB_ROOT_PASSWORD=admin mongo:7
 //
-// You can check the service status using the command bellow:
+// You can check the service status using the command below:
 //
 // docker stats mongo_local
 //
@@ -26,6 +25,36 @@ typedef JsonMap<T> = Map<String, T>;
 const mongoConnectionString =
     'mongodb://admin:admin@127.0.0.1:27017/remote_counter_db?authSource=admin';
 
+/// Centralized string keys to avoid magic field names.
+class RepositoryNames {
+  static const user = 'user';
+  static const counterLog = 'counter_log';
+  static const sessionCounter = 'session_counter';
+}
+
+class CommonFields {
+  static const id = 'id';
+  static const username = 'username';
+  static const createdAt = 'created_at';
+  static const updatedAt = 'updated_at';
+}
+
+class UserFields {
+  static const avatarUrl = 'avatar_url';
+}
+
+class CounterLogFields {
+  static const sessionId = 'session_id';
+  static const increment = 'increment';
+}
+
+/// Field keys used by session counter events/records.
+class SessionCounterFields {
+  static const sessionId = 'session_id';
+  static const count = 'count';
+}
+
+/// Entry point that initializes the local-first stack then opens the right page.
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   RepositoryService().initialize().then((signedUser) {
@@ -65,6 +94,7 @@ class SignInPage extends StatefulWidget {
 class _SignInPageState extends State<SignInPage> {
   final _formKey = GlobalKey<FormState>();
   final _usernameController = TextEditingController();
+  bool _isSigningIn = false;
 
   @override
   void dispose() {
@@ -72,10 +102,28 @@ class _SignInPageState extends State<SignInPage> {
     super.dispose();
   }
 
-  Future<void> _signIn() async {
+  /// Handles sign-in by persisting the user and navigating to home.
+  Future<void> _signIn(BuildContext context) async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
+    final errorColor = Theme.of(context).colorScheme.error;
+    final scafold = ScaffoldMessenger.of(context);
     final username = _usernameController.text;
-    await RepositoryService().signIn(username: username);
+
+    setState(() => _isSigningIn = true);
+    try {
+      await RepositoryService().signIn(username: username);
+    } catch (_) {
+      scafold.showSnackBar(
+        SnackBar(
+          backgroundColor: errorColor,
+          content: Text('No connection to the server. Please try again.'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isSigningIn = false);
+      }
+    }
   }
 
   @override
@@ -115,7 +163,7 @@ class _SignInPageState extends State<SignInPage> {
                         labelText: 'Username',
                         border: OutlineInputBorder(),
                       ),
-                      onFieldSubmitted: (_) => _signIn(),
+                      onFieldSubmitted: (_) => _signIn(context),
                       validator: (value) =>
                           (value == null || value.trim().isEmpty)
                           ? 'Please enter a username.'
@@ -123,8 +171,14 @@ class _SignInPageState extends State<SignInPage> {
                     ),
                     SizedBox(height: 24),
                     ElevatedButton(
-                      onPressed: _signIn,
-                      child: const Text('Sign In'),
+                      onPressed: _isSigningIn ? null : () => _signIn(context),
+                      child: _isSigningIn
+                          ? const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Sign In'),
                     ),
                   ],
                 ),
@@ -149,12 +203,11 @@ class _MyHomePageState extends State<MyHomePage> {
   late final Stream<int> _counterStream;
   late final Stream<List<UserModel>> _usersStream;
   late final Stream<List<CounterLogModel>> _recentLogsStream;
-  late final Stream<bool> _connectionStream;
   final GlobalKey<AnimatedListState> _logsListKey =
       GlobalKey<AnimatedListState>();
   late final StreamSubscription<List<CounterLogModel>> _logsSubscription;
   final List<CounterLogModel> _logs = [];
-  Map<String, String?> _avatarMap = {};
+  JsonMap<String?> _avatarMap = {};
 
   @override
   void initState() {
@@ -163,10 +216,10 @@ class _MyHomePageState extends State<MyHomePage> {
     _usersStream = service.watchUsers();
     _counterStream = service.watchCounter();
     _recentLogsStream = service.watchRecentLogs(limit: 5);
-    _connectionStream = service.connectionState.stream;
     _logsSubscription = _recentLogsStream.listen(_onLogsUpdate);
   }
 
+  /// Opens dialog to update the current user's avatar URL.
   Future<void> _onAvatarTap(BuildContext context, String currentAvatar) async {
     final url = await _promptAvatarDialog(context, currentAvatar);
     if (url == null) return;
@@ -179,6 +232,7 @@ class _MyHomePageState extends State<MyHomePage> {
     super.dispose();
   }
 
+  /// Reconciles AnimatedList items with the latest logs to animate inserts/removes.
   void _onLogsUpdate(List<CounterLogModel> newLogs) {
     final listState = _logsListKey.currentState;
 
@@ -236,6 +290,7 @@ class _MyHomePageState extends State<MyHomePage> {
     if (mounted) setState(() {});
   }
 
+  /// Builds a single log tile with fade/slide animations for list changes.
   Widget _buildAnimatedLogTile(
     CounterLogModel log,
     Animation<double> animation, {
@@ -259,6 +314,7 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
+  /// Prompts the user to type a new avatar URL and returns it.
   Future<String?> _promptAvatarDialog(
     BuildContext context,
     String currentAvatar,
@@ -347,6 +403,7 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
+  /// Renders connection badge, avatar, greeting, and aggregate counters.
   StreamBuilder<List<UserModel>> _buildAvatarAndGlobalCounter(UserModel user) {
     return StreamBuilder(
       stream: _usersStream,
@@ -357,8 +414,8 @@ class _MyHomePageState extends State<MyHomePage> {
             avatarMap[user.username] ?? user.avatarUrl ?? '';
 
         return StreamBuilder<bool>(
-          stream: _connectionStream,
-          initialData: RepositoryService().connectionState.latestOrNull,
+          stream: RepositoryService().connectionState,
+          initialData: false,
           builder: (context, connectionSnapshot) {
             final isConnected = connectionSnapshot.data ?? false;
             return Column(
@@ -435,6 +492,7 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
+  /// App bar with logout action.
   AppBar _buildSignOutAppBar() {
     return AppBar(
       actions: [
@@ -447,6 +505,7 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
+  /// Shows the animated list of recent counter logs.
   Column _buildRecentActivities(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -466,7 +525,7 @@ class _MyHomePageState extends State<MyHomePage> {
               for (final u in usersSnapshot.data ?? const [])
                 u.username: u.avatarUrl,
             };
-            _avatarMap = Map<String, String?>.from(avatarMap);
+            _avatarMap = JsonMap<String?>.from(avatarMap);
             return SizedBox(
               height: MediaQuery.of(context).size.height * 0.35,
               child: Container(
@@ -493,6 +552,7 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
+  /// Displays all known users horizontally with their avatars.
   SizedBox _buildUserList(BuildContext context) {
     return SizedBox(
       height: MediaQuery.of(context).size.height * 0.15,
@@ -542,6 +602,7 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 }
 
+/// Visualizes a single counter log entry with avatar and timestamp.
 class CounterLogTile extends StatelessWidget {
   final CounterLogModel log;
   final String avatarUrl;
@@ -650,7 +711,9 @@ class AvatarPreview extends StatelessWidget {
   }
 }
 
-/// Handles navigation concerns with a shared navigator key.
+/// Centralized navigation helper that exposes a shared navigator key and
+/// simple push/pop helpers so the example can navigate from anywhere without
+/// passing BuildContext around.
 class NavigatorService {
   NavigatorService._internal();
   static NavigatorService? _instance;
@@ -680,26 +743,9 @@ class NavigatorService {
   void navigateToSignIn() => pushReplacement(const SignInPage());
 }
 
-/// Small helper to expose connection state as a stream with the last value cached.
-class ConnectionSignal {
-  ConnectionSignal() : _controller = StreamController<bool>.broadcast();
-
-  final StreamController<bool> _controller;
-  bool? _latest;
-
-  Stream<bool> get stream => _controller.stream;
-  bool? get latestOrNull => _latest;
-
-  void add(bool value) {
-    _latest = value;
-    if (!_controller.isClosed) {
-      _controller.add(value);
-    }
-  }
-}
-
-/// Central orchestrator for auth, persistence, and sync.
-/// Coordinates repositories, storage, sync strategy, and session/namespace handling.
+/// Central orchestrator that wires repositories, storage, and sync strategies,
+/// handling auth flow, namespace switching per user, session-id management per
+/// device, and provides the high-level API used by the UI to read/write data.
 class RepositoryService {
   static const tag = 'RepositoryService';
 
@@ -710,26 +756,36 @@ class RepositoryService {
   UserModel? authenticatedUser;
   String _currentNamespace = 'default';
   final _lastUsernameKey = '__last_username__';
+  final _sessionIdPrefix = '__session_id__';
+  String? _currentSessionId;
 
   final LocalFirstRepository<UserModel> userRepository;
   final LocalFirstRepository<CounterLogModel> counterLogRepository;
+  final LocalFirstRepository<SessionCounterModel> sessionCounterRepository;
   final MongoPeriodicSyncStrategy syncStrategy;
-  final ConnectionSignal connectionState;
 
   // Central orchestrator for the demo: wires repositories, storage, sync
   // strategy and handles auth/session (namespace) switching.
   RepositoryService._internal()
-    : connectionState = ConnectionSignal(),
-      userRepository = _buildUserRepository(),
+    : userRepository = _buildUserRepository(),
       counterLogRepository = _buildCounterLogRepository(),
+      sessionCounterRepository = _buildSessionCounterRepository(),
       syncStrategy = MongoPeriodicSyncStrategy() {
-    syncStrategy.setConnectionListener(connectionState.add);
-    syncStrategy.setNamespace(_currentNamespace);
+    syncStrategy.namespace = _currentNamespace;
   }
 
+  String get namespace => _currentNamespace;
+
+  Stream<bool> get connectionState => syncStrategy.connectionChanges;
+
+  /// Initializes the client/storage and restores last logged user if possible.
   Future<UserModel?> initialize() async {
     final localFirst = this.localFirst ??= LocalFirstClient(
-      repositories: [userRepository, counterLogRepository],
+      repositories: [
+        userRepository,
+        counterLogRepository,
+        sessionCounterRepository,
+      ],
       localStorage: HiveLocalFirstStorage(),
       syncStrategies: [syncStrategy],
     );
@@ -739,29 +795,44 @@ class RepositoryService {
   }
 
   List<UserModel> _usersFromEvents(List<LocalFirstEvent<UserModel>> events) =>
-      events.map((e) => e.state).toList();
+      events
+          .whereType<LocalFirstStateEvent<UserModel>>()
+          .map((e) => e.data)
+          .toList();
 
   List<CounterLogModel> _logsFromEvents(
     List<LocalFirstEvent<CounterLogModel>> events,
-  ) => events.map((e) => e.state).toList();
+  ) => events
+      .whereType<LocalFirstStateEvent<CounterLogModel>>()
+      .map((e) => e.data)
+      .toList();
 
+  List<SessionCounterModel> _sessionCountersFromEvents(
+    List<LocalFirstEvent<SessionCounterModel>> events,
+  ) => events
+      .whereType<LocalFirstStateEvent<SessionCounterModel>>()
+      .map((e) => e.data)
+      .toList();
+
+  /// Signs in a user, switches namespace, preloads remote users, and starts sync.
   Future<void> signIn({required String username}) async {
-    // On sign in, swap namespace, prefetch users from remote, and persist the new user.
+    // On sign in, swap namespace to the user, prefetch users from remote,
+    // and persist the new user.
     syncStrategy.stop();
-    await _switchUserDatabase('');
+    final localUser = UserModel(username: username, avatarUrl: null);
+    await _switchUserDatabase(localUser.id);
     await _syncRemoteUsersToLocal();
     final existing = await userRepository
         .query()
-        .where('username', isEqualTo: username)
+        .where(userRepository.idFieldName, isEqualTo: localUser.id)
         .getAll();
-    final preservedAvatar = existing.isNotEmpty
-        ? existing.first.state.avatarUrl
-        : null;
-    final user = authenticatedUser = UserModel(
-      username: username,
-      avatarUrl: preservedAvatar,
-    );
-    await userRepository.upsert(user, needSync: existing.isEmpty);
+    if (existing.isNotEmpty) {
+      authenticatedUser = existing.first.data;
+    } else {
+      authenticatedUser = localUser;
+      await userRepository.upsert(localUser, needSync: true);
+    }
+    await _prepareSession(authenticatedUser!);
     await _persistLastUsername(username);
     syncStrategy.start();
     NavigatorService().navigateToHome();
@@ -770,77 +841,157 @@ class RepositoryService {
   Future<void> _syncRemoteUsersToLocal() async {
     final remote = await syncStrategy.fetchUsers();
     for (final data in remote) {
-      try {
-        final user = userRepository.fromJson(data);
-        await userRepository.upsert(user, needSync: false);
-      } catch (_) {
-        // ignore malformed user entries
-      }
+      final user = userRepository.fromJson(data);
+      final exists = await userRepository
+          .query()
+          .where(userRepository.idFieldName, isEqualTo: user.id)
+          .getAll();
+      if (exists.isNotEmpty) continue;
+      await userRepository.upsert(user, needSync: false);
     }
   }
 
+  /// Clears auth/session state and navigates back to sign-in.
   Future<void> signOut() async {
     // Stops sync and resets session-specific state.
     syncStrategy.stop();
     authenticatedUser = null;
+    _currentSessionId = null;
     await _switchUserDatabase('');
     await localFirst?.setKeyValue(_lastUsernameKey, '');
     NavigatorService().navigateToSignIn();
   }
 
+  /// Rehydrates a user by username (used during app restart).
   Future<UserModel?> restoreUser(String username) async {
-    await _switchUserDatabase('');
+    final normalizedId = UserModel(username: username, avatarUrl: null).id;
+    await _switchUserDatabase(normalizedId);
     final results = await userRepository
         .query()
-        .where('username', isEqualTo: username)
+        .where(userRepository.idFieldName, isEqualTo: normalizedId)
         .getAll();
-    final payloads = _usersFromEvents(results);
-    if (payloads.isEmpty) return null;
-    authenticatedUser = payloads.first;
+    if (results.isEmpty) return null;
+    authenticatedUser = (results.first as LocalFirstStateEvent<UserModel>).data;
+    await _prepareSession(authenticatedUser!);
     syncStrategy.start();
     return authenticatedUser;
   }
 
+  /// Rehydrates the most recently logged-in user, if any.
   Future<UserModel?> restoreLastUser() async {
     final username = await localFirst?.getMeta(_lastUsernameKey);
     if (username == null || username.isEmpty) return null;
     return restoreUser(username);
   }
 
+  /// Saves the last username to meta storage so we can auto-restore.
   Future<void> _persistLastUsername(String username) =>
       localFirst?.setKeyValue(_lastUsernameKey, username) ?? Future.value();
 
+  String _sessionMetaKey(String username) {
+    final sanitized = _sanitizeNamespace(username);
+    return '$_sessionIdPrefix$sanitized';
+  }
+
+  /// Builds a deterministic-ish session id with random salt for uniqueness.
+  String _generateSessionId(String username) {
+    final random = Random();
+    final randomBits =
+        random.nextInt(0x7fffffff).toRadixString(16).padLeft(8, '0');
+    final timestamp = DateTime.now().millisecondsSinceEpoch.toRadixString(16);
+    return 'sess_${_sanitizeNamespace(username)}_${timestamp}_$randomBits';
+  }
+
+  /// Retrieves the persisted session id for this device/user or creates one.
+  Future<String> _getOrCreateSessionId(String username) async {
+    final existing = await localFirst?.getMeta(_sessionMetaKey(username));
+    if (existing is String && existing.isNotEmpty) return existing;
+    final generated = _generateSessionId(username);
+    await localFirst?.setKeyValue(_sessionMetaKey(username), generated);
+    return generated;
+  }
+
+  /// Ensures the device has a stable session id and session counter for a user.
+  Future<void> _prepareSession(UserModel user) async {
+    final sessionId = await _getOrCreateSessionId(user.username);
+    _currentSessionId = sessionId;
+    await _ensureSessionCounterForSession(
+      username: user.username,
+      sessionId: sessionId,
+    );
+  }
+
+  /// Fetches or creates the session counter for a given session id.
+  Future<SessionCounterModel> _ensureSessionCounterForSession({
+    required String username,
+    required String sessionId,
+  }) async {
+    final results = await sessionCounterRepository
+        .query()
+        .where(sessionCounterRepository.idFieldName, isEqualTo: sessionId)
+        .limitTo(1)
+        .getAll();
+    if (results.isNotEmpty) {
+      return (results.first as LocalFirstStateEvent<SessionCounterModel>).data;
+    }
+    final counter = SessionCounterModel(
+      sessionId: sessionId,
+      username: username,
+      count: 0,
+    );
+    await sessionCounterRepository.upsert(counter, needSync: true);
+    return counter;
+  }
+
+  /// Returns all users stored locally.
   Future<List<UserModel>> getUsers() async =>
       _usersFromEvents(await userRepository.query().getAll());
 
+  /// Returns the latest logs (capped) synchronously.
   Future<List<CounterLogModel>> getLogs() async => _logsFromEvents(
     await counterLogRepository
         .query()
-        .orderBy('created_at', descending: true)
+        .orderBy(CommonFields.createdAt, descending: true)
+        .limitTo(5)
         .getAll(),
   );
 
-  Stream<List<CounterLogModel>> watchLogs() => counterLogRepository
-      .query()
-      .orderBy('created_at', descending: true)
-      .watch()
-      .map(_logsFromEvents);
+  /// Streams capped log list sorted by recency.
+  Stream<List<CounterLogModel>> watchLogs({int limit = 5}) =>
+      counterLogRepository
+          .query()
+          .orderBy(CommonFields.createdAt, descending: true)
+          .limitTo(min(limit, 5))
+          .watch()
+          .map(_logsFromEvents);
 
-  Stream<int> watchCounter() => watchLogs().map(
-    (logs) => logs.fold<int>(0, (sum, log) => sum + log.increment),
-  );
+  /// Streams the global counter summed across all session counters.
+  Stream<int> watchCounter() =>
+      sessionCounterRepository
+          .query()
+          .watch()
+          .map(_sessionCountersFromEvents)
+          .map((sessions) =>
+              sessions.fold<int>(0, (sum, counter) => sum + counter.count));
 
+  /// Streams a limited view of the most recent logs.
   Stream<List<CounterLogModel>> watchRecentLogs({int limit = 5}) =>
-      watchLogs().map((logs) => logs.take(limit).toList());
+      watchLogs(limit: min(limit, 5));
 
+  /// Streams all known users ordered by username.
   Stream<List<UserModel>> watchUsers() =>
-      userRepository.query().orderBy('username').watch().map(_usersFromEvents);
+      userRepository
+          .query()
+          .orderBy(CommonFields.username)
+          .watch()
+          .map(_usersFromEvents);
 
+  /// Returns avatar URLs for the provided usernames (missing ones mapped to null).
   Future<JsonMap<String?>> getAvatarsForUsers(Set<String> usernames) async {
     if (usernames.isEmpty) return {};
     final results = await userRepository
         .query()
-        .where('username', whereIn: usernames.toList())
+        .where(CommonFields.username, whereIn: usernames.toList())
         .getAll();
 
     final map = <String, String?>{
@@ -855,6 +1006,7 @@ class RepositoryService {
     return map;
   }
 
+  /// Updates the authenticated user's avatar URL and syncs it.
   Future<UserModel> updateAvatarUrl(String avatarUrl) async {
     final user = authenticatedUser;
     if (user == null) throw Exception('User not authenticated');
@@ -871,17 +1023,42 @@ class RepositoryService {
     return updated;
   }
 
+  /// Increments the current session counter and logs the change.
   void incrementCounter() => _createLogRegistry(1);
+  /// Decrements the current session counter and logs the change.
   void decrementCounter() => _createLogRegistry(-1);
 
+  /// Creates both a log entry and a session counter update for a delta.
   Future<void> _createLogRegistry(int amount) async {
     final username = authenticatedUser?.username;
     if (username == null) {
       throw Exception('User not authenticated');
     }
 
-    final log = CounterLogModel(username: username, increment: amount);
-    await counterLogRepository.upsert(log, needSync: true);
+    final sessionId = _currentSessionId;
+    if (sessionId == null) {
+      throw Exception('Session not initialized');
+    }
+
+    final sessionCounter = await _ensureSessionCounterForSession(
+      username: username,
+      sessionId: sessionId,
+    );
+    final updatedCounter = sessionCounter.copyWith(
+      count: sessionCounter.count + amount,
+      updatedAt: DateTime.now().toUtc(),
+    );
+
+    final log = CounterLogModel(
+      username: username,
+      increment: amount,
+      sessionId: sessionId,
+    );
+
+    await Future.wait([
+      counterLogRepository.upsert(log, needSync: true),
+      sessionCounterRepository.upsert(updatedCounter, needSync: true),
+    ]);
   }
 
   Future<void> _switchUserDatabase(String username) async {
@@ -891,7 +1068,7 @@ class RepositoryService {
     final namespace = _sanitizeNamespace(username);
     if (_currentNamespace == namespace) return;
     _currentNamespace = namespace;
-    syncStrategy.setNamespace(namespace);
+    syncStrategy.namespace = namespace;
 
     final storage = db.localStorage;
     if (storage is HiveLocalFirstStorage) {
@@ -899,6 +1076,7 @@ class RepositoryService {
     }
   }
 
+  /// Normalizes a username into a namespace-safe string.
   String _sanitizeNamespace(String username) {
     if (username.isEmpty) return 'default';
     final sanitized = username.toLowerCase().replaceAll(
@@ -945,26 +1123,26 @@ class UserModel {
     );
   }
 
-  JsonMap<dynamic> toJson() {
+  JsonMap toJson() {
     return {
-      'id': id,
-      'username': username,
-      'avatar_url': avatarUrl,
-      'created_at': createdAt.toUtc().toIso8601String(),
-      'updated_at': updatedAt.toUtc().toIso8601String(),
+      CommonFields.id: id,
+      CommonFields.username: username,
+      UserFields.avatarUrl: avatarUrl,
+      CommonFields.createdAt: createdAt.toUtc().toIso8601String(),
+      CommonFields.updatedAt: updatedAt.toUtc().toIso8601String(),
     };
   }
 
-  factory UserModel.fromJson(JsonMap<dynamic> json) {
-    final username = json['username'] ?? json['id'];
-    final created = DateTime.parse(json['created_at']).toUtc();
-    final updated = json['updated_at'] != null
-        ? DateTime.parse(json['updated_at']).toUtc()
+  factory UserModel.fromJson(JsonMap json) {
+    final username = json[CommonFields.username] ?? json[CommonFields.id];
+    final created = DateTime.parse(json[CommonFields.createdAt]).toUtc();
+    final updated = json[CommonFields.updatedAt] != null
+        ? DateTime.parse(json[CommonFields.updatedAt]).toUtc()
         : created;
     return UserModel(
-      id: (json['id'] ?? username).toString().trim().toLowerCase(),
+      id: (json[CommonFields.id] ?? username).toString().trim().toLowerCase(),
       username: username,
-      avatarUrl: json['avatar_url'],
+      avatarUrl: json[UserFields.avatarUrl],
       createdAt: created,
       updatedAt: updated,
     );
@@ -988,9 +1166,103 @@ class UserModel {
   }
 }
 
+/// Aggregated counter per (user, device session) combination.
+class SessionCounterModel {
+  final String id;
+  final String username;
+  final String sessionId;
+  final int count;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  SessionCounterModel._({
+    required this.id,
+    required this.username,
+    required this.sessionId,
+    required this.count,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  factory SessionCounterModel({
+    String? id,
+    required String username,
+    required String sessionId,
+    int count = 0,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) {
+    final now = DateTime.now().toUtc();
+    final created = createdAt ?? now;
+    final updated = updatedAt ?? created;
+    final normalizedId = id ?? sessionId;
+    return SessionCounterModel._(
+      id: normalizedId,
+      username: username,
+      sessionId: sessionId,
+      count: count,
+      createdAt: created,
+      updatedAt: updated,
+    );
+  }
+
+  SessionCounterModel copyWith({
+    String? id,
+    String? username,
+    String? sessionId,
+    int? count,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) {
+    return SessionCounterModel(
+      id: id ?? this.id,
+      username: username ?? this.username,
+      sessionId: sessionId ?? this.sessionId,
+      count: count ?? this.count,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  JsonMap toJson() {
+    return {
+      CommonFields.id: id,
+      CommonFields.username: username,
+      SessionCounterFields.sessionId: sessionId,
+      SessionCounterFields.count: count,
+      CommonFields.createdAt: createdAt.toUtc().toIso8601String(),
+      CommonFields.updatedAt: updatedAt.toUtc().toIso8601String(),
+    };
+  }
+
+  factory SessionCounterModel.fromJson(JsonMap json) {
+    final created = DateTime.parse(json[CommonFields.createdAt]).toUtc();
+    final updated = json[CommonFields.updatedAt] != null
+        ? DateTime.parse(json[CommonFields.updatedAt]).toUtc()
+        : created;
+    final sessionId = json[SessionCounterFields.sessionId] ??
+        json[CommonFields.id];
+    return SessionCounterModel(
+      id: json[CommonFields.id] ?? sessionId,
+      username: json[CommonFields.username],
+      sessionId: sessionId,
+      count: json[SessionCounterFields.count] ?? 0,
+      createdAt: created,
+      updatedAt: updated,
+    );
+  }
+
+  static SessionCounterModel resolveConflict(
+    SessionCounterModel local,
+    SessionCounterModel remote,
+  ) => local.updatedAt.isAfter(remote.updatedAt) ? local : remote;
+}
+
+/// Immutable record describing a single counter increment/decrement.
 class CounterLogModel {
   final String id;
   final String username;
+  final String? sessionId;
   final int increment;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -998,6 +1270,7 @@ class CounterLogModel {
   CounterLogModel._({
     required this.id,
     required this.username,
+    required this.sessionId,
     required this.increment,
     required this.createdAt,
     required this.updatedAt,
@@ -1006,6 +1279,7 @@ class CounterLogModel {
   factory CounterLogModel({
     String? id,
     required String username,
+    required String? sessionId,
     required int increment,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -1016,31 +1290,34 @@ class CounterLogModel {
     return CounterLogModel._(
       id: id ?? '${username}_${now.millisecondsSinceEpoch}',
       username: username,
+      sessionId: sessionId,
       increment: increment,
       createdAt: created,
       updatedAt: updated,
     );
   }
 
-  JsonMap<dynamic> toJson() {
+  JsonMap toJson() {
     return {
-      'id': id,
-      'username': username,
-      'increment': increment,
-      'created_at': createdAt.toUtc().toIso8601String(),
-      'updated_at': updatedAt.toUtc().toIso8601String(),
+      CommonFields.id: id,
+      CommonFields.username: username,
+      CounterLogFields.sessionId: sessionId,
+      CounterLogFields.increment: increment,
+      CommonFields.createdAt: createdAt.toUtc().toIso8601String(),
+      CommonFields.updatedAt: updatedAt.toUtc().toIso8601String(),
     };
   }
 
-  factory CounterLogModel.fromJson(JsonMap<dynamic> json) {
-    final created = DateTime.parse(json['created_at']).toUtc();
-    final updated = json['updated_at'] != null
-        ? DateTime.parse(json['updated_at']).toUtc()
+  factory CounterLogModel.fromJson(JsonMap json) {
+    final created = DateTime.parse(json[CommonFields.createdAt]).toUtc();
+    final updated = json[CommonFields.updatedAt] != null
+        ? DateTime.parse(json[CommonFields.updatedAt]).toUtc()
         : created;
     return CounterLogModel(
-      id: json['id'],
-      username: json['username'],
-      increment: json['increment'],
+      id: json[CommonFields.id],
+      username: json[CommonFields.username],
+      sessionId: json[CounterLogFields.sessionId],
+      increment: json[CounterLogFields.increment],
       createdAt: created,
       updatedAt: updated,
     );
@@ -1069,68 +1346,86 @@ class CounterLogModel {
 
 LocalFirstRepository<UserModel> _buildUserRepository() {
   return LocalFirstRepository.create(
-    name: 'user',
+    name: RepositoryNames.user,
     getId: (user) => user.id,
     toJson: (user) => user.toJson(),
     fromJson: (json) => UserModel.fromJson(json),
-    onConflict: UserModel.resolveConflict,
+    onConflictEvent: (local, remote) {
+      final winner = UserModel.resolveConflict(local.data, remote.data);
+      final source = identical(winner, local.data) ? local : remote;
+      return source.updateEventState(
+        syncStatus: SyncStatus.ok,
+        syncOperation: source.syncOperation,
+      );
+    },
   );
 }
 
 LocalFirstRepository<CounterLogModel> _buildCounterLogRepository() {
   return LocalFirstRepository.create(
-    name: 'counter_log',
+    name: RepositoryNames.counterLog,
     getId: (log) => log.id,
     toJson: (log) => log.toJson(),
     fromJson: (json) => CounterLogModel.fromJson(json),
-    onConflict: CounterLogModel.resolveConflict,
+    onConflictEvent: (local, remote) {
+      final winner = CounterLogModel.resolveConflict(local.data, remote.data);
+      final source = identical(winner, local.data) ? local : remote;
+      return source.updateEventState(
+        syncStatus: SyncStatus.ok,
+        syncOperation: source.syncOperation,
+      );
+    },
   );
 }
 
-/// Periodic sync strategy: batches pending events to MongoDB and pulls remote events.
-/// Demonstrates the classic local-first loop (push pending, pull remote, merge).
+LocalFirstRepository<SessionCounterModel> _buildSessionCounterRepository() {
+  return LocalFirstRepository.create(
+    name: RepositoryNames.sessionCounter,
+    getId: (session) => session.id,
+    toJson: (session) => session.toJson(),
+    fromJson: (json) => SessionCounterModel.fromJson(json),
+    onConflictEvent: (local, remote) {
+      final winner = SessionCounterModel.resolveConflict(
+        local.data,
+        remote.data,
+      );
+      final source = identical(winner, local.data) ? local : remote;
+      return source.updateEventState(
+        syncStatus: SyncStatus.ok,
+        syncOperation: source.syncOperation,
+      );
+    },
+  );
+}
+
+/// Periodic sync strategy that runs on a timer to push pending local events in
+/// batches to MongoDB, pull remote changes since the last cursor, merge them
+/// locally, and report connectivity status for the UI.
 class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   static const logTag = 'MongoPeriodicSyncStrategy';
-  final Duration period = const Duration(milliseconds: 500);
-  final MongoApi mongoApi = MongoApi(
-    uri: mongoConnectionString,
-    repositoryNames: const ['counter_log', 'user'],
-  );
-  void Function(bool) _onConnectionChange = _noopConnection;
-  bool _isSyncing = false;
-  bool _connected = true;
-  String _namespace = 'default';
+
+  final Duration period;
+  final MongoApi mongoApi;
 
   Timer? _timer;
+  bool _isSyncing = false;
+  String _namespace = 'default';
   final JsonMap<DateTime?> lastSyncedAt = {};
-  final JsonMap<List<LocalFirstEvent>> pendingChanges = {};
 
-  void setConnectionListener(void Function(bool) listener) {
-    _onConnectionChange = listener;
-  }
+  MongoPeriodicSyncStrategy({
+    MongoApi? mongoApiMock,
+    this.period = const Duration(milliseconds: 500),
+  }) : mongoApi = mongoApiMock ?? MongoApi(uri: mongoConnectionString);
 
-  void setNamespace(String namespace) {
-    _namespace = namespace;
-  }
+  set namespace(String value) => _namespace = value;
 
+  /// Boots the periodic timer and triggers an immediate sync.
   void start() {
     stop();
     client.awaitInitialization.then((_) async {
-      final initialConnected = await _quickPing();
-      _connected = initialConnected;
-      _emitConnection(initialConnected);
       dev.log('Starting periodic sync', name: logTag);
-      final pendingEvents = await getPendingEvents();
-      for (final event in pendingEvents) {
-        _addPending(event);
-      }
-      for (final repository in mongoApi.repositoryNames) {
-        final value = await client.getMeta(_lastSyncKey(repository));
-        lastSyncedAt[repository] = value != null
-            ? DateTime.tryParse(value)
-            : null;
-      }
       _timer = Timer.periodic(period, _onTimerTick);
+
       // Trigger immediate sync on start (and on reconnection).
       unawaited(_onTimerTick(null));
     });
@@ -1139,7 +1434,6 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   void stop() {
     _timer?.cancel();
     _timer = null;
-    pendingChanges.clear();
     lastSyncedAt.clear();
   }
 
@@ -1147,153 +1441,182 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     stop();
   }
 
-  void _addPending(LocalFirstEvent event) {
-    pendingChanges.putIfAbsent(event.repositoryName, () => []).add(event);
-  }
-
   String _lastSyncKey(String repo) => '__last_sync__${_namespace}__$repo';
 
+  /// Convenience helper to fetch all remote users for bootstrap on sign-in.
+  Future<List<JsonMap>> fetchUsers() async {
+    final fetchResult = await mongoApi
+        .fetchUserEvents(null)
+        .timeout(period * 2);
+    return fetchResult.events
+        .map((e) => e[MongoApi.dataField])
+        .whereType<JsonMap>()
+        .toList();
+  }
+
   @override
-  Future<SyncStatus> onPushToRemote(LocalFirstEvent event) async {
-    _addPending(event);
+  Future<SyncStatus> onPushToRemote(LocalFirstEvent _) async {
+    // Return pending because this strategy syncs in batch; implement real-time sync if needed here.
     return SyncStatus.pending;
   }
 
   Future<void> _onTimerTick(_) async {
     if (_isSyncing) return;
     _isSyncing = true;
-    final drained = <String, List<LocalFirstEvent>>{};
     try {
-      dev.log(
-        'Using lastSyncedAt: ${{
-          for (final entry in lastSyncedAt.entries)
-            entry.key: entry.value?.toIso8601String()
-        }}',
-        name: logTag,
-      );
-      if (pendingChanges.isNotEmpty) {
-        drained.addAll(pendingChanges);
-        pendingChanges.clear();
-
-        await _pushToRemote(drained).timeout(period * 2);
+      final healthy = await mongoApi.ping().timeout(period);
+      if (!healthy) {
+        reportConnectionState(false);
+        return;
       }
-      final remoteChanges = await mongoApi
-          .pull(lastSyncedAt)
-          .timeout(period * 2);
-      if (remoteChanges['changes']?.isNotEmpty) {
-        await pullChangesToLocal(remoteChanges);
-
-        // Use the latest updated_at seen in this pull as the new lastSyncedAt
-        final latest = mongoApi.latestUpdatedAt(remoteChanges);
-        if (latest != null) {
-          for (final repo in mongoApi.repositoryNames) {
-            dev.log(
-              'Updating lastSyncedAt for $repo => ${latest.toIso8601String()}',
-              name: logTag,
-            );
-            lastSyncedAt[repo] = latest;
-            await client.setKeyValue(
-              _lastSyncKey(repo),
-              latest.toIso8601String(),
-            );
-          }
-        }
-      }
-      _setConnected(true);
+      await _pushPending().timeout(period * 2);
+      await _pullRemoteChanges();
+      reportConnectionState(true);
     } on TimeoutException catch (e, s) {
       dev.log('Sync timeout: $e', name: logTag, error: e, stackTrace: s);
-      _setConnected(false);
+      reportConnectionState(false);
     } catch (e, s) {
       dev.log('Sync error: $e', name: logTag, error: e, stackTrace: s);
-      // Re-queue drained changes so they retry on next tick.
-      if (drained.isNotEmpty) {
-        for (final entry in drained.entries) {
-          pendingChanges.putIfAbsent(entry.key, () => []).addAll(entry.value);
-        }
-      }
-      _setConnected(false);
+      reportConnectionState(false);
     } finally {
       _isSyncing = false;
     }
   }
 
-  Future<bool> _quickPing() async {
+  Future<void> _pushPending() =>
+      Future.wait([
+        _pushPendingUserEvents(),
+        _pushPendingCounterLogEvents(),
+        _pushPendingSessionCounterEvents(),
+      ]);
+
+  Future<void> _pushPendingUserEvents() async {
+    final pendingEvents =
+        await getPendingEvents(repositoryName: RepositoryNames.user);
+    if (pendingEvents.isEmpty) return;
+    await mongoApi.pushUserEvents(pendingEvents.toJson());
+    await markEventsAsSynced(pendingEvents);
+  }
+
+  Future<void> _pushPendingCounterLogEvents() async {
+    final pendingEvents = await getPendingEvents(
+      repositoryName: RepositoryNames.counterLog,
+    );
+    if (pendingEvents.isEmpty) return;
+    await mongoApi.pushCounterLogEvents(pendingEvents.toJson());
+    await markEventsAsSynced(pendingEvents);
+  }
+
+  Future<void> _pushPendingSessionCounterEvents() async {
+    final pendingEvents = await getPendingEvents(
+      repositoryName: RepositoryNames.sessionCounter,
+    );
+    if (pendingEvents.isEmpty) return;
+    await mongoApi.pushSessionCounterEvents(pendingEvents.toJson());
+    await markEventsAsSynced(pendingEvents);
+  }
+
+  Future<void> _pullRemoteChanges() => Future.wait([
+    _pullUserChangesFromMongoApi(),
+    _pullLogChangesFromMongoApi(),
+    _pullSessionCounterChangesFromMongoApi(),
+  ]);
+
+  Future<void> _pullUserChangesFromMongoApi() async {
+    final lastSynced = await _getLatest(RepositoryNames.user);
+    final result = await mongoApi.fetchUserEvents(lastSynced);
+    if (result.events.isEmpty) return;
+    await pullChangesToLocal(
+      repositoryName: RepositoryNames.user,
+      remoteChanges: result.events,
+    );
+    if (result.maxServerCreatedAt != null) {
+      await _updateLatest(RepositoryNames.user, result.maxServerCreatedAt!);
+    }
+  }
+
+  Future<void> _pullLogChangesFromMongoApi() async {
+    final lastSynced = await _getLatest(RepositoryNames.counterLog);
+    final result = await mongoApi.fetchCounterLogEvents(lastSynced);
+    if (result.events.isEmpty) return;
+    await pullChangesToLocal(
+      repositoryName: RepositoryNames.counterLog,
+      remoteChanges: result.events,
+    );
+    if (result.maxServerCreatedAt != null) {
+      await _updateLatest(
+        RepositoryNames.counterLog,
+        result.maxServerCreatedAt!,
+      );
+    }
+  }
+
+  Future<void> _pullSessionCounterChangesFromMongoApi() async {
+    final lastSynced = await _getLatest(RepositoryNames.sessionCounter);
+    final result = await mongoApi.fetchSessionCounterEvents(lastSynced);
+    if (result.events.isEmpty) return;
+    await pullChangesToLocal(
+      repositoryName: RepositoryNames.sessionCounter,
+      remoteChanges: result.events,
+    );
+    if (result.maxServerCreatedAt != null) {
+      await _updateLatest(
+        RepositoryNames.sessionCounter,
+        result.maxServerCreatedAt!,
+      );
+    }
+  }
+
+  Future<void> _updateLatest(String repo, DateTime value) async {
+    lastSyncedAt[repo] = value;
+    dev.log(
+      'Updated last sync for $repo to ${value.toIso8601String()}',
+      name: logTag,
+    );
+    await client.setKeyValue(_lastSyncKey(repo), value.toIso8601String());
+  }
+
+  Future<DateTime?> _getLatest(String repo) async {
+    return lastSyncedAt[repo] ??= await () async {
+      final value = await client.getMeta(_lastSyncKey(repo));
+      return _parseDate(value);
+    }();
+  }
+
+  DateTime? _parseDate(dynamic value) {
+    if (value is DateTime) return value.toUtc();
+    if (value is String) return DateTime.tryParse(value)?.toUtc();
+    return null;
+  }
+}
+
+typedef FetchResult = ({List<JsonMap> events, DateTime? maxServerCreatedAt});
+
+/// Thin MongoDB client responsible for opening the database connection,
+/// ensuring indexes, pushing event batches idempotently, and fetching events
+/// per repository with simple server-side cursors.
+class MongoApi {
+  static const logTag = 'MongoApi';
+  static const serverCreatedAtLabel = 'serverCreatedAt';
+  static const dataField = LocalFirstEvent.kData;
+  final String uri;
+
+  Db? _db;
+
+  MongoApi({required this.uri});
+
+  String get eventIdLabel => LocalFirstEvent.kEventId;
+
+  Future<bool> ping() async {
     try {
-      await mongoApi.ping().timeout(period * 2);
+      final db = await _getDb();
+      await db.runCommand({'ping': 1});
       return true;
-    } on TimeoutException catch (e, s) {
-      dev.log('Ping timeout: $e', name: logTag, error: e, stackTrace: s);
-      return false;
     } catch (e, s) {
       dev.log('Ping failed: $e', name: logTag, error: e, stackTrace: s);
       return false;
     }
   }
-
-  Future<void> _pushToRemote(JsonMap<List<LocalFirstEvent>> changes) async {
-    if (changes.isEmpty) return;
-    dev.log(
-      'Pushing changes for ${changes.length} repository(ies)',
-      name: logTag,
-    );
-    await mongoApi.push(_buildUploadPayload(changes));
-  }
-
-  JsonMap<dynamic> _buildUploadPayload(JsonMap<List<LocalFirstEvent>> changes) {
-    return {
-      'lastSyncedAt': DateTime.now().toUtc().toIso8601String(),
-      'changes': {
-        for (final entry in changes.entries)
-          entry.key: entry.value.toJson(
-            (payload) => client.getRepositoryByName(entry.key).toJson(payload),
-          ),
-      },
-    };
-  }
-
-  Future<List<JsonMap<dynamic>>> fetchUsers() {
-    return mongoApi.fetchUsers();
-  }
-
-  void _emitConnection(bool connected) {
-    try {
-      _onConnectionChange(connected);
-      reportConnectionState(connected);
-      dev.log(
-        'Connection state: ${connected ? 'connected' : 'disconnected'}',
-        name: logTag,
-      );
-    } catch (_) {}
-  }
-
-  void _setConnected(bool connected) {
-    if (_connected == connected) return;
-    _connected = connected;
-    _emitConnection(connected);
-    if (connected && _timer != null && !_isSyncing) {
-      // Trigger an immediate sync when coming back online.
-      unawaited(_onTimerTick(null));
-    }
-  }
-
-  static void _noopConnection(bool _) {}
-}
-
-/// Low-level helper to push/pull changes against MongoDB.
-/// Minimal MongoDB adapter used by the demo sync strategy (push/pull events).
-class MongoApi {
-  static const logTag = 'MongoApi';
-  final String uri;
-  final List<String> repositoryNames;
-  final String collectionPrefix;
-
-  Db? _db;
-
-  MongoApi({
-    required this.uri,
-    required this.repositoryNames,
-    this.collectionPrefix = 'offline_',
-  });
 
   Future<Db> _getDb() async {
     final current = _db;
@@ -1308,216 +1631,103 @@ class MongoApi {
 
   Future<DbCollection> _collection(String repositoryName) async {
     final db = await _getDb();
-    final collection = db.collection('$collectionPrefix$repositoryName');
+    final collection = db.collection(repositoryName);
 
     try {
-      await collection.createIndex(keys: {'updated_at': 1});
-    } catch (_) {
-      // Ignora erros de índice existente
+      await collection.createIndex(keys: {serverCreatedAtLabel: 1});
+      await collection.createIndex(
+        keys: {LocalFirstEvent.kEventId: 1},
+        unique: true,
+      );
+    } catch (e, s) {
+      dev.log(
+        'Failed to ensure indexes for $repositoryName: $e',
+        name: logTag,
+        error: e,
+        stackTrace: s,
+      );
     }
 
     return collection;
   }
 
-  Future<void> push(JsonMap<dynamic> payload) async {
-    // Uploads batched events grouped by repository.
-    final operationsByNode = payload['changes'];
-    if (operationsByNode is! JsonMap<dynamic>) return;
-
-    final hasChanges = operationsByNode.values.any((op) {
-      if (op is! JsonMap) return false;
-      return (op['insert'] as List?)?.isNotEmpty == true ||
-          (op['update'] as List?)?.isNotEmpty == true ||
-          (op['delete'] as List?)?.isNotEmpty == true;
-    });
-    if (!hasChanges) return;
-
-    dev.log('Uploading changes to Mongo', name: logTag);
-    for (final entry in operationsByNode.entries) {
-      final repositoryName = entry.key;
-      final operations = entry.value;
-      if (operations is! JsonMap<dynamic>) continue;
-      final collection = await _collection(repositoryName);
-
-      final insertItems = operations['insert'];
-      if (insertItems is List) {
-        for (final item in insertItems) {
-          if (item is! JsonMap<dynamic>) continue;
-          final id = item['id']?.toString();
-          if (id == null) continue;
-          final payload = _toMongoDateFields(item);
-          await collection.insertOne({
-            ...payload,
-            'operation': 'insert',
-            'event_id': item['event_id'],
-          });
-        }
-      }
-
-      final updateItems = operations['update'];
-      if (updateItems is List) {
-        for (final item in updateItems) {
-          if (item is! JsonMap<dynamic>) continue;
-          final id = item['id']?.toString();
-          if (id == null) continue;
-          final payload = _toMongoDateFields(item);
-          await collection.insertOne({
-            ...payload,
-            'operation': 'update',
-            'event_id': item['event_id'],
-          });
-        }
-      }
-
-      final deleteItems = operations['delete'];
-      if (deleteItems is List) {
-        for (final item in deleteItems) {
-          if (item is! Map) continue;
-          final id = item['id']?.toString();
-          if (id == null) continue;
-          final payload = _toMongoDateFields(item as JsonMap<dynamic>);
-          await collection.insertOne({
-            ...payload,
-            'operation': 'delete',
-            'event_id': item['event_id'],
-          });
-        }
-      }
-    }
+  Future<void> pushUserEvents(List<JsonMap> events) async {
+    await _upsertEvents(RepositoryNames.user, events);
   }
 
-  Future<JsonMap<dynamic>> pull(JsonMap<DateTime?> lastSyncByNode) async {
-    // Pulls new events since the last sync timestamp per repository.
-    final timestamp = DateTime.now().toUtc();
-
-    final changes = <String, JsonMap<List<dynamic>>>{};
-
-    for (final repositoryName in repositoryNames) {
-      final cutoff =
-          lastSyncByNode[repositoryName] ??
-          DateTime.fromMillisecondsSinceEpoch(0);
-      final collection = await _collection(repositoryName);
-      final cursor = collection.find(
-        where.gt('updated_at', cutoff).sortBy('updated_at'),
-      );
-
-      final inserts = <dynamic>[];
-      final updates = <dynamic>[];
-      final deletes = <dynamic>[];
-
-      await cursor.forEach((doc) {
-        final op = doc['operation'];
-        if (op == 'delete') {
-          if (doc['id'] != null) {
-            deletes.add({'id': doc['id'], 'event_id': doc['event_id']});
-          }
-          return;
-        }
-        final item = Map<String, dynamic>.from(doc)
-          ..remove('operation')
-          ..remove('_id');
-        if (op == 'insert') {
-          inserts.add(_fromMongoDateFields(item));
-        } else {
-          updates.add(_fromMongoDateFields(item));
-        }
-      });
-
-      final finalChanges = {
-        if (inserts.isNotEmpty) 'insert': inserts,
-        if (updates.isNotEmpty) 'update': updates,
-        if (deletes.isNotEmpty) 'delete': deletes,
-      };
-      if (finalChanges.isNotEmpty) {
-        dev.log(
-          'Pulling changes for $repositoryName since ${lastSyncByNode[repositoryName]}',
-          name: logTag,
-        );
-        changes[repositoryName] = finalChanges;
-      }
-    }
-
-    return {'timestamp': timestamp.toIso8601String(), 'changes': changes};
+  Future<void> pushCounterLogEvents(List<JsonMap> events) async {
+    await _upsertEvents(RepositoryNames.counterLog, events);
   }
 
-  Future<List<JsonMap<dynamic>>> fetchUsers() async {
-    dev.log('Fetching users snapshot', name: logTag);
-    final collection = await _collection('user');
-    final cursor = collection.find(where.ne('operation', 'delete'));
+  Future<void> pushSessionCounterEvents(List<JsonMap> events) async {
+    await _upsertEvents(RepositoryNames.sessionCounter, events);
+  }
 
-    final users = <String, JsonMap<dynamic>>{};
+  Future<FetchResult> fetchUserEvents(DateTime? since) async {
+    return _fetchEvents(RepositoryNames.user, since);
+  }
 
+  Future<FetchResult> fetchCounterLogEvents(DateTime? since) async {
+    return _fetchEvents(RepositoryNames.counterLog, since);
+  }
+
+  Future<FetchResult> fetchSessionCounterEvents(DateTime? since) async {
+    return _fetchEvents(RepositoryNames.sessionCounter, since);
+  }
+
+  Future<FetchResult> _fetchEvents(
+    String repositoryName,
+    DateTime? since,
+  ) async {
+    final collection = await _collection(repositoryName);
+    final selector = since != null
+        ? where.gt(serverCreatedAtLabel, since)
+        : where;
+    final cursor = collection.find(selector.sortBy(serverCreatedAtLabel));
+    final results = <JsonMap>[];
+    DateTime? max;
     await cursor.forEach((doc) {
-      final id = doc['id'];
-      if (id is! String) return;
-      final data = Map<String, dynamic>.from(doc)
+      final map = JsonMap.from(doc)
         ..remove('_id')
-        ..remove('operation');
-      users[id] = _fromMongoDateFields(data);
+        ..putIfAbsent(LocalFirstEvent.kRepository, () => repositoryName);
+      final raw = map[serverCreatedAtLabel];
+      if (raw is DateTime) {
+        final utc = raw.toUtc();
+        if (max == null || utc.isAfter(max!)) max = utc;
+      } else if (raw is String) {
+        final parsed = DateTime.tryParse(raw)?.toUtc();
+        if (parsed != null && (max == null || parsed.isAfter(max!))) {
+          max = parsed;
+        }
+      }
+      results.add(map);
     });
-
-    return users.values.toList();
+    return (events: results, maxServerCreatedAt: max);
   }
 
-  Future<void> ping() async {
-    final collection = await _collection(repositoryNames.first);
-    // Lightweight query to check connectivity.
-    await collection.count();
-  }
-
-  DateTime? latestUpdatedAt(JsonMap<dynamic> pullResult) {
-    final changes = pullResult['changes'];
-    if (changes is! JsonMap) return null;
-    DateTime? latest;
-
-    for (final repositoryEntry in changes.entries) {
-      final repositoryChanges = repositoryEntry.value;
-      if (repositoryChanges is! JsonMap) continue;
-
-      for (final key in ['insert', 'update']) {
-        final list = repositoryChanges[key];
-        if (list is! List) continue;
-        for (final item in list) {
-          if (item is! Map<String, dynamic>) continue;
-          final updatedValue = item['updated_at'];
-          DateTime? candidate;
-          if (updatedValue is DateTime) {
-            candidate = updatedValue;
-          } else if (updatedValue is String) {
-            candidate = DateTime.tryParse(updatedValue);
-          }
-          if (candidate != null &&
-              (latest == null || candidate.isAfter(latest))) {
-            latest = candidate;
-          }
-        }
+  Future<void> _upsertEvents(
+    String repositoryName,
+    List<JsonMap> events,
+  ) async {
+    if (events.isEmpty) return;
+    final collection = await _collection(repositoryName);
+    for (final event in events) {
+      final eventId = event[eventIdLabel];
+      final now = DateTime.now().toUtc();
+      try {
+        await collection.updateOne(where.eq(eventIdLabel, eventId), {
+          r'$set': event,
+          r'$setOnInsert': {serverCreatedAtLabel: now},
+        }, upsert: true);
+      } catch (e, s) {
+        dev.log(
+          'Failed to upsert event $eventId in $repositoryName: $e',
+          name: logTag,
+          error: e,
+          stackTrace: s,
+        );
+        rethrow;
       }
     }
-    return latest;
-  }
-
-  JsonMap<dynamic> _toMongoDateFields(JsonMap<dynamic> item) {
-    final map = Map<String, dynamic>.from(item);
-    for (final key in ['created_at', 'updated_at']) {
-      final value = map[key];
-      if (value is String) {
-        final parsed = DateTime.tryParse(value);
-        if (parsed != null) {
-          map[key] = parsed;
-        }
-      }
-    }
-    return map;
-  }
-
-  JsonMap<dynamic> _fromMongoDateFields(JsonMap<dynamic> item) {
-    final map = Map<String, dynamic>.from(item);
-    for (final key in ['created_at', 'updated_at']) {
-      final value = map[key];
-      if (value is DateTime) {
-        map[key] = value.toIso8601String();
-      }
-    }
-    return map;
   }
 }
