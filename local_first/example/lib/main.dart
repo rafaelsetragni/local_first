@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:developer' as dev;
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:local_first/local_first.dart';
@@ -712,9 +713,12 @@ class RepositoryService {
   UserModel? authenticatedUser;
   String _currentNamespace = 'default';
   final _lastUsernameKey = '__last_username__';
+  final _sessionIdPrefix = '__session_id__';
+  String? _currentSessionId;
 
   final LocalFirstRepository<UserModel> userRepository;
   final LocalFirstRepository<CounterLogModel> counterLogRepository;
+  final LocalFirstRepository<SessionCounterModel> sessionCounterRepository;
   final MongoPeriodicSyncStrategy syncStrategy;
 
   // Central orchestrator for the demo: wires repositories, storage, sync
@@ -722,6 +726,7 @@ class RepositoryService {
   RepositoryService._internal()
     : userRepository = _buildUserRepository(),
       counterLogRepository = _buildCounterLogRepository(),
+      sessionCounterRepository = _buildSessionCounterRepository(),
       syncStrategy = MongoPeriodicSyncStrategy() {
     syncStrategy.namespace = _currentNamespace;
   }
@@ -732,7 +737,11 @@ class RepositoryService {
 
   Future<UserModel?> initialize() async {
     final localFirst = this.localFirst ??= LocalFirstClient(
-      repositories: [userRepository, counterLogRepository],
+      repositories: [
+        userRepository,
+        counterLogRepository,
+        sessionCounterRepository,
+      ],
       localStorage: HiveLocalFirstStorage(),
       syncStrategies: [syncStrategy],
     );
@@ -754,6 +763,13 @@ class RepositoryService {
       .map((e) => e.data)
       .toList();
 
+  List<SessionCounterModel> _sessionCountersFromEvents(
+    List<LocalFirstEvent<SessionCounterModel>> events,
+  ) => events
+      .whereType<LocalFirstStateEvent<SessionCounterModel>>()
+      .map((e) => e.data)
+      .toList();
+
   Future<void> signIn({required String username}) async {
     // On sign in, swap namespace to the user, prefetch users from remote,
     // and persist the new user.
@@ -771,6 +787,7 @@ class RepositoryService {
       authenticatedUser = localUser;
       await userRepository.upsert(localUser, needSync: true);
     }
+    await _prepareSession(authenticatedUser!);
     await _persistLastUsername(username);
     syncStrategy.start();
     NavigatorService().navigateToHome();
@@ -793,6 +810,7 @@ class RepositoryService {
     // Stops sync and resets session-specific state.
     syncStrategy.stop();
     authenticatedUser = null;
+    _currentSessionId = null;
     await _switchUserDatabase('');
     await localFirst?.setKeyValue(_lastUsernameKey, '');
     NavigatorService().navigateToSignIn();
@@ -807,6 +825,7 @@ class RepositoryService {
         .getAll();
     if (results.isEmpty) return null;
     authenticatedUser = (results.first as LocalFirstStateEvent<UserModel>).data;
+    await _prepareSession(authenticatedUser!);
     syncStrategy.start();
     return authenticatedUser;
   }
@@ -820,6 +839,57 @@ class RepositoryService {
   Future<void> _persistLastUsername(String username) =>
       localFirst?.setKeyValue(_lastUsernameKey, username) ?? Future.value();
 
+  String _sessionMetaKey(String username) {
+    final sanitized = _sanitizeNamespace(username);
+    return '$_sessionIdPrefix$sanitized';
+  }
+
+  String _generateSessionId(String username) {
+    final random = Random();
+    final randomBits =
+        random.nextInt(0x7fffffff).toRadixString(16).padLeft(8, '0');
+    final timestamp = DateTime.now().millisecondsSinceEpoch.toRadixString(16);
+    return 'sess_${_sanitizeNamespace(username)}_${timestamp}_$randomBits';
+  }
+
+  Future<String> _getOrCreateSessionId(String username) async {
+    final existing = await localFirst?.getMeta(_sessionMetaKey(username));
+    if (existing is String && existing.isNotEmpty) return existing;
+    final generated = _generateSessionId(username);
+    await localFirst?.setKeyValue(_sessionMetaKey(username), generated);
+    return generated;
+  }
+
+  Future<void> _prepareSession(UserModel user) async {
+    final sessionId = await _getOrCreateSessionId(user.username);
+    _currentSessionId = sessionId;
+    await _ensureSessionCounterForSession(
+      username: user.username,
+      sessionId: sessionId,
+    );
+  }
+
+  Future<SessionCounterModel> _ensureSessionCounterForSession({
+    required String username,
+    required String sessionId,
+  }) async {
+    final results = await sessionCounterRepository
+        .query()
+        .where(sessionCounterRepository.idFieldName, isEqualTo: sessionId)
+        .limitTo(1)
+        .getAll();
+    if (results.isNotEmpty) {
+      return (results.first as LocalFirstStateEvent<SessionCounterModel>).data;
+    }
+    final counter = SessionCounterModel(
+      sessionId: sessionId,
+      username: username,
+      count: 0,
+    );
+    await sessionCounterRepository.upsert(counter, needSync: true);
+    return counter;
+  }
+
   Future<List<UserModel>> getUsers() async =>
       _usersFromEvents(await userRepository.query().getAll());
 
@@ -827,21 +897,28 @@ class RepositoryService {
     await counterLogRepository
         .query()
         .orderBy('created_at', descending: true)
+        .limitTo(5)
         .getAll(),
   );
 
-  Stream<List<CounterLogModel>> watchLogs() => counterLogRepository
-      .query()
-      .orderBy('created_at', descending: true)
-      .watch()
-      .map(_logsFromEvents);
+  Stream<List<CounterLogModel>> watchLogs({int limit = 5}) =>
+      counterLogRepository
+          .query()
+          .orderBy('created_at', descending: true)
+          .limitTo(min(limit, 5))
+          .watch()
+          .map(_logsFromEvents);
 
-  Stream<int> watchCounter() => watchLogs().map(
-    (logs) => logs.fold<int>(0, (sum, log) => sum + log.increment),
-  );
+  Stream<int> watchCounter() =>
+      sessionCounterRepository
+          .query()
+          .watch()
+          .map(_sessionCountersFromEvents)
+          .map((sessions) =>
+              sessions.fold<int>(0, (sum, counter) => sum + counter.count));
 
   Stream<List<CounterLogModel>> watchRecentLogs({int limit = 5}) =>
-      watchLogs().map((logs) => logs.take(limit).toList());
+      watchLogs(limit: min(limit, 5));
 
   Stream<List<UserModel>> watchUsers() =>
       userRepository.query().orderBy('username').watch().map(_usersFromEvents);
@@ -890,8 +967,30 @@ class RepositoryService {
       throw Exception('User not authenticated');
     }
 
-    final log = CounterLogModel(username: username, increment: amount);
-    await counterLogRepository.upsert(log, needSync: true);
+    final sessionId = _currentSessionId;
+    if (sessionId == null) {
+      throw Exception('Session not initialized');
+    }
+
+    final sessionCounter = await _ensureSessionCounterForSession(
+      username: username,
+      sessionId: sessionId,
+    );
+    final updatedCounter = sessionCounter.copyWith(
+      count: sessionCounter.count + amount,
+      updatedAt: DateTime.now().toUtc(),
+    );
+
+    final log = CounterLogModel(
+      username: username,
+      increment: amount,
+      sessionId: sessionId,
+    );
+
+    await Future.wait([
+      counterLogRepository.upsert(log, needSync: true),
+      sessionCounterRepository.upsert(updatedCounter, needSync: true),
+    ]);
   }
 
   Future<void> _switchUserDatabase(String username) async {
@@ -998,9 +1097,100 @@ class UserModel {
   }
 }
 
+class SessionCounterModel {
+  final String id;
+  final String username;
+  final String sessionId;
+  final int count;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  SessionCounterModel._({
+    required this.id,
+    required this.username,
+    required this.sessionId,
+    required this.count,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  factory SessionCounterModel({
+    String? id,
+    required String username,
+    required String sessionId,
+    int count = 0,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) {
+    final now = DateTime.now().toUtc();
+    final created = createdAt ?? now;
+    final updated = updatedAt ?? created;
+    final normalizedId = id ?? sessionId;
+    return SessionCounterModel._(
+      id: normalizedId,
+      username: username,
+      sessionId: sessionId,
+      count: count,
+      createdAt: created,
+      updatedAt: updated,
+    );
+  }
+
+  SessionCounterModel copyWith({
+    String? id,
+    String? username,
+    String? sessionId,
+    int? count,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) {
+    return SessionCounterModel(
+      id: id ?? this.id,
+      username: username ?? this.username,
+      sessionId: sessionId ?? this.sessionId,
+      count: count ?? this.count,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  JsonMap toJson() {
+    return {
+      'id': id,
+      'username': username,
+      'session_id': sessionId,
+      'count': count,
+      'created_at': createdAt.toUtc().toIso8601String(),
+      'updated_at': updatedAt.toUtc().toIso8601String(),
+    };
+  }
+
+  factory SessionCounterModel.fromJson(JsonMap json) {
+    final created = DateTime.parse(json['created_at']).toUtc();
+    final updated = json['updated_at'] != null
+        ? DateTime.parse(json['updated_at']).toUtc()
+        : created;
+    final sessionId = json['session_id'] ?? json['id'];
+    return SessionCounterModel(
+      id: json['id'] ?? sessionId,
+      username: json['username'],
+      sessionId: sessionId,
+      count: json['count'] ?? 0,
+      createdAt: created,
+      updatedAt: updated,
+    );
+  }
+
+  static SessionCounterModel resolveConflict(
+    SessionCounterModel local,
+    SessionCounterModel remote,
+  ) => local.updatedAt.isAfter(remote.updatedAt) ? local : remote;
+}
+
 class CounterLogModel {
   final String id;
   final String username;
+  final String? sessionId;
   final int increment;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -1008,6 +1198,7 @@ class CounterLogModel {
   CounterLogModel._({
     required this.id,
     required this.username,
+    required this.sessionId,
     required this.increment,
     required this.createdAt,
     required this.updatedAt,
@@ -1016,6 +1207,7 @@ class CounterLogModel {
   factory CounterLogModel({
     String? id,
     required String username,
+    required String? sessionId,
     required int increment,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -1026,6 +1218,7 @@ class CounterLogModel {
     return CounterLogModel._(
       id: id ?? '${username}_${now.millisecondsSinceEpoch}',
       username: username,
+      sessionId: sessionId,
       increment: increment,
       createdAt: created,
       updatedAt: updated,
@@ -1036,6 +1229,7 @@ class CounterLogModel {
     return {
       'id': id,
       'username': username,
+      'session_id': sessionId,
       'increment': increment,
       'created_at': createdAt.toUtc().toIso8601String(),
       'updated_at': updatedAt.toUtc().toIso8601String(),
@@ -1050,6 +1244,7 @@ class CounterLogModel {
     return CounterLogModel(
       id: json['id'],
       username: json['username'],
+      sessionId: json['session_id'],
       increment: json['increment'],
       createdAt: created,
       updatedAt: updated,
@@ -1102,6 +1297,26 @@ LocalFirstRepository<CounterLogModel> _buildCounterLogRepository() {
     fromJson: (json) => CounterLogModel.fromJson(json),
     onConflictEvent: (local, remote) {
       final winner = CounterLogModel.resolveConflict(local.data, remote.data);
+      final source = identical(winner, local.data) ? local : remote;
+      return source.updateEventState(
+        syncStatus: SyncStatus.ok,
+        syncOperation: source.syncOperation,
+      );
+    },
+  );
+}
+
+LocalFirstRepository<SessionCounterModel> _buildSessionCounterRepository() {
+  return LocalFirstRepository.create(
+    name: 'session_counter',
+    getId: (session) => session.id,
+    toJson: (session) => session.toJson(),
+    fromJson: (json) => SessionCounterModel.fromJson(json),
+    onConflictEvent: (local, remote) {
+      final winner = SessionCounterModel.resolveConflict(
+        local.data,
+        remote.data,
+      );
       final source = identical(winner, local.data) ? local : remote;
       return source.updateEventState(
         syncStatus: SyncStatus.ok,
@@ -1194,7 +1409,11 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   }
 
   Future<void> _pushPending() =>
-      Future.wait([_pushPendingUserEvents(), _pushPendingCounterLogEvents()]);
+      Future.wait([
+        _pushPendingUserEvents(),
+        _pushPendingCounterLogEvents(),
+        _pushPendingSessionCounterEvents(),
+      ]);
 
   Future<void> _pushPendingUserEvents() async {
     final pendingEvents = await getPendingEvents(repositoryName: 'user');
@@ -1210,9 +1429,18 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     await markEventsAsSynced(pendingEvents);
   }
 
+  Future<void> _pushPendingSessionCounterEvents() async {
+    final pendingEvents =
+        await getPendingEvents(repositoryName: 'session_counter');
+    if (pendingEvents.isEmpty) return;
+    await mongoApi.pushSessionCounterEvents(pendingEvents.toJson());
+    await markEventsAsSynced(pendingEvents);
+  }
+
   Future<void> _pullRemoteChanges() => Future.wait([
     _pullUserChangesFromMongoApi(),
     _pullLogChangesFromMongoApi(),
+    _pullSessionCounterChangesFromMongoApi(),
   ]);
 
   Future<void> _pullUserChangesFromMongoApi() async {
@@ -1238,6 +1466,19 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     );
     if (result.maxServerCreatedAt != null) {
       await _updateLatest('counter_log', result.maxServerCreatedAt!);
+    }
+  }
+
+  Future<void> _pullSessionCounterChangesFromMongoApi() async {
+    final lastSynced = await _getLatest('session_counter');
+    final result = await mongoApi.fetchSessionCounterEvents(lastSynced);
+    if (result.events.isEmpty) return;
+    await pullChangesToLocal(
+      repositoryName: 'session_counter',
+      remoteChanges: result.events,
+    );
+    if (result.maxServerCreatedAt != null) {
+      await _updateLatest('session_counter', result.maxServerCreatedAt!);
     }
   }
 
@@ -1329,12 +1570,20 @@ class MongoApi {
     await _upsertEvents('counter_log', events);
   }
 
+  Future<void> pushSessionCounterEvents(List<JsonMap> events) async {
+    await _upsertEvents('session_counter', events);
+  }
+
   Future<FetchResult> fetchUserEvents(DateTime? since) async {
     return _fetchEvents('user', since);
   }
 
   Future<FetchResult> fetchCounterLogEvents(DateTime? since) async {
     return _fetchEvents('counter_log', since);
+  }
+
+  Future<FetchResult> fetchSessionCounterEvents(DateTime? since) async {
+    return _fetchEvents('session_counter', since);
   }
 
   Future<FetchResult> _fetchEvents(
