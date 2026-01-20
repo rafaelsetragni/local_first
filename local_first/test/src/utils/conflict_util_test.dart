@@ -15,7 +15,7 @@ void main() {
     });
 
     LocalFirstEvent<JsonMap> eventAt(DateTime createdAt) {
-      return LocalFirstEvent<JsonMap>.fromRemoteJson(
+      return LocalFirstEvent.fromRemoteJson(
         repository: repository,
         json: {
           LocalFirstEvent.kRepository: repository.name,

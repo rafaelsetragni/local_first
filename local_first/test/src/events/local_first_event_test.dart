@@ -221,7 +221,7 @@ void main() {
             'data': {'id': '1'},
           };
 
-          final event = LocalFirstEvent<_DummyModel>.fromRemoteJson(
+          final event = LocalFirstEvent.fromRemoteJson(
             repository: repo,
             json: json,
           );
@@ -235,10 +235,7 @@ void main() {
         test('should throw when remote payload is malformed', () {
           final repo = _dummyRepo();
           expect(
-            () => LocalFirstEvent<_DummyModel>.fromRemoteJson(
-              repository: repo,
-              json: {},
-            ),
+            () => LocalFirstEvent.fromRemoteJson(repository: repo, json: {}),
             throwsFormatException,
           );
         });
@@ -246,7 +243,7 @@ void main() {
         test('should throw when createdAt is missing', () {
           final repo = _dummyRepo();
           expect(
-            () => LocalFirstEvent<_DummyModel>.fromRemoteJson(
+            () => LocalFirstEvent.fromRemoteJson(
               repository: repo,
               json: {
                 'eventId': 'evt-missing-date',
@@ -265,21 +262,21 @@ void main() {
       group('business rules', () {
         test('should output normalized payload for remote', () {
           final repo = _dummyRepo();
-      final event = LocalFirstEvent.createNewInsertEvent(
-        repository: repo,
-        needSync: false,
-        data: _DummyModel('1', value: 'a'),
-      );
+          final event = LocalFirstEvent.createNewInsertEvent(
+            repository: repo,
+            needSync: false,
+            data: _DummyModel('1', value: 'a'),
+          );
 
-      final json = event.toJson();
+          final json = event.toJson();
 
-      expect(json[LocalFirstEvent.kEventId], event.eventId);
-      expect(json[LocalFirstEvent.kOperation], SyncOperation.insert.index);
-      expect(json[LocalFirstEvent.kDataId], '1');
-      expect(json[LocalFirstEvent.kData], containsPair('id', '1'));
-      expect(json[LocalFirstEvent.kSyncCreatedAt], isA<DateTime>());
-    });
-  });
+          expect(json[LocalFirstEvent.kEventId], event.eventId);
+          expect(json[LocalFirstEvent.kOperation], SyncOperation.insert.index);
+          expect(json[LocalFirstEvent.kDataId], '1');
+          expect(json[LocalFirstEvent.kData], containsPair('id', '1'));
+          expect(json[LocalFirstEvent.kSyncCreatedAt], isA<DateTime>());
+        });
+      });
     });
 
     group('toLocalStorageJson', () {
