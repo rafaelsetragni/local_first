@@ -1174,6 +1174,11 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     if (_isSyncing) return;
     _isSyncing = true;
     try {
+      final healthy = await mongoApi.ping().timeout(period);
+      if (!healthy) {
+        reportConnectionState(false);
+        return;
+      }
       await _pushPending().timeout(period * 2);
       await _pullRemoteChanges();
       reportConnectionState(true);
@@ -1271,6 +1276,17 @@ class MongoApi {
   MongoApi({required this.uri});
 
   String get eventIdLabel => LocalFirstEvent.kEventId;
+
+  Future<bool> ping() async {
+    try {
+      final db = await _getDb();
+      await db.runCommand({'ping': 1});
+      return true;
+    } catch (e, s) {
+      dev.log('Ping failed: $e', name: logTag, error: e, stackTrace: s);
+      return false;
+    }
+  }
 
   Future<Db> _getDb() async {
     final current = _db;
