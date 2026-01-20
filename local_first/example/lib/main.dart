@@ -48,11 +48,13 @@ class CounterLogFields {
   static const increment = 'increment';
 }
 
+/// Field keys used by session counter events/records.
 class SessionCounterFields {
   static const sessionId = 'session_id';
   static const count = 'count';
 }
 
+/// Entry point that initializes the local-first stack then opens the right page.
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   RepositoryService().initialize().then((signedUser) {
@@ -100,6 +102,7 @@ class _SignInPageState extends State<SignInPage> {
     super.dispose();
   }
 
+  /// Handles sign-in by persisting the user and navigating to home.
   Future<void> _signIn(BuildContext context) async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     final errorColor = Theme.of(context).colorScheme.error;
@@ -216,6 +219,7 @@ class _MyHomePageState extends State<MyHomePage> {
     _logsSubscription = _recentLogsStream.listen(_onLogsUpdate);
   }
 
+  /// Opens dialog to update the current user's avatar URL.
   Future<void> _onAvatarTap(BuildContext context, String currentAvatar) async {
     final url = await _promptAvatarDialog(context, currentAvatar);
     if (url == null) return;
@@ -228,6 +232,7 @@ class _MyHomePageState extends State<MyHomePage> {
     super.dispose();
   }
 
+  /// Reconciles AnimatedList items with the latest logs to animate inserts/removes.
   void _onLogsUpdate(List<CounterLogModel> newLogs) {
     final listState = _logsListKey.currentState;
 
@@ -285,6 +290,7 @@ class _MyHomePageState extends State<MyHomePage> {
     if (mounted) setState(() {});
   }
 
+  /// Builds a single log tile with fade/slide animations for list changes.
   Widget _buildAnimatedLogTile(
     CounterLogModel log,
     Animation<double> animation, {
@@ -308,6 +314,7 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
+  /// Prompts the user to type a new avatar URL and returns it.
   Future<String?> _promptAvatarDialog(
     BuildContext context,
     String currentAvatar,
@@ -396,6 +403,7 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
+  /// Renders connection badge, avatar, greeting, and aggregate counters.
   StreamBuilder<List<UserModel>> _buildAvatarAndGlobalCounter(UserModel user) {
     return StreamBuilder(
       stream: _usersStream,
@@ -484,6 +492,7 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
+  /// App bar with logout action.
   AppBar _buildSignOutAppBar() {
     return AppBar(
       actions: [
@@ -496,6 +505,7 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
+  /// Shows the animated list of recent counter logs.
   Column _buildRecentActivities(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -542,6 +552,7 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
+  /// Displays all known users horizontally with their avatars.
   SizedBox _buildUserList(BuildContext context) {
     return SizedBox(
       height: MediaQuery.of(context).size.height * 0.15,
@@ -591,6 +602,7 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 }
 
+/// Visualizes a single counter log entry with avatar and timestamp.
 class CounterLogTile extends StatelessWidget {
   final CounterLogModel log;
   final String avatarUrl;
@@ -699,7 +711,9 @@ class AvatarPreview extends StatelessWidget {
   }
 }
 
-/// Handles navigation concerns with a shared navigator key.
+/// Centralized navigation helper that exposes a shared navigator key and
+/// simple push/pop helpers so the example can navigate from anywhere without
+/// passing BuildContext around.
 class NavigatorService {
   NavigatorService._internal();
   static NavigatorService? _instance;
@@ -729,8 +743,9 @@ class NavigatorService {
   void navigateToSignIn() => pushReplacement(const SignInPage());
 }
 
-/// Central orchestrator for auth, persistence, and sync.
-/// Coordinates repositories, storage, sync strategy, and session/namespace handling.
+/// Central orchestrator that wires repositories, storage, and sync strategies,
+/// handling auth flow, namespace switching per user, session-id management per
+/// device, and provides the high-level API used by the UI to read/write data.
 class RepositoryService {
   static const tag = 'RepositoryService';
 
@@ -763,6 +778,7 @@ class RepositoryService {
 
   Stream<bool> get connectionState => syncStrategy.connectionChanges;
 
+  /// Initializes the client/storage and restores last logged user if possible.
   Future<UserModel?> initialize() async {
     final localFirst = this.localFirst ??= LocalFirstClient(
       repositories: [
@@ -798,6 +814,7 @@ class RepositoryService {
       .map((e) => e.data)
       .toList();
 
+  /// Signs in a user, switches namespace, preloads remote users, and starts sync.
   Future<void> signIn({required String username}) async {
     // On sign in, swap namespace to the user, prefetch users from remote,
     // and persist the new user.
@@ -834,6 +851,7 @@ class RepositoryService {
     }
   }
 
+  /// Clears auth/session state and navigates back to sign-in.
   Future<void> signOut() async {
     // Stops sync and resets session-specific state.
     syncStrategy.stop();
@@ -844,6 +862,7 @@ class RepositoryService {
     NavigatorService().navigateToSignIn();
   }
 
+  /// Rehydrates a user by username (used during app restart).
   Future<UserModel?> restoreUser(String username) async {
     final normalizedId = UserModel(username: username, avatarUrl: null).id;
     await _switchUserDatabase(normalizedId);
@@ -858,12 +877,14 @@ class RepositoryService {
     return authenticatedUser;
   }
 
+  /// Rehydrates the most recently logged-in user, if any.
   Future<UserModel?> restoreLastUser() async {
     final username = await localFirst?.getMeta(_lastUsernameKey);
     if (username == null || username.isEmpty) return null;
     return restoreUser(username);
   }
 
+  /// Saves the last username to meta storage so we can auto-restore.
   Future<void> _persistLastUsername(String username) =>
       localFirst?.setKeyValue(_lastUsernameKey, username) ?? Future.value();
 
@@ -872,6 +893,7 @@ class RepositoryService {
     return '$_sessionIdPrefix$sanitized';
   }
 
+  /// Builds a deterministic-ish session id with random salt for uniqueness.
   String _generateSessionId(String username) {
     final random = Random();
     final randomBits =
@@ -880,6 +902,7 @@ class RepositoryService {
     return 'sess_${_sanitizeNamespace(username)}_${timestamp}_$randomBits';
   }
 
+  /// Retrieves the persisted session id for this device/user or creates one.
   Future<String> _getOrCreateSessionId(String username) async {
     final existing = await localFirst?.getMeta(_sessionMetaKey(username));
     if (existing is String && existing.isNotEmpty) return existing;
@@ -888,6 +911,7 @@ class RepositoryService {
     return generated;
   }
 
+  /// Ensures the device has a stable session id and session counter for a user.
   Future<void> _prepareSession(UserModel user) async {
     final sessionId = await _getOrCreateSessionId(user.username);
     _currentSessionId = sessionId;
@@ -897,6 +921,7 @@ class RepositoryService {
     );
   }
 
+  /// Fetches or creates the session counter for a given session id.
   Future<SessionCounterModel> _ensureSessionCounterForSession({
     required String username,
     required String sessionId,
@@ -918,9 +943,11 @@ class RepositoryService {
     return counter;
   }
 
+  /// Returns all users stored locally.
   Future<List<UserModel>> getUsers() async =>
       _usersFromEvents(await userRepository.query().getAll());
 
+  /// Returns the latest logs (capped) synchronously.
   Future<List<CounterLogModel>> getLogs() async => _logsFromEvents(
     await counterLogRepository
         .query()
@@ -929,6 +956,7 @@ class RepositoryService {
         .getAll(),
   );
 
+  /// Streams capped log list sorted by recency.
   Stream<List<CounterLogModel>> watchLogs({int limit = 5}) =>
       counterLogRepository
           .query()
@@ -937,6 +965,7 @@ class RepositoryService {
           .watch()
           .map(_logsFromEvents);
 
+  /// Streams the global counter summed across all session counters.
   Stream<int> watchCounter() =>
       sessionCounterRepository
           .query()
@@ -945,9 +974,11 @@ class RepositoryService {
           .map((sessions) =>
               sessions.fold<int>(0, (sum, counter) => sum + counter.count));
 
+  /// Streams a limited view of the most recent logs.
   Stream<List<CounterLogModel>> watchRecentLogs({int limit = 5}) =>
       watchLogs(limit: min(limit, 5));
 
+  /// Streams all known users ordered by username.
   Stream<List<UserModel>> watchUsers() =>
       userRepository
           .query()
@@ -955,6 +986,7 @@ class RepositoryService {
           .watch()
           .map(_usersFromEvents);
 
+  /// Returns avatar URLs for the provided usernames (missing ones mapped to null).
   Future<JsonMap<String?>> getAvatarsForUsers(Set<String> usernames) async {
     if (usernames.isEmpty) return {};
     final results = await userRepository
@@ -974,6 +1006,7 @@ class RepositoryService {
     return map;
   }
 
+  /// Updates the authenticated user's avatar URL and syncs it.
   Future<UserModel> updateAvatarUrl(String avatarUrl) async {
     final user = authenticatedUser;
     if (user == null) throw Exception('User not authenticated');
@@ -990,9 +1023,12 @@ class RepositoryService {
     return updated;
   }
 
+  /// Increments the current session counter and logs the change.
   void incrementCounter() => _createLogRegistry(1);
+  /// Decrements the current session counter and logs the change.
   void decrementCounter() => _createLogRegistry(-1);
 
+  /// Creates both a log entry and a session counter update for a delta.
   Future<void> _createLogRegistry(int amount) async {
     final username = authenticatedUser?.username;
     if (username == null) {
@@ -1040,6 +1076,7 @@ class RepositoryService {
     }
   }
 
+  /// Normalizes a username into a namespace-safe string.
   String _sanitizeNamespace(String username) {
     if (username.isEmpty) return 'default';
     final sanitized = username.toLowerCase().replaceAll(
@@ -1129,6 +1166,7 @@ class UserModel {
   }
 }
 
+/// Aggregated counter per (user, device session) combination.
 class SessionCounterModel {
   final String id;
   final String username;
@@ -1220,6 +1258,7 @@ class SessionCounterModel {
   ) => local.updatedAt.isAfter(remote.updatedAt) ? local : remote;
 }
 
+/// Immutable record describing a single counter increment/decrement.
 class CounterLogModel {
   final String id;
   final String username;
@@ -1359,8 +1398,9 @@ LocalFirstRepository<SessionCounterModel> _buildSessionCounterRepository() {
   );
 }
 
-/// Periodic sync strategy: batches pending events to MongoDB and pulls remote events.
-/// Demonstrates the classic local-first loop (push pending, pull remote, merge).
+/// Periodic sync strategy that runs on a timer to push pending local events in
+/// batches to MongoDB, pull remote changes since the last cursor, merge them
+/// locally, and report connectivity status for the UI.
 class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   static const logTag = 'MongoPeriodicSyncStrategy';
 
@@ -1379,6 +1419,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
 
   set namespace(String value) => _namespace = value;
 
+  /// Boots the periodic timer and triggers an immediate sync.
   void start() {
     stop();
     client.awaitInitialization.then((_) async {
@@ -1402,6 +1443,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
 
   String _lastSyncKey(String repo) => '__last_sync__${_namespace}__$repo';
 
+  /// Convenience helper to fetch all remote users for bootstrap on sign-in.
   Future<List<JsonMap>> fetchUsers() async {
     final fetchResult = await mongoApi
         .fetchUserEvents(null)
@@ -1550,6 +1592,9 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
 
 typedef FetchResult = ({List<JsonMap> events, DateTime? maxServerCreatedAt});
 
+/// Thin MongoDB client responsible for opening the database connection,
+/// ensuring indexes, pushing event batches idempotently, and fetching events
+/// per repository with simple server-side cursors.
 class MongoApi {
   static const logTag = 'MongoApi';
   static const serverCreatedAtLabel = 'serverCreatedAt';
