@@ -289,7 +289,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<void> setMeta(String key, String value) async {
+  Future<void> setString(String key, String value) async {
     if (!_initialized) {
       throw StateError(
         'HiveLocalFirstStorage not initialized. Call initialize() first.',
@@ -299,7 +299,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<String?> getMeta(String key) async {
+  Future<String?> getString(String key) async {
     if (!_initialized) {
       throw StateError(
         'HiveLocalFirstStorage not initialized. Call initialize() first.',

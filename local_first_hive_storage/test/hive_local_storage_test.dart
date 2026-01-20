@@ -111,18 +111,18 @@ void main() {
       expect(afterDeleteAll, isEmpty);
     });
 
-    test('set/get last sync and metadata', () async {
-      await storage.setMeta('key', 'value');
-      expect(await storage.getMeta('key'), 'value');
+  test('set/get last sync and metadata', () async {
+      await storage.setString('key', 'value');
+      expect(await storage.getString('key'), 'value');
     });
 
     test('clearAllData wipes boxes and metadata', () async {
       await storage.insert('users', {'id': '1', 'username': 'Alice'}, 'id');
-      await storage.setMeta('key', 'value');
+      await storage.setString('key', 'value');
 
       await storage.clearAllData();
       expect(await storage.getAll('users'), isEmpty);
-      expect(await storage.getMeta('key'), isNull);
+      expect(await storage.getString('key'), isNull);
     });
 
     test('namespace isolation with useNamespace', () async {
@@ -230,8 +230,10 @@ void main() {
 
       final stream = storage.watchQuery(query);
       final emitted = await stream.first;
-      expect(emitted.where((e) => e is LocalFirstStateEvent<_TestModel>),
-          isNotEmpty);
+      expect(
+        emitted.whereType<LocalFirstStateEvent<_TestModel>>(),
+        isNotEmpty,
+      );
       await storage.close();
     });
 

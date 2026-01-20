@@ -67,7 +67,7 @@ class _StubStorage implements LocalFirstStorage {
   Future<JsonMap?> getEventById(String tableName, String id) async => null;
 
   @override
-  Future<String?> getMeta(String key) async => null;
+  Future<String?> getString(String key) async => null;
 
   @override
   Future<void> initialize() async {}
@@ -94,7 +94,7 @@ class _StubStorage implements LocalFirstStorage {
       [];
 
   @override
-  Future<void> setMeta(String key, String value) async {}
+  Future<void> setString(String key, String value) async {}
 
   @override
   Future<void> update(String tableName, String id, JsonMap item) async {

@@ -59,7 +59,7 @@ class _SpyStorage implements LocalFirstStorage {
       null;
 
   @override
-  Future<String?> getMeta(String key) async => meta[key];
+  Future<String?> getString(String key) async => meta[key];
 
   @override
   Future<void> initialize() async {
@@ -85,7 +85,7 @@ class _SpyStorage implements LocalFirstStorage {
       [];
 
   @override
-  Future<void> setMeta(String key, String value) async {
+  Future<void> setString(String key, String value) async {
     meta[key] = value;
   }
 
@@ -365,8 +365,8 @@ void main() {
         syncStrategies: [strategy],
       );
 
-      await client.setKeyValue('k', 'v');
-      final value = await client.getMeta('k');
+      await client.setString('k', 'v');
+      final value = await client.getString('k');
 
       expect(value, 'v');
     });

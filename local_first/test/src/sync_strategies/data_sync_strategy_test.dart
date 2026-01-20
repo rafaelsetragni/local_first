@@ -86,7 +86,7 @@ class _NoopStorage implements LocalFirstStorage {
   Future<JsonMap?> getEventById(String tableName, String id) async => null;
 
   @override
-  Future<String?> getMeta(String key) async => null;
+  Future<String?> getString(String key) async => null;
 
   @override
   Future<void> initialize() async {}
@@ -106,7 +106,7 @@ class _NoopStorage implements LocalFirstStorage {
         [];
 
   @override
-  Future<void> setMeta(String key, String value) async {}
+  Future<void> setString(String key, String value) async {}
 
   @override
   Future<void> update(String tableName, String id, JsonMap item) async {}
@@ -168,7 +168,7 @@ class _RecordingStorage implements LocalFirstStorage {
   Future<JsonMap?> getEventById(String tableName, String id) async => null;
 
   @override
-  Future<String?> getMeta(String key) async => null;
+  Future<String?> getString(String key) async => null;
 
   @override
   Future<void> initialize() async {}
@@ -188,7 +188,7 @@ class _RecordingStorage implements LocalFirstStorage {
       [];
 
   @override
-  Future<void> setMeta(String key, String value) async {}
+  Future<void> setString(String key, String value) async {}
 
   @override
   Future<void> update(String tableName, String id, JsonMap item) async {

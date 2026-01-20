@@ -858,7 +858,7 @@ class RepositoryService {
     authenticatedUser = null;
     _currentSessionId = null;
     await _switchUserDatabase('');
-    await localFirst?.setKeyValue(_lastUsernameKey, '');
+    await _setGlobalString(_lastUsernameKey, '');
     NavigatorService().navigateToSignIn();
   }
 
@@ -879,14 +879,14 @@ class RepositoryService {
 
   /// Rehydrates the most recently logged-in user, if any.
   Future<UserModel?> restoreLastUser() async {
-    final username = await localFirst?.getMeta(_lastUsernameKey);
+    final username = await _getGlobalString(_lastUsernameKey);
     if (username == null || username.isEmpty) return null;
     return restoreUser(username);
   }
 
   /// Saves the last username to meta storage so we can auto-restore.
   Future<void> _persistLastUsername(String username) =>
-      localFirst?.setKeyValue(_lastUsernameKey, username) ?? Future.value();
+      _setGlobalString(_lastUsernameKey, username);
 
   String _sessionMetaKey(String username) {
     final sanitized = _sanitizeNamespace(username);
@@ -896,18 +896,20 @@ class RepositoryService {
   /// Builds a deterministic-ish session id with random salt for uniqueness.
   String _generateSessionId(String username) {
     final random = Random();
-    final randomBits =
-        random.nextInt(0x7fffffff).toRadixString(16).padLeft(8, '0');
+    final randomBits = random
+        .nextInt(0x7fffffff)
+        .toRadixString(16)
+        .padLeft(8, '0');
     final timestamp = DateTime.now().millisecondsSinceEpoch.toRadixString(16);
     return 'sess_${_sanitizeNamespace(username)}_${timestamp}_$randomBits';
   }
 
   /// Retrieves the persisted session id for this device/user or creates one.
   Future<String> _getOrCreateSessionId(String username) async {
-    final existing = await localFirst?.getMeta(_sessionMetaKey(username));
+    final existing = await _getGlobalString(_sessionMetaKey(username));
     if (existing is String && existing.isNotEmpty) return existing;
     final generated = _generateSessionId(username);
-    await localFirst?.setKeyValue(_sessionMetaKey(username), generated);
+    await _setGlobalString(_sessionMetaKey(username), generated);
     return generated;
   }
 
@@ -966,25 +968,25 @@ class RepositoryService {
           .map(_logsFromEvents);
 
   /// Streams the global counter summed across all session counters.
-  Stream<int> watchCounter() =>
-      sessionCounterRepository
-          .query()
-          .watch()
-          .map(_sessionCountersFromEvents)
-          .map((sessions) =>
-              sessions.fold<int>(0, (sum, counter) => sum + counter.count));
+  Stream<int> watchCounter() => sessionCounterRepository
+      .query()
+      .watch()
+      .map(_sessionCountersFromEvents)
+      .map(
+        (sessions) =>
+            sessions.fold<int>(0, (sum, counter) => sum + counter.count),
+      );
 
   /// Streams a limited view of the most recent logs.
   Stream<List<CounterLogModel>> watchRecentLogs({int limit = 5}) =>
       watchLogs(limit: min(limit, 5));
 
   /// Streams all known users ordered by username.
-  Stream<List<UserModel>> watchUsers() =>
-      userRepository
-          .query()
-          .orderBy(CommonFields.username)
-          .watch()
-          .map(_usersFromEvents);
+  Stream<List<UserModel>> watchUsers() => userRepository
+      .query()
+      .orderBy(CommonFields.username)
+      .watch()
+      .map(_usersFromEvents);
 
   /// Returns avatar URLs for the provided usernames (missing ones mapped to null).
   Future<JsonMap<String?>> getAvatarsForUsers(Set<String> usernames) async {
@@ -1025,6 +1027,7 @@ class RepositoryService {
 
   /// Increments the current session counter and logs the change.
   void incrementCounter() => _createLogRegistry(1);
+
   /// Decrements the current session counter and logs the change.
   void decrementCounter() => _createLogRegistry(-1);
 
@@ -1084,6 +1087,30 @@ class RepositoryService {
       '_',
     );
     return 'user__$sanitized';
+  }
+
+  Future<String?> _getGlobalString(String key) async {
+    if (localFirst == null) return null;
+    return _withGlobalString(() => localFirst!.getString(key));
+  }
+
+  Future<void> _setGlobalString(String key, String value) async {
+    if (localFirst == null) return;
+    await _withGlobalString(() => localFirst!.setString(key, value));
+  }
+
+  Future<T> _withGlobalString<T>(Future<T> Function() action) async {
+    final storage = localFirst?.localStorage;
+    if (storage is HiveLocalFirstStorage) {
+      final previous = storage.namespace;
+      await storage.useNamespace('default');
+      try {
+        return await action();
+      } finally {
+        await storage.useNamespace(previous);
+      }
+    }
+    return await action();
   }
 }
 
@@ -1240,8 +1267,8 @@ class SessionCounterModel {
     final updated = json[CommonFields.updatedAt] != null
         ? DateTime.parse(json[CommonFields.updatedAt]).toUtc()
         : created;
-    final sessionId = json[SessionCounterFields.sessionId] ??
-        json[CommonFields.id];
+    final sessionId =
+        json[SessionCounterFields.sessionId] ?? json[CommonFields.id];
     return SessionCounterModel(
       id: json[CommonFields.id] ?? sessionId,
       username: json[CommonFields.username],
@@ -1483,16 +1510,16 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     }
   }
 
-  Future<void> _pushPending() =>
-      Future.wait([
-        _pushPendingUserEvents(),
-        _pushPendingCounterLogEvents(),
-        _pushPendingSessionCounterEvents(),
-      ]);
+  Future<void> _pushPending() => Future.wait([
+    _pushPendingUserEvents(),
+    _pushPendingCounterLogEvents(),
+    _pushPendingSessionCounterEvents(),
+  ]);
 
   Future<void> _pushPendingUserEvents() async {
-    final pendingEvents =
-        await getPendingEvents(repositoryName: RepositoryNames.user);
+    final pendingEvents = await getPendingEvents(
+      repositoryName: RepositoryNames.user,
+    );
     if (pendingEvents.isEmpty) return;
     await mongoApi.pushUserEvents(pendingEvents.toJson());
     await markEventsAsSynced(pendingEvents);
@@ -1573,12 +1600,12 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
       'Updated last sync for $repo to ${value.toIso8601String()}',
       name: logTag,
     );
-    await client.setKeyValue(_lastSyncKey(repo), value.toIso8601String());
+      await client.setString(_lastSyncKey(repo), value.toIso8601String());
   }
 
   Future<DateTime?> _getLatest(String repo) async {
     return lastSyncedAt[repo] ??= await () async {
-      final value = await client.getMeta(_lastSyncKey(repo));
+      final value = await client.getString(_lastSyncKey(repo));
       return _parseDate(value);
     }();
   }
