@@ -252,6 +252,7 @@ final class LocalFirstStateEvent<T> extends LocalFirstEvent<T> {
     required super.syncCreatedAt,
   }) : super._();
 
+  @override
   final T data;
 
   @override

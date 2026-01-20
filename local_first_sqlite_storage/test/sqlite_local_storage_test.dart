@@ -13,10 +13,11 @@ class DummyModel {
   final int age;
 
   factory DummyModel.fromJson(JsonMap json) {
+    final ageValue = json['age'];
     return DummyModel(
       json['id'] as String,
       username: json['username'] as String,
-      age: json['age'] as int,
+      age: ageValue is num ? ageValue.toInt() : 0,
     );
   }
 
@@ -134,6 +135,24 @@ void main() {
       await insertRow({'id': '1', 'username': 'alice', 'age': 20});
       await insertRow({'id': '2', 'username': 'bob', 'age': 35});
       await insertRow({'id': '3', 'username': 'carol', 'age': 28});
+      await insertEvent(
+        dataId: '1',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-1',
+      );
+      await insertEvent(
+        dataId: '2',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-2',
+      );
+      await insertEvent(
+        dataId: '3',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-3',
+      );
 
       final results = await storage.query(
         buildQuery(

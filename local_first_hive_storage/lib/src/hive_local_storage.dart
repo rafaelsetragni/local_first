@@ -453,6 +453,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     }
 
     final box = await _getBox(query.repositoryName);
+    final eventBox = await _getBox(query.repositoryName, isEvent: true);
     final repo = query.repository;
 
     // Optimization: iterate lazily instead of loading everything at once
@@ -480,6 +481,17 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
       if (matches) {
         results.add(item);
+      }
+    }
+
+    // When including deletes, also surface delete events (even if data row still exists).
+    if (query.includeDeleted) {
+      for (var key in eventBox.keys) {
+        final rawEvent = await _readBoxValue(eventBox, key);
+        if (rawEvent == null) continue;
+        if (!_hasRequiredEventFields(rawEvent)) continue;
+        if (rawEvent['operation'] != SyncOperation.delete.index) continue;
+        results.add(rawEvent);
       }
     }
 

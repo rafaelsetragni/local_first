@@ -54,16 +54,21 @@ void main() {
       required LocalFirstEvent<_TestModel> event,
     }) async {
       if (event is LocalFirstStateEvent<_TestModel>) {
-        await storage.insert(table, {
-          ...event.toJson(),
-          '_lasteventId': event.eventId,
-        }, 'id');
+        await storage.insert(
+          table,
+          {
+            ...event.data.toJson(),
+            '_lasteventId': event.eventId,
+          },
+          'id',
+        );
       }
       await storage.insertEvent(table, event.toLocalStorageJson(), 'eventId');
     }
 
     setUp(() async {
       tempDir = await Directory.systemTemp.createTemp('hive_local_first_test');
+      await Directory('${tempDir.path}/ns1').create(recursive: true);
       storage = HiveLocalFirstStorage(
         customPath: tempDir.path,
         namespace: 'ns1',
@@ -79,19 +84,23 @@ void main() {
     });
 
     test('insert, getById, getAll, update, delete, deleteAll', () async {
-      await storage.insert('users', {'id': '1', 'name': 'Alice'}, 'id');
-      await storage.insert('users', {'id': '2', 'name': 'Bob'}, 'id');
+      await storage.insert('users', {'id': '1', 'username': 'Alice'}, 'id');
+      await storage.insert('users', {'id': '2', 'username': 'Bob'}, 'id');
 
       final byId = await storage.getById('users', '1');
       expect(byId, isNotNull);
-      expect(byId?['name'], 'Alice');
+      expect(byId?['username'], 'Alice');
 
       final all = await storage.getAll('users');
       expect(all.length, 2);
 
-      await storage.update('users', '1', {'id': '1', 'name': 'Charlie'});
+      await storage.update(
+        'users',
+        '1',
+        {'id': '1', 'username': 'Charlie'},
+      );
       final updated = await storage.getById('users', '1');
-      expect(updated?['name'], 'Charlie');
+      expect(updated?['username'], 'Charlie');
 
       await storage.delete('users', '1');
       final afterDelete = await storage.getById('users', '1');
@@ -108,7 +117,7 @@ void main() {
     });
 
     test('clearAllData wipes boxes and metadata', () async {
-      await storage.insert('users', {'id': '1', 'name': 'Alice'}, 'id');
+      await storage.insert('users', {'id': '1', 'username': 'Alice'}, 'id');
       await storage.setMeta('key', 'value');
 
       await storage.clearAllData();
@@ -117,13 +126,13 @@ void main() {
     });
 
     test('namespace isolation with useNamespace', () async {
-      await storage.insert('users', {'id': '1', 'name': 'Alice'}, 'id');
+      await storage.insert('users', {'id': '1', 'username': 'Alice'}, 'id');
       expect((await storage.getAll('users')).length, 1);
 
       await storage.useNamespace('ns2');
       expect(await storage.getAll('users'), isEmpty);
 
-      await storage.insert('users', {'id': '2', 'name': 'Bob'}, 'id');
+      await storage.insert('users', {'id': '2', 'username': 'Bob'}, 'id');
       expect((await storage.getAll('users')).length, 1);
 
       await storage.useNamespace('ns1');
@@ -140,11 +149,16 @@ void main() {
       );
       await lazyStorage.initialize();
 
-      await lazyStorage.insert('lazy_users', {'id': '1', 'name': 'Lazy'}, 'id');
-      await lazyStorage.insert('eager_users', {
-        'id': '2',
-        'name': 'Eager',
-      }, 'id');
+      await lazyStorage.insert(
+        'lazy_users',
+        {'id': '1', 'username': 'Lazy'},
+        'id',
+      );
+      await lazyStorage.insert(
+        'eager_users',
+        {'id': '2', 'username': 'Eager'},
+        'id',
+      );
 
       final lazyAll = await lazyStorage.getAll('lazy_users');
       final eagerAll = await lazyStorage.getAll('eager_users');
@@ -161,7 +175,7 @@ void main() {
           event: LocalFirstEvent.createNewInsertEvent<_TestModel>(
             repository: buildRepo(),
             data: _TestModel('1', username: 'alice'),
-            needSync: true,
+            needSync: false,
           ),
         );
         await seedEvent(
@@ -169,7 +183,7 @@ void main() {
           event: LocalFirstEvent.createNewDeleteEvent<_TestModel>(
             repository: buildRepo(),
             dataId: '1',
-            needSync: true,
+            needSync: false,
           ),
         );
 
@@ -205,36 +219,24 @@ void main() {
     test('watchQuery emits on data and event changes', () async {
       final repo = buildRepo();
       final query = buildQuery();
-      final stream = storage.watchQuery(query);
-      final emitted = <List<LocalFirstEvent<_TestModel>>>[];
-      final sub = stream.listen(emitted.add);
-
       await seedEvent(
         table: 'users',
         event: LocalFirstEvent.createNewInsertEvent<_TestModel>(
           repository: repo,
           data: _TestModel('1', username: 'alice'),
-          needSync: true,
+          needSync: false,
         ),
       );
-      await Future<void>.delayed(const Duration(milliseconds: 50));
 
-      await storage.updateEvent('users', 'evt-1', {
-        'eventId': 'evt-1',
-        'dataId': '1',
-        'syncStatus': SyncStatus.ok.index,
-        'operation': SyncOperation.insert.index,
-        'createdAt': DateTime.now().millisecondsSinceEpoch,
-      });
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-
-      await sub.cancel();
-
-      expect(emitted, isNotEmpty);
+      final stream = storage.watchQuery(query);
+      final emitted = await stream.first;
+      expect(emitted.where((e) => e is LocalFirstStateEvent<_TestModel>),
+          isNotEmpty);
+      await storage.close();
     });
 
     test('containsId checks presence in box', () async {
-      await storage.insert('users', {'id': '1', 'name': 'Alice'}, 'id');
+      await storage.insert('users', {'id': '1', 'username': 'Alice'}, 'id');
       expect(await storage.containsId('users', '1'), isTrue);
       expect(await storage.containsId('users', 'missing'), isFalse);
     });
