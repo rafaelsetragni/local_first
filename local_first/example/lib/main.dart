@@ -1155,8 +1155,13 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   String _lastSyncKey(String repo) => '__last_sync__${_namespace}__$repo';
 
   Future<List<JsonMap>> fetchUsers() async {
-    final events = await mongoApi.fetchUserEvents(null).timeout(period * 2);
-    return events.map((e) => e['state']).whereType<JsonMap>().toList();
+    final fetchResult = await mongoApi
+        .fetchUserEvents(null)
+        .timeout(period * 2);
+    return fetchResult.events
+        .map((e) => e['state'])
+        .whereType<JsonMap>()
+        .toList();
   }
 
   @override
@@ -1207,32 +1212,32 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
 
   Future<void> _pullUserChangesFromMongoApi() async {
     final lastSynced = await _getLatest('user');
-    final List<JsonMap> remoteChanges = await mongoApi.fetchUserEvents(
-      lastSynced,
-    );
-    if (remoteChanges.isEmpty) return;
+    final result = await mongoApi.fetchUserEvents(lastSynced);
+    if (result.events.isEmpty) return;
     await pullChangesToLocal(
       repositoryName: 'user',
-      remoteChanges: remoteChanges,
+      remoteChanges: result.events,
     );
-    await _updateLatest('user');
+    if (result.maxServerCreatedAt != null) {
+      await _updateLatest('user', result.maxServerCreatedAt!);
+    }
   }
 
   Future<void> _pullLogChangesFromMongoApi() async {
     final lastSynced = await _getLatest('counter_log');
-    final List<JsonMap> remoteChanges = await mongoApi.fetchCounterLogEvents(
-      lastSynced,
-    );
-    if (remoteChanges.isEmpty) return;
+    final result = await mongoApi.fetchCounterLogEvents(lastSynced);
+    if (result.events.isEmpty) return;
     await pullChangesToLocal(
       repositoryName: 'counter_log',
-      remoteChanges: remoteChanges,
+      remoteChanges: result.events,
     );
-    await _updateLatest('counter_log');
+    if (result.maxServerCreatedAt != null) {
+      await _updateLatest('counter_log', result.maxServerCreatedAt!);
+    }
   }
 
-  Future<void> _updateLatest(String repo) async {
-    final value = lastSyncedAt[repo] = DateTime.now().toUtc();
+  Future<void> _updateLatest(String repo, DateTime value) async {
+    lastSyncedAt[repo] = value;
     dev.log(
       'Updated last sync for $repo to ${value.toIso8601String()}',
       name: logTag,
@@ -1254,15 +1259,17 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
   }
 }
 
+typedef FetchResult = ({List<JsonMap> events, DateTime? maxServerCreatedAt});
+
 class MongoApi {
   static const logTag = 'MongoApi';
+  static const serverCreatedAtLabel = 'serverCreatedAt';
   final String uri;
 
   Db? _db;
 
   MongoApi({required this.uri});
 
-  String get createdAtLabel => LocalFirstEvent.kSyncCreatedAt;
   String get eventIdLabel => LocalFirstEvent.kEventId;
 
   Future<Db> _getDb() async {
@@ -1281,7 +1288,7 @@ class MongoApi {
     final collection = db.collection(repositoryName);
 
     try {
-      await collection.createIndex(keys: {LocalFirstEvent.kSyncCreatedAt: 1});
+      await collection.createIndex(keys: {serverCreatedAtLabel: 1});
       await collection.createIndex(
         keys: {LocalFirstEvent.kEventId: 1},
         unique: true,
@@ -1306,29 +1313,42 @@ class MongoApi {
     await _upsertEvents('counter_log', events);
   }
 
-  Future<List<JsonMap>> fetchUserEvents(DateTime? since) async {
+  Future<FetchResult> fetchUserEvents(DateTime? since) async {
     return _fetchEvents('user', since);
   }
 
-  Future<List<JsonMap>> fetchCounterLogEvents(DateTime? since) async {
+  Future<FetchResult> fetchCounterLogEvents(DateTime? since) async {
     return _fetchEvents('counter_log', since);
   }
 
-  Future<List<JsonMap>> _fetchEvents(
+  Future<FetchResult> _fetchEvents(
     String repositoryName,
     DateTime? since,
   ) async {
     final collection = await _collection(repositoryName);
-    final selector = since != null ? where.gt(createdAtLabel, since) : where;
-    final cursor = collection.find(selector.sortBy(createdAtLabel));
+    final selector = since != null
+        ? where.gt(serverCreatedAtLabel, since)
+        : where;
+    final cursor = collection.find(selector.sortBy(serverCreatedAtLabel));
     final results = <JsonMap>[];
+    DateTime? max;
     await cursor.forEach((doc) {
       final map = JsonMap.from(doc)
         ..remove('_id')
         ..putIfAbsent(LocalFirstEvent.kRepository, () => repositoryName);
+      final raw = map[serverCreatedAtLabel];
+      if (raw is DateTime) {
+        final utc = raw.toUtc();
+        if (max == null || utc.isAfter(max!)) max = utc;
+      } else if (raw is String) {
+        final parsed = DateTime.tryParse(raw)?.toUtc();
+        if (parsed != null && (max == null || parsed.isAfter(max!))) {
+          max = parsed;
+        }
+      }
       results.add(map);
     });
-    return results;
+    return (events: results, maxServerCreatedAt: max);
   }
 
   Future<void> _upsertEvents(
@@ -1339,12 +1359,12 @@ class MongoApi {
     final collection = await _collection(repositoryName);
     for (final event in events) {
       final eventId = event[eventIdLabel];
+      final now = DateTime.now().toUtc();
       try {
-        await collection.replaceOne(
-          where.eq(eventIdLabel, eventId),
-          event,
-          upsert: true,
-        );
+        await collection.updateOne(where.eq(eventIdLabel, eventId), {
+          r'$set': event,
+          r'$setOnInsert': {serverCreatedAtLabel: now},
+        }, upsert: true);
       } catch (e, s) {
         dev.log(
           'Failed to upsert event $eventId in $repositoryName: $e',
