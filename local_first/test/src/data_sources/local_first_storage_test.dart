@@ -19,11 +19,15 @@ class _FakeStorage extends LocalFirstStorage {
   bool initialized = false;
   bool closed = false;
   bool cleared = false;
-  final Map<String, String> meta = {};
+  int namespaceChanges = 0;
+  final Map<String, Object?> meta = {};
   final List<JsonMap> events = [];
   List<LocalFirstEvent<dynamic>> lastEmittedEvents = const [];
   final StreamController<List<LocalFirstEvent<dynamic>>> _controller =
       StreamController.broadcast();
+
+  @override
+  Future<bool> containsConfigKey(String key) async => meta.containsKey(key);
 
   @override
   Future<void> initialize() async {
@@ -34,6 +38,11 @@ class _FakeStorage extends LocalFirstStorage {
   Future<void> close() async {
     closed = true;
     await _controller.close();
+  }
+
+  @override
+  Future<void> useNamespace(String namespace) async {
+    namespaceChanges++;
   }
 
   @override
@@ -109,12 +118,28 @@ class _FakeStorage extends LocalFirstStorage {
   }
 
   @override
-  Future<void> setString(String key, String value) async {
+  Future<bool> setConfigValue<T>(String key, T value) async {
     meta[key] = value;
+    return true;
   }
 
   @override
-  Future<String?> getString(String key) async => meta[key];
+  Future<T?> getConfigValue<T>(String key) async => meta[key] as T?;
+
+  @override
+  Future<bool> removeConfig(String key) async {
+    meta.remove(key);
+    return true;
+  }
+
+  @override
+  Future<bool> clearConfig() async {
+    meta.clear();
+    return true;
+  }
+
+  @override
+  Future<Set<String>> getConfigKeys() async => meta.keys.toSet();
 
   @override
   Future<void> ensureSchema(
@@ -145,7 +170,7 @@ void main() {
       storage = _FakeStorage();
     });
 
-    test('initialize/close toggle flags', () async {
+  test('initialize/close toggle flags', () async {
       await storage.initialize();
       expect(storage.initialized, isTrue);
 
@@ -153,9 +178,20 @@ void main() {
       expect(storage.closed, isTrue);
     });
 
-  test('set/get meta', () async {
-      await storage.setString('k', 'v');
-      expect(await storage.getString('k'), 'v');
+  test('config helpers (set/get/contains/remove/clear/keys)', () async {
+      expect(await storage.containsConfigKey('k'), isFalse);
+
+      await storage.setConfigValue('k', 'v');
+      expect(await storage.getConfigValue('k'), 'v');
+      expect(await storage.containsConfigKey('k'), isTrue);
+      expect(await storage.getConfigKeys(), contains('k'));
+
+      await storage.removeConfig('k');
+      expect(await storage.getConfigValue('k'), isNull);
+
+      await storage.setConfigValue('k2', 'v2');
+      await storage.clearConfig();
+      expect(await storage.getConfigKeys(), isEmpty);
     });
 
     test('insert/update/delete data', () async {

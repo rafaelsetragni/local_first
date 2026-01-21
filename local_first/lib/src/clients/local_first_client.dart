@@ -10,6 +10,7 @@ part of '../../local_first.dart';
 class LocalFirstClient {
   late final List<LocalFirstRepository> _repositories;
   final LocalFirstStorage _localStorage;
+  final ConfigKeyValueStorage _configStorage;
 
   final List<DataSyncStrategy> syncStrategies;
   final Completer _onInitialize = Completer();
@@ -41,17 +42,21 @@ class LocalFirstClient {
   /// Parameters:
   /// - [nodes]: List of [LocalFirstRepository] instances to be managed
   /// - [localStorage]: The local database delegate for storage operations
+  /// - [keyValueStorage]: Optional delegate for config key/value operations.
+  ///   Defaults to [localStorage] when not provided.
   ///
   /// Throws [ArgumentError] if there are duplicate node names.
   LocalFirstClient({
     required List<LocalFirstRepository> repositories,
     required LocalFirstStorage localStorage,
+    ConfigKeyValueStorage? keyValueStorage,
     required this.syncStrategies,
   }) : assert(
          syncStrategies.isNotEmpty,
          'You need to provide at least one sync strategy.',
        ),
-       _localStorage = localStorage {
+       _localStorage = localStorage,
+       _configStorage = keyValueStorage ?? localStorage {
     final names = repositories.map((n) => n.name).toSet();
     if (names.length != repositories.length) {
       throw ArgumentError('Duplicate node names');
@@ -80,6 +85,9 @@ class LocalFirstClient {
   /// It initializes the local database and all registered repositories.
   Future<void> initialize() async {
     await _localStorage.initialize();
+    if (!identical(_configStorage, _localStorage)) {
+      await _configStorage.initialize();
+    }
 
     for (var repository in _repositories) {
       await repository.initialize();
@@ -100,11 +108,23 @@ class LocalFirstClient {
     }
   }
 
+  /// Switches the active namespace/database for both the main storage and the
+  /// optional config storage delegate.
+  Future<void> useNamespace(String namespace) async {
+    await _localStorage.useNamespace(namespace);
+    if (!identical(_configStorage, _localStorage)) {
+      await _configStorage.useNamespace(namespace);
+    }
+  }
+
   /// Disposes the LocalFirstClient instance and closes the local database.
   ///
   /// Call this when you're done using the LocalFirstClient instance.
   Future<void> dispose() async {
     await _connectionController.close();
+    if (!identical(_configStorage, _localStorage)) {
+      await _configStorage.close();
+    }
     await _localStorage.close();
   }
 
@@ -135,19 +155,14 @@ class LocalFirstClient {
     return results.expand((e) => e).toList();
   }
 
-  Future<String?> getString(String key) async {
-    return await localStorage.getString(key);
+  Future<String?> getConfigValue(String key) async {
+    return await _configStorage.getConfigValue<String>(key);
   }
 
-  Future<void> setString(String key, String value) async {
-    await localStorage.setString(key, value);
+  Future<bool> setConfigValue(String key, String value) async {
+    return await _configStorage.setConfigValue<String>(key, value);
   }
 
-  @Deprecated('Use getString instead')
-  Future<String?> getKeyValue(String key) => getString(key);
-
-  @Deprecated('Use setString instead')
-  Future<void> setKeyValue(String key, String value) => setString(key, value);
 }
 
 /// Test helper exposing internal state of [LocalFirstClient] for unit tests.

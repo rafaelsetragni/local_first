@@ -7,7 +7,8 @@ class _SpyStorage implements LocalFirstStorage {
   int initialized = 0;
   int cleared = 0;
   int closed = 0;
-  final Map<String, String> meta = {};
+  int namespaceChanges = 0;
+  final Map<String, Object?> meta = {};
 
   @override
   Future<void> clearAllData() async {
@@ -17,6 +18,11 @@ class _SpyStorage implements LocalFirstStorage {
   @override
   Future<void> close() async {
     closed++;
+  }
+
+  @override
+  Future<void> useNamespace(String namespace) async {
+    namespaceChanges++;
   }
 
   @override
@@ -59,7 +65,10 @@ class _SpyStorage implements LocalFirstStorage {
       null;
 
   @override
-  Future<String?> getString(String key) async => meta[key];
+  Future<bool> containsConfigKey(String key) async => meta.containsKey(key);
+
+  @override
+  Future<T?> getConfigValue<T>(String key) async => meta[key] as T?;
 
   @override
   Future<void> initialize() async {
@@ -85,9 +94,25 @@ class _SpyStorage implements LocalFirstStorage {
       [];
 
   @override
-  Future<void> setString(String key, String value) async {
+  Future<bool> setConfigValue<T>(String key, T value) async {
     meta[key] = value;
+    return true;
   }
+
+  @override
+  Future<bool> removeConfig(String key) async {
+    meta.remove(key);
+    return true;
+  }
+
+  @override
+  Future<bool> clearConfig() async {
+    meta.clear();
+    return true;
+  }
+
+  @override
+  Future<Set<String>> getConfigKeys() async => meta.keys.toSet();
 
   @override
   Future<void> update(
@@ -106,6 +131,55 @@ class _SpyStorage implements LocalFirstStorage {
   @override
   Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query) =>
       const Stream.empty();
+}
+
+class _SpyConfigStorage implements ConfigKeyValueStorage {
+  int initialized = 0;
+  int closed = 0;
+  int namespaceChanges = 0;
+  final Map<String, Object?> meta = {};
+
+  @override
+  Future<bool> clearConfig() async {
+    meta.clear();
+    return true;
+  }
+
+  @override
+  Future<bool> containsConfigKey(String key) async => meta.containsKey(key);
+
+  @override
+  Future<bool> removeConfig(String key) async {
+    meta.remove(key);
+    return true;
+  }
+
+  @override
+  Future<bool> setConfigValue<T>(String key, T value) async {
+    meta[key] = value;
+    return true;
+  }
+
+  @override
+  Future<T?> getConfigValue<T>(String key) async => meta[key] as T?;
+
+  @override
+  Future<Set<String>> getConfigKeys() async => meta.keys.toSet();
+
+  @override
+  Future<void> close() async {
+    closed++;
+  }
+
+  @override
+  Future<void> initialize() async {
+    initialized++;
+  }
+
+  @override
+  Future<void> useNamespace(String namespace) async {
+    namespaceChanges++;
+  }
 }
 
 class _SpyRepository extends LocalFirstRepository<dynamic> {
@@ -365,27 +439,47 @@ void main() {
         syncStrategies: [strategy],
       );
 
-      await client.setString('k', 'v');
-      final value = await client.getString('k');
+      await client.setConfigValue('k', 'v');
+      final value = await client.getConfigValue('k');
 
       expect(value, 'v');
     });
 
-    test('should support deprecated key/value helpers', () async {
-      final repo = _SpyRepository('legacy');
+    test('should delegate meta operations to provided key-value storage',
+        () async {
+      final repo = _SpyRepository('r1');
+      final configStorage = _SpyConfigStorage();
       final client = LocalFirstClient(
         repositories: [repo],
         localStorage: storage,
+        keyValueStorage: configStorage,
         syncStrategies: [strategy],
       );
 
-      await client.setKeyValue('legacy-key', 'legacy-value');
-      final value = await client.getKeyValue('legacy-key');
+      await client.initialize();
+      await client.setConfigValue('k', 'v');
 
-      expect(value, 'legacy-value');
-      // Exercise the deprecated methods directly for coverage.
-      expect(await client.getKeyValue('missing'), isNull);
-      await client.setKeyValue('legacy-key', 'legacy-value-2');
+      expect(configStorage.meta['k'], 'v');
+      expect(storage.meta['k'], isNull);
+      expect(configStorage.initialized, 1);
+
+      await client.dispose();
+      expect(configStorage.closed, 1);
+    });
+
+    test('useNamespace propagates to both storages when different', () async {
+      final repo = _SpyRepository('r1');
+      final configStorage = _SpyConfigStorage();
+      final client = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        keyValueStorage: configStorage,
+        syncStrategies: [strategy],
+      );
+
+      await client.useNamespace('ns1');
+      expect(storage.namespaceChanges, 1);
+      expect(configStorage.namespaceChanges, 1);
     });
 
     test('TestHelperLocalFirstClient should expose internals for testing', () {

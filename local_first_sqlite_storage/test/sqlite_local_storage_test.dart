@@ -1,9 +1,10 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_first/local_first.dart';
 import 'package:local_first_sqlite_storage/local_first_sqlite_storage.dart';
 import 'package:mockito/annotations.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'package:sqflite/sqlite_api.dart';
 
 @GenerateMocks([QueryBehavior, DatabaseFactory, Database])
 class DummyModel {
@@ -351,12 +352,12 @@ void main() {
         status: SyncStatus.ok,
         eventId: 'evt-1',
       );
-      await storage.setString('meta', 'value');
+      await storage.setConfigValue('meta', 'value');
 
       await storage.clearAllData();
 
       expect(await storage.getAll('users'), isEmpty);
-      expect(await storage.getString('meta'), isNull);
+      expect(await storage.getConfigValue('meta'), isNull);
     });
 
     test('useNamespace switches databases', () async {
@@ -438,10 +439,74 @@ void main() {
       expect(await storage.getAll('users'), isEmpty);
     });
 
-    test('setString/getString roundtrip and null when missing', () async {
-      expect(await storage.getString('k'), isNull);
-      await storage.setString('k', 'v');
-      expect(await storage.getString('k'), 'v');
+    test('setConfigValue/getConfigValue roundtrip and null when missing', () async {
+      expect(await storage.getConfigValue('k'), isNull);
+      await storage.setConfigValue('k', 'v');
+      expect(await storage.getConfigValue('k'), 'v');
+    });
+
+    test('config storage supports shared_preferences types and rejects others',
+        () async {
+      await storage.setConfigValue('bool', true);
+      await storage.setConfigValue('int', 1);
+      await storage.setConfigValue('double', 1.5);
+      await storage.setConfigValue('string', 'ok');
+      await storage.setConfigValue('list', <String>['a', 'b']);
+
+      expect(await storage.getConfigValue<bool>('bool'), isTrue);
+      expect(await storage.getConfigValue<int>('int'), 1);
+      expect(await storage.getConfigValue<double>('double'), 1.5);
+      expect(await storage.getConfigValue<String>('string'), 'ok');
+      expect(await storage.getConfigValue<List<String>>('list'), ['a', 'b']);
+      expect(await storage.getConfigValue<dynamic>('list'), ['a', 'b']);
+
+      expect(await storage.getConfigKeys(),
+          containsAll(['bool', 'int', 'double', 'string', 'list']));
+      expect(await storage.containsConfigKey('string'), isTrue);
+
+      expect(() => storage.setConfigValue('invalid', {'a': 1}),
+          throwsArgumentError);
+
+      expect(
+        () => storage.setConfigValue('null', null),
+        throwsArgumentError,
+      );
+
+      await storage.removeConfig('string');
+      expect(await storage.containsConfigKey('string'), isFalse);
+
+      await storage.clearConfig();
+      expect(await storage.getConfigKeys(), isEmpty);
+    });
+
+    test('getConfigValue returns raw string when decode fails for String',
+        () async {
+      final helper = TestHelperSqliteLocalFirstStorage(storage);
+      final db = await helper.database;
+      await helper.ensureMetadataTable();
+      await db.insert(helper.metadataTable, {
+        'key': 'bad',
+        'value': 'not-json',
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+
+      expect(await storage.getConfigValue<String>('bad'), 'not-json');
+    });
+
+    test('getConfigValue returns null for unknown encoded config type',
+        () async {
+      final helper = TestHelperSqliteLocalFirstStorage(storage);
+      final db = await helper.database;
+      await helper.ensureMetadataTable();
+      await db.insert(
+        helper.metadataTable,
+        {
+          'key': 'unknown',
+          'value': jsonEncode({'t': 'alien', 'v': 'x'}),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+
+      expect(await storage.getConfigValue<String>('unknown'), isNull);
     });
 
     test('containsId returns false when table empty', () async {

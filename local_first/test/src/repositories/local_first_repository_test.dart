@@ -67,7 +67,22 @@ class _StubStorage implements LocalFirstStorage {
   Future<JsonMap?> getEventById(String tableName, String id) async => null;
 
   @override
-  Future<String?> getString(String key) async => null;
+  Future<bool> containsConfigKey(String key) async => false;
+
+  @override
+  Future<T?> getConfigValue<T>(String key) async => null;
+
+  @override
+  Future<bool> removeConfig(String key) async => true;
+
+  @override
+  Future<bool> clearConfig() async => true;
+
+  @override
+  Future<Set<String>> getConfigKeys() async => {};
+
+  @override
+  Future<void> useNamespace(String namespace) async {}
 
   @override
   Future<void> initialize() async {}
@@ -94,7 +109,7 @@ class _StubStorage implements LocalFirstStorage {
       [];
 
   @override
-  Future<void> setString(String key, String value) async {}
+  Future<bool> setConfigValue<T>(String key, T value) async => true;
 
   @override
   Future<void> update(String tableName, String id, JsonMap item) async {
@@ -761,9 +776,7 @@ void main() {
     });
 
     test('deleteDataById should delete from storage', () async {
-      final helper = TestHelperLocalFirstRepository(repository);
-
-      await helper.deleteDataById('1');
+      await TestHelperLocalFirstRepository(repository).deleteDataById('1');
 
       expect(storage.deleteCount, 1);
     });
@@ -771,7 +784,6 @@ void main() {
     test(
       'mergeRemoteEvent should confirm pending event when ids match',
       () async {
-        final helper = TestHelperLocalFirstRepository(repository);
         final pending = LocalFirstEvent.createNewInsertEvent(
           repository: repository,
           data: {'id': '1'},

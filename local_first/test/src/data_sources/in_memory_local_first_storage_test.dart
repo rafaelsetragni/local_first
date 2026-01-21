@@ -252,7 +252,7 @@ void main() {
     });
 
     test('metadata and clear operations wipe state', () async {
-      await storage.setString('k', 'v');
+      await storage.setConfigValue('k', 'v');
       await writeState(id: 'persist', eventId: 'evt-x');
       await writeEvent(
         _event(
@@ -262,14 +262,58 @@ void main() {
         ),
       );
 
-      expect(await storage.getString('k'), 'v');
+      expect(await storage.getConfigValue('k'), 'v');
       expect(await storage.getAll(repo.name), isNotEmpty);
 
       await storage.clearAllData();
 
-      expect(await storage.getString('k'), isNull);
+      expect(await storage.getConfigValue('k'), isNull);
       expect(await storage.getAll(repo.name), isEmpty);
       expect(await storage.getAllEvents(repo.name), isEmpty);
+    });
+
+    test('config storage supports shared_preferences types and rejects others',
+        () async {
+      expect(await storage.containsConfigKey('missing'), isFalse);
+
+      expect(await storage.setConfigValue('bool', true), isTrue);
+      expect(await storage.setConfigValue('int', 1), isTrue);
+      expect(await storage.setConfigValue('double', 1.5), isTrue);
+      expect(await storage.setConfigValue('string', 'ok'), isTrue);
+      expect(
+        await storage.setConfigValue('list', <String>['a', 'b']),
+        isTrue,
+      );
+
+      expect(await storage.getConfigValue<bool>('bool'), isTrue);
+      expect(await storage.getConfigValue<int>('int'), 1);
+      expect(await storage.getConfigValue<double>('double'), 1.5);
+      expect(await storage.getConfigValue<String>('string'), 'ok');
+      expect(await storage.getConfigValue<List<String>>('list'), ['a', 'b']);
+      expect(await storage.getConfigValue<dynamic>('list'), ['a', 'b']);
+
+      expect(await storage.getConfigKeys(),
+          containsAll(<String>['bool', 'int', 'double', 'string', 'list']));
+
+      expect(
+        () => storage.setConfigValue('invalid', {'a': 1}),
+        throwsArgumentError,
+      );
+
+      expect(await storage.removeConfig('string'), isTrue);
+      expect(await storage.containsConfigKey('string'), isFalse);
+
+      await storage.clearConfig();
+      expect(await storage.getConfigKeys(), isEmpty);
+    });
+
+    test('useNamespace isolates config values in-memory', () async {
+      await storage.setConfigValue('k', 'v1');
+      await storage.useNamespace('other');
+      expect(await storage.getConfigValue('k'), isNull);
+      await storage.setConfigValue('k', 'v2');
+      await storage.useNamespace('default');
+      expect(await storage.getConfigValue('k'), 'v1');
     });
 
     test('close should terminate active watchers', () async {

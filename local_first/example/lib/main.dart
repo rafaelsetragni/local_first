@@ -4,7 +4,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:local_first/local_first.dart';
-import 'package:local_first_hive_storage/local_first_hive_storage.dart';
+import 'package:local_first/local_first.dart';
 import 'package:mongo_dart/mongo_dart.dart' hide State, Center;
 
 // To use this example, first you need to start a MongoDB service, and
@@ -786,7 +786,7 @@ class RepositoryService {
         counterLogRepository,
         sessionCounterRepository,
       ],
-      localStorage: HiveLocalFirstStorage(),
+      localStorage: InMemoryLocalFirstStorage(),
       syncStrategies: [syncStrategy],
     );
 
@@ -890,26 +890,24 @@ class RepositoryService {
 
   Future<String?> _getGlobalString(String key) async {
     if (localFirst == null) return null;
-    return _withGlobalString(() => localFirst!.getString(key));
+    return _withGlobalString(() => localFirst!.getConfigValue(key));
   }
 
   Future<void> _setGlobalString(String key, String value) async {
     if (localFirst == null) return;
-    await _withGlobalString(() => localFirst!.setString(key, value));
+    await _withGlobalString(() => localFirst!.setConfigValue(key, value));
   }
 
   Future<T> _withGlobalString<T>(Future<T> Function() action) async {
     final storage = localFirst?.localStorage;
-    if (storage is HiveLocalFirstStorage) {
-      final previous = storage.namespace;
-      await storage.useNamespace('default');
-      try {
-        return await action();
-      } finally {
-        await storage.useNamespace(previous);
-      }
+    if (storage == null) return await action();
+    final previous = _currentNamespace;
+    await storage.useNamespace('default');
+    try {
+      return await action();
+    } finally {
+      await storage.useNamespace(previous);
     }
-    return await action();
   }
 
   String _sessionMetaKey(String username) {
@@ -1094,10 +1092,7 @@ class RepositoryService {
     _currentNamespace = namespace;
     syncStrategy.namespace = namespace;
 
-    final storage = db.localStorage;
-    if (storage is HiveLocalFirstStorage) {
-      await storage.useNamespace(namespace);
-    }
+    await db.localStorage.useNamespace(namespace);
   }
 
   /// Normalizes a username into a namespace-safe string.
@@ -1597,12 +1592,15 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
       'Updated last sync for $repo to ${value.toIso8601String()}',
       name: logTag,
     );
-      await client.setString(_lastSyncKey(repo), value.toIso8601String());
+      await client.setConfigValue(
+        _lastSyncKey(repo),
+        value.toIso8601String(),
+      );
   }
 
   Future<DateTime?> _getLatest(String repo) async {
     return lastSyncedAt[repo] ??= await () async {
-      final value = await client.getString(_lastSyncKey(repo));
+      final value = await client.getConfigValue(_lastSyncKey(repo));
       return _parseDate(value);
     }();
   }

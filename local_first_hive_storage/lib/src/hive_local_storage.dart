@@ -93,6 +93,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   /// Changes the active namespace, closing any open boxes.
+  @override
   Future<void> useNamespace(String namespace) async {
     if (_namespace == namespace) return;
     _namespace = namespace;
@@ -109,6 +110,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
         await box.close();
       } catch (_) {
         // Ignore close errors to keep shutdown robust (tests may delete temp dirs).
+        continue;
       }
     }
     _boxes.clear();
@@ -122,6 +124,15 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
   String _boxCacheKey(String tableName, {bool isEvent = false}) {
     return '${isEvent ? 'events' : 'state'}::$tableName';
+  }
+
+  @visibleForTesting
+  void addBoxToCacheForTest(
+    String tableName,
+    BoxBase<Map<dynamic, dynamic>> box, {
+    bool isEvent = false,
+  }) {
+    _boxes[_boxCacheKey(tableName, isEvent: isEvent)] = box;
   }
 
   /// Gets or creates a box for the table.
@@ -176,9 +187,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
       if (meta == null) continue;
       final dataId = meta['dataId'] as String?;
       final data = dataId != null ? await _readBoxValue(dataBox, dataId) : null;
-      items.add(
-        _mergeEventWithData(meta, data, lastEventId: meta['eventId']),
-      );
+      items.add(_mergeEventWithData(meta, data, lastEventId: meta['eventId']));
     }
     return items;
   }
@@ -288,25 +297,93 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     await box.clear();
   }
 
+  bool _isSupportedConfigValue(Object value) {
+    if (value is bool || value is int || value is double || value is String) {
+      return true;
+    }
+    if (value is List && value.every((e) => e is String)) return true;
+    return false;
+  }
+
   @override
-  Future<void> setString(String key, String value) async {
+  Future<bool> containsConfigKey(String key) async {
     if (!_initialized) {
       throw StateError(
         'HiveLocalFirstStorage not initialized. Call initialize() first.',
       );
     }
-    await _metadataBox.put(key, value);
+    return _metadataBox.containsKey(key);
   }
 
   @override
-  Future<String?> getString(String key) async {
+  Future<bool> setConfigValue<T>(String key, T value) async {
+    if (!_initialized) {
+      throw StateError(
+        'HiveLocalFirstStorage not initialized. Call initialize() first.',
+      );
+    }
+    if (value is! Object || !_isSupportedConfigValue(value)) {
+      throw ArgumentError(
+        'Unsupported config value type ${value.runtimeType}. '
+        'Allowed: bool, int, double, String, List<String>.',
+      );
+    }
+    await _metadataBox.put(
+      key,
+      value is List ? List<String>.from(value) : value,
+    );
+    return true;
+  }
+
+  @override
+  Future<T?> getConfigValue<T>(String key) async {
     if (!_initialized) {
       throw StateError(
         'HiveLocalFirstStorage not initialized. Call initialize() first.',
       );
     }
     final value = _metadataBox.get(key);
-    return value is String ? value : null;
+    if (value == null) return null;
+    if (T == dynamic) return value as T;
+    if (!_isSupportedConfigValue(value)) return null;
+    if (value is List<String>) {
+      if (value is T) return value as T;
+      return null;
+    }
+    if (value is T) return value;
+    return null;
+  }
+
+  @override
+  Future<bool> removeConfig(String key) async {
+    if (!_initialized) {
+      throw StateError(
+        'HiveLocalFirstStorage not initialized. Call initialize() first.',
+      );
+    }
+    await _metadataBox.delete(key);
+    return true;
+  }
+
+  @override
+  Future<bool> clearConfig() async {
+    if (!_initialized) {
+      throw StateError(
+        'HiveLocalFirstStorage not initialized. Call initialize() first.',
+      );
+    }
+    await _metadataBox.clear();
+    return true;
+  }
+
+  @override
+  Future<Set<String>> getConfigKeys() async {
+    if (!_initialized) {
+      throw StateError(
+        'HiveLocalFirstStorage not initialized. Call initialize() first.',
+      );
+    }
+    return _metadataBox.keys.cast<String>().toSet();
   }
 
   @override

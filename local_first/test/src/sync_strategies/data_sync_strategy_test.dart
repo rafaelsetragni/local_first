@@ -86,7 +86,22 @@ class _NoopStorage implements LocalFirstStorage {
   Future<JsonMap?> getEventById(String tableName, String id) async => null;
 
   @override
-  Future<String?> getString(String key) async => null;
+  Future<bool> containsConfigKey(String key) async => false;
+
+  @override
+  Future<T?> getConfigValue<T>(String key) async => null;
+
+  @override
+  Future<void> useNamespace(String namespace) async {}
+
+  @override
+  Future<bool> removeConfig(String key) async => true;
+
+  @override
+  Future<bool> clearConfig() async => true;
+
+  @override
+  Future<Set<String>> getConfigKeys() async => {};
 
   @override
   Future<void> initialize() async {}
@@ -101,12 +116,12 @@ class _NoopStorage implements LocalFirstStorage {
     String idField,
   ) async {}
 
-    @override
-    Future<List<LocalFirstEvent<T>>> query<T>(LocalFirstQuery<T> query) async =>
-        [];
+  @override
+  Future<List<LocalFirstEvent<T>>> query<T>(LocalFirstQuery<T> query) async =>
+      [];
 
   @override
-  Future<void> setString(String key, String value) async {}
+  Future<bool> setConfigValue<T>(String key, T value) async => true;
 
   @override
   Future<void> update(String tableName, String id, JsonMap item) async {}
@@ -168,7 +183,22 @@ class _RecordingStorage implements LocalFirstStorage {
   Future<JsonMap?> getEventById(String tableName, String id) async => null;
 
   @override
-  Future<String?> getString(String key) async => null;
+  Future<bool> containsConfigKey(String key) async => false;
+
+  @override
+  Future<T?> getConfigValue<T>(String key) async => null;
+
+  @override
+  Future<void> useNamespace(String namespace) async {}
+
+  @override
+  Future<bool> removeConfig(String key) async => true;
+
+  @override
+  Future<bool> clearConfig() async => true;
+
+  @override
+  Future<Set<String>> getConfigKeys() async => {};
 
   @override
   Future<void> initialize() async {}
@@ -188,7 +218,7 @@ class _RecordingStorage implements LocalFirstStorage {
       [];
 
   @override
-  Future<void> setString(String key, String value) async {}
+  Future<bool> setConfigValue<T>(String key, T value) async => true;
 
   @override
   Future<void> update(String tableName, String id, JsonMap item) async {

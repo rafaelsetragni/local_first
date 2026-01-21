@@ -17,15 +17,21 @@ part of '../../local_first.dart';
 ///   // Implement other methods...
 /// }
 /// ```
-abstract class LocalFirstStorage {
+abstract class LocalFirstStorage implements ConfigKeyValueStorage {
   /// Initializes the local database.
   ///
   /// Called once during [LocalFirstClient.initialize].
+  @override
   Future<void> initialize();
+
+  /// Switches the active namespace/database when supported.
+  @override
+  Future<void> useNamespace(String namespace);
 
   /// Closes the database connection.
   ///
   /// Called when disposing the LocalFirstClient instance.
+  @override
   Future<void> close();
 
   /// Clears all data from the database.
@@ -76,11 +82,29 @@ abstract class LocalFirstStorage {
   /// Deletes all items from the event table/collection.
   Future<void> deleteAllEvents(String tableName);
 
-  /// Stores arbitrary key/value metadata (string) similar to SharedPreferences.
-  Future<void> setString(String key, String value);
+  /// Stores arbitrary key/value metadata for config purposes.
+  @override
+  Future<bool> setConfigValue<T>(String key, T value);
 
-  /// Reads arbitrary key/value metadata (string) similar to SharedPreferences.
-  Future<String?> getString(String key);
+  /// Reads arbitrary key/value metadata for config purposes.
+  @override
+  Future<T?> getConfigValue<T>(String key);
+
+  /// Returns whether a config key exists.
+  @override
+  Future<bool> containsConfigKey(String key);
+
+  /// Removes a config entry.
+  @override
+  Future<bool> removeConfig(String key);
+
+  /// Clears all config entries.
+  @override
+  Future<bool> clearConfig();
+
+  /// Lists all config keys.
+  @override
+  Future<Set<String>> getConfigKeys();
 
   /// Ensures the storage backend has an up-to-date schema for a repository.
   ///
