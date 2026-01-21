@@ -8,6 +8,7 @@ workspace:
   - local_first
   - local_first_hive_storage
   - local_first_sqlite_storage
+  - local_first_shared_preferences
   - local_first/example
 
 dev_dependencies:
@@ -45,6 +46,7 @@ melos:
         lcov -a local_first/coverage/lcov.info \
             -a local_first_hive_storage/coverage/lcov.info \
             -a local_first_sqlite_storage/coverage/lcov.info \
+            -a local_first_shared_preferences/coverage/lcov.info \
             -o coverage/lcov.info --ignore-errors missing
       packageFilters:
         dirExists:

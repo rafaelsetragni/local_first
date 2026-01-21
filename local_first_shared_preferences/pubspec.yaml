@@ -1,0 +1,27 @@
+name: local_first_shared_preferences
+description: "SharedPreferences adapter for local_first config key-value storage."
+version: 0.1.0
+repository: https://github.com/rafaelsetragni/local_first
+issue_tracker: https://github.com/rafaelsetragni/local_first/issues
+
+resolution: workspace
+
+environment:
+  sdk: ^3.10.0
+  flutter: ">=1.17.0"
+
+topics:
+  - local-first
+  - shared-preferences
+  - storage
+
+dependencies:
+  flutter:
+    sdk: flutter
+  local_first: ^0.5.0
+  shared_preferences: ^2.3.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
