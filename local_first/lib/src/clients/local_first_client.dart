@@ -10,6 +10,7 @@ part of '../../local_first.dart';
 class LocalFirstClient {
   late final List<LocalFirstRepository> _repositories;
   final LocalFirstStorage _localStorage;
+  final ConfigKeyValueStorage _configStorage;
 
   final List<DataSyncStrategy> syncStrategies;
   final Completer _onInitialize = Completer();
@@ -41,17 +42,21 @@ class LocalFirstClient {
   /// Parameters:
   /// - [nodes]: List of [LocalFirstRepository] instances to be managed
   /// - [localStorage]: The local database delegate for storage operations
+  /// - [keyValueStorage]: Optional delegate for config key/value operations.
+  ///   Defaults to [localStorage] when not provided.
   ///
   /// Throws [ArgumentError] if there are duplicate node names.
   LocalFirstClient({
     required List<LocalFirstRepository> repositories,
     required LocalFirstStorage localStorage,
+    ConfigKeyValueStorage? keyValueStorage,
     required this.syncStrategies,
   }) : assert(
          syncStrategies.isNotEmpty,
          'You need to provide at least one sync strategy.',
        ),
-       _localStorage = localStorage {
+       _localStorage = localStorage,
+       _configStorage = keyValueStorage ?? localStorage {
     final names = repositories.map((n) => n.name).toSet();
     if (names.length != repositories.length) {
       throw ArgumentError('Duplicate node names');
@@ -80,6 +85,9 @@ class LocalFirstClient {
   /// It initializes the local database and all registered repositories.
   Future<void> initialize() async {
     await _localStorage.initialize();
+    if (!identical(_configStorage, _localStorage)) {
+      await _configStorage.initialize();
+    }
 
     for (var repository in _repositories) {
       await repository.initialize();
@@ -105,6 +113,9 @@ class LocalFirstClient {
   /// Call this when you're done using the LocalFirstClient instance.
   Future<void> dispose() async {
     await _connectionController.close();
+    if (!identical(_configStorage, _localStorage)) {
+      await _configStorage.close();
+    }
     await _localStorage.close();
   }
 
@@ -136,11 +147,11 @@ class LocalFirstClient {
   }
 
   Future<String?> getConfigValue(String key) async {
-    return await localStorage.getConfigValue<String>(key);
+    return await _configStorage.getConfigValue<String>(key);
   }
 
   Future<bool> setConfigValue(String key, String value) async {
-    return await localStorage.setConfigValue<String>(key, value);
+    return await _configStorage.setConfigValue<String>(key, value);
   }
 
   @Deprecated('Use getConfigValue instead')

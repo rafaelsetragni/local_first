@@ -127,6 +127,49 @@ class _SpyStorage implements LocalFirstStorage {
       const Stream.empty();
 }
 
+class _SpyConfigStorage implements ConfigKeyValueStorage {
+  int initialized = 0;
+  int closed = 0;
+  final Map<String, Object?> meta = {};
+
+  @override
+  Future<bool> clearConfig() async {
+    meta.clear();
+    return true;
+  }
+
+  @override
+  Future<bool> containsConfigKey(String key) async => meta.containsKey(key);
+
+  @override
+  Future<bool> removeConfig(String key) async {
+    meta.remove(key);
+    return true;
+  }
+
+  @override
+  Future<bool> setConfigValue<T>(String key, T value) async {
+    meta[key] = value;
+    return true;
+  }
+
+  @override
+  Future<T?> getConfigValue<T>(String key) async => meta[key] as T?;
+
+  @override
+  Future<Set<String>> getConfigKeys() async => meta.keys.toSet();
+
+  @override
+  Future<void> close() async {
+    closed++;
+  }
+
+  @override
+  Future<void> initialize() async {
+    initialized++;
+  }
+}
+
 class _SpyRepository extends LocalFirstRepository<dynamic> {
   _SpyRepository(String name)
       : super(
@@ -388,6 +431,28 @@ void main() {
       final value = await client.getConfigValue('k');
 
       expect(value, 'v');
+    });
+
+    test('should delegate meta operations to provided key-value storage',
+        () async {
+      final repo = _SpyRepository('r1');
+      final configStorage = _SpyConfigStorage();
+      final client = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        keyValueStorage: configStorage,
+        syncStrategies: [strategy],
+      );
+
+      await client.initialize();
+      await client.setConfigValue('k', 'v');
+
+      expect(configStorage.meta['k'], 'v');
+      expect(storage.meta['k'], isNull);
+      expect(configStorage.initialized, 1);
+
+      await client.dispose();
+      expect(configStorage.closed, 1);
     });
 
     test('should support deprecated key/value helpers', () async {

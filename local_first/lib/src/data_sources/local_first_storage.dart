@@ -21,11 +21,13 @@ abstract class LocalFirstStorage implements ConfigKeyValueStorage {
   /// Initializes the local database.
   ///
   /// Called once during [LocalFirstClient.initialize].
+  @override
   Future<void> initialize();
 
   /// Closes the database connection.
   ///
   /// Called when disposing the LocalFirstClient instance.
+  @override
   Future<void> close();
 
   /// Clears all data from the database.
