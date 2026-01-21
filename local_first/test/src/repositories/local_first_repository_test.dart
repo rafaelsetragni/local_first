@@ -198,6 +198,17 @@ void main() {
       expect(storage.updateEventCount, 1);
     });
 
+    test('upsert should push event to sync strategies when needSync is true',
+        () async {
+      final strategy = _StrategyWithStatus(SyncStatus.ok);
+      repository = _buildRepoWithStrategy(storage, strategy);
+
+      await repository.upsert({'id': '1'}, needSync: true);
+
+      expect(strategy.received, isNotEmpty);
+      expect(storage.updateEventCount, greaterThan(0));
+    });
+
     test('delete should log delete event and remove data', () async {
       final existing = LocalFirstEvent.createNewInsertEvent(
         repository: repository,
@@ -611,6 +622,67 @@ void main() {
 
       expect(storage.deleteCount, 1);
     });
+
+    test(
+      'mergeRemoteEvent should confirm pending event when ids match',
+      () async {
+        final helper = TestHelperLocalFirstRepository(repository);
+        final pending = LocalFirstEvent.createNewInsertEvent(
+          repository: repository,
+          data: {'id': '1'},
+          needSync: true,
+        );
+        storage.events.add(pending.toLocalStorageJson());
+        final remote = pending.updateEventState(syncStatus: SyncStatus.ok);
+
+        await repository.mergeRemoteEvent(remoteEvent: remote);
+
+        expect(storage.updateEventCount, greaterThan(0));
+      },
+    );
+
+    test(
+      'mergeUpdateEvent should insert when no pending local event exists',
+      () async {
+        final helper = TestHelperLocalFirstRepository(repository);
+        final remote = LocalFirstEvent.createNewUpdateEvent(
+          repository: repository,
+          data: {'id': '2'},
+          needSync: false,
+        ) as LocalFirstStateEvent<JsonMap>;
+
+        await helper.mergeUpdateEvent(
+          remoteEvent: remote,
+          localPendingEvent: null,
+        );
+
+        expect(storage.insertCount, 1);
+        expect(storage.updateEventCount, greaterThan(0));
+      },
+    );
+
+    test(
+      'mergeUpdateEvent should update when matching pending event exists',
+      () async {
+        final helper = TestHelperLocalFirstRepository(repository);
+        final pending = LocalFirstEvent.createNewUpdateEvent(
+          repository: repository,
+          data: {'id': '3'},
+          needSync: true,
+        );
+        storage.events.add(pending.toLocalStorageJson());
+        final remote = pending.updateEventState(syncStatus: SyncStatus.ok)
+            as LocalFirstStateEvent<JsonMap>;
+
+        await helper.mergeUpdateEvent(
+          remoteEvent: remote,
+          localPendingEvent: pending,
+        );
+
+        expect(storage.updateCount, greaterThan(0));
+        expect(storage.updateEventCount, greaterThan(0));
+      },
+    );
 
     test(
       'updateEventStatus should update event (and data for state events)',

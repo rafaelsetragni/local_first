@@ -30,8 +30,29 @@ LocalFirstRepository<dynamic> _dynamicRepo() {
   );
 }
 
+LocalFirstRepository<JsonMap> _throwingRepo() {
+  return LocalFirstRepository.create(
+    name: 'throwing',
+    getId: (m) => m['id'] as String? ?? '',
+    toJson: (m) => m,
+    fromJson: (j) => throw StateError('boom'),
+    onConflictEvent: (l, r) => r,
+  );
+}
+
 void main() {
   group('LocalFirstEvent', () {
+    test('repositoryName getter should mirror repository', () {
+      final repo = _dummyRepo();
+      final event = LocalFirstEvent.createNewInsertEvent(
+        repository: repo,
+        needSync: false,
+        data: _DummyModel('id-1'),
+      );
+
+      expect(event.repositoryName, repo.name);
+    });
+
     group('createNewInsertEvent', () {
       group('edge cases', () {
         test('should create insert event when valid data provided', () {
@@ -109,6 +130,17 @@ void main() {
       });
     });
 
+    test('repositoryName should match repository', () {
+      final repo = _dummyRepo();
+      final event = LocalFirstEvent.createNewInsertEvent(
+        repository: repo,
+        needSync: false,
+        data: _DummyModel('42'),
+      );
+
+      expect(event.repositoryName, repo.name);
+    });
+
     group('createNewDeleteEvent', () {
       group('edge cases', () {
         test('should create delete event when dataId provided', () {
@@ -183,6 +215,23 @@ void main() {
             throwsFormatException,
           );
         });
+
+        test('should throw when delete storage event is missing dataId', () {
+          final repo = _dummyRepo();
+          final now = DateTime.now().toUtc().millisecondsSinceEpoch;
+          expect(
+            () => LocalFirstEvent<_DummyModel>.fromLocalStorage(
+              repository: repo,
+              json: {
+                'eventId': 'evt-del',
+                'syncStatus': SyncStatus.pending.index,
+                'operation': SyncOperation.delete.index,
+                'createdAt': now,
+              },
+            ),
+            throwsFormatException,
+          );
+        });
       });
       group('business rules', () {
         test('should map storage fields to event properties', () {
@@ -230,6 +279,60 @@ void main() {
           expect(event.syncOperation, SyncOperation.insert);
           expect(event.dataId, '1');
         });
+
+        test('should parse createdAt when provided as ISO string', () {
+          final repo = _dummyRepo();
+          final json = {
+            'eventId': 'evt-remote',
+            'operation': SyncOperation.update.index,
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+            'dataId': '1',
+            'data': {'id': '1'},
+          };
+
+          final event = LocalFirstEvent.fromRemoteJson(
+            repository: repo,
+            json: json,
+          );
+
+          expect(event.syncCreatedAt.isUtc, isTrue);
+        });
+
+        test('should parse createdAt when provided as DateTime', () {
+          final repo = _dummyRepo();
+          final json = {
+            'eventId': 'evt-remote',
+            'operation': SyncOperation.update.index,
+            'createdAt': DateTime.now(),
+            'dataId': '1',
+            'data': {'id': '1'},
+          };
+
+          final event = LocalFirstEvent.fromRemoteJson(
+            repository: repo,
+            json: json,
+          );
+
+          expect(event.syncCreatedAt.isUtc, isTrue);
+        });
+
+        test('should serialize delete events to remote/local formats', () {
+          final repo = _dummyRepo();
+          final event = LocalFirstEvent.createNewDeleteEvent<_DummyModel>(
+            repository: repo,
+            needSync: false,
+            dataId: 'del-1',
+          ) as LocalFirstDeleteEvent<_DummyModel>;
+
+          final remote = event.toJson();
+          final local = event.toLocalStorageJson();
+          final updated = event.updateEventState(syncStatus: SyncStatus.failed);
+
+          expect(remote[LocalFirstEvent.kDataId], 'del-1');
+          expect(remote[LocalFirstEvent.kSyncCreatedAt], isA<DateTime>());
+          expect(local[LocalFirstEvent.kSyncCreatedAt], isA<int>());
+          expect(updated.syncStatus, SyncStatus.failed);
+        });
       });
       group('exceptions', () {
         test('should throw when remote payload is malformed', () {
@@ -248,6 +351,54 @@ void main() {
               json: {
                 'eventId': 'evt-missing-date',
                 'operation': SyncOperation.insert.index,
+                'dataId': '1',
+                'data': {'id': '1'},
+              },
+            ),
+            throwsFormatException,
+          );
+        });
+
+        test('should throw when delete payload is missing dataId', () {
+          final repo = _dummyRepo();
+          expect(
+            () => LocalFirstEvent.fromRemoteJson(
+              repository: repo,
+              json: {
+                'eventId': 'evt-missing-id',
+                'operation': SyncOperation.delete.index,
+                'createdAt': DateTime.now().toUtc().millisecondsSinceEpoch,
+              },
+            ),
+            throwsFormatException,
+          );
+        });
+
+        test('should throw when state payload is missing for non-delete', () {
+          final repo = _dummyRepo();
+          expect(
+            () => LocalFirstEvent.fromRemoteJson(
+              repository: repo,
+              json: {
+                'eventId': 'evt-missing-state',
+                'operation': SyncOperation.insert.index,
+                'createdAt': DateTime.now().toUtc().millisecondsSinceEpoch,
+                'dataId': '1',
+              },
+            ),
+            throwsFormatException,
+          );
+        });
+
+        test('should wrap unexpected parsing errors as FormatException', () {
+          final repo = _throwingRepo();
+          expect(
+            () => LocalFirstEvent.fromRemoteJson(
+              repository: repo,
+              json: {
+                'eventId': 'evt-throw',
+                'operation': SyncOperation.insert.index,
+                'createdAt': DateTime.now().toUtc().millisecondsSinceEpoch,
                 'dataId': '1',
                 'data': {'id': '1'},
               },
@@ -318,6 +469,29 @@ void main() {
           expect(updated.syncCreatedAt, original.syncCreatedAt);
           expect(updated.eventId, original.eventId);
         });
+      });
+    });
+
+    group('LocalFirstEventsToJson extension', () {
+      test('should serialize list of events to remote JSON array', () {
+        final repo = _dummyRepo();
+        final insert = LocalFirstEvent.createNewInsertEvent(
+          repository: repo,
+          needSync: false,
+          data: _DummyModel('1'),
+        );
+        final delete = LocalFirstEvent.createNewDeleteEvent<_DummyModel>(
+          repository: repo,
+          needSync: false,
+          dataId: '1',
+        );
+
+        final payload = [insert, delete].toJson();
+
+        expect(payload, hasLength(2));
+        expect(payload.first[LocalFirstEvent.kData], isNotNull);
+        expect(payload.last[LocalFirstEvent.kOperation],
+            SyncOperation.delete.index);
       });
     });
   });

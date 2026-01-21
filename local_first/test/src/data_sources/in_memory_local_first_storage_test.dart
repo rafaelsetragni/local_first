@@ -261,5 +261,166 @@ void main() {
       expect(await storage.getAll(repo.name), isEmpty);
       expect(await storage.getAllEvents(repo.name), isEmpty);
     });
+
+    test('close should terminate active watchers', () async {
+      final stream = storage.watchQuery(baseQuery);
+      final done = expectLater(stream, emitsDone);
+
+      await storage.close();
+      await done;
+    });
+
+    test('ensureSchema should cache schema without throwing', () async {
+      await storage.ensureSchema(
+        repo.name,
+        {'id': LocalFieldType.text},
+        idFieldName: 'id',
+      );
+    });
+
+    test('getEventById should merge data and metadata when available', () async {
+      await writeState(id: 'merge-id', eventId: 'evt-merge-id', age: 10);
+      await writeEvent(
+        _event(
+          eventId: 'evt-merge-id',
+          dataId: 'merge-id',
+          operation: SyncOperation.insert,
+        ),
+      );
+
+      final merged = await storage.getEventById(repo.name, 'evt-merge-id');
+      expect(merged?[LocalFirstEvent.kDataId], 'merge-id');
+      expect(merged?['username'], isNotNull);
+    });
+
+    test('insert should throw when id is missing', () async {
+      expect(
+        () => storage.insert(repo.name, {'username': 'no-id'}, 'id'),
+        throwsArgumentError,
+      );
+    });
+
+    test('insertEvent should throw when id is missing', () async {
+      expect(
+        () => storage.insertEvent(
+          repo.name,
+          {LocalFirstEvent.kDataId: '1'},
+          LocalFirstEvent.kEventId,
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('update should preserve legacy lastEventId values', () async {
+      await writeState(id: 'legacy-last', eventId: 'evt-legacy-last');
+
+      await storage.update(
+        repo.name,
+        'legacy-last',
+        {
+          'id': 'legacy-last',
+          '_lasteventId': 'legacy-last-event',
+          'username': 'updated',
+        },
+      );
+
+      final updated = await storage.getById(repo.name, 'legacy-last');
+      expect(updated?[LocalFirstEvent.kLastEventId], 'legacy-last-event');
+    });
+
+    test('deleteAll and deleteAllEvents clear respective tables', () async {
+      await writeState(id: 'wipe', eventId: 'evt-wipe');
+      await writeEvent(
+        _event(
+          eventId: 'evt-wipe',
+          dataId: 'wipe',
+          operation: SyncOperation.insert,
+        ),
+      );
+
+      await storage.deleteAll(repo.name);
+      expect(await storage.getAll(repo.name), isEmpty);
+
+      await storage.deleteAllEvents(repo.name);
+      expect(await storage.getAllEvents(repo.name), isEmpty);
+    });
+
+    test('insertEvent should backfill dataId when missing', () async {
+      await storage.insertEvent(
+        repo.name,
+        {
+          LocalFirstEvent.kEventId: 'evt-no-data-id',
+          LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+          LocalFirstEvent.kOperation: SyncOperation.insert.index,
+          LocalFirstEvent.kSyncCreatedAt:
+              DateTime.now().toUtc().millisecondsSinceEpoch,
+        },
+        LocalFirstEvent.kEventId,
+      );
+
+      final fetched = await storage.getEventById(repo.name, 'evt-no-data-id');
+      expect(fetched?[LocalFirstEvent.kDataId], 'evt-no-data-id');
+    });
+
+    test('should throw when used before initialization', () async {
+      final fresh = InMemoryLocalFirstStorage();
+
+      expect(() => fresh.getAll(repo.name), throwsA(isA<StateError>()));
+    });
+
+    test('should normalize legacy keys for data and events', () async {
+      await storage.insert(
+        repo.name,
+        {
+          'id': 'legacy',
+          '_last_event_id': 'evt-legacy',
+          '_sync_status': SyncStatus.pending.index,
+          '_sync_operation': SyncOperation.insert.index,
+          '_sync_created_at': 1,
+        },
+        'id',
+      );
+      await storage.insertEvent(
+        repo.name,
+        {
+          '_event_id': 'evt-legacy',
+          '_data_id': 'legacy',
+          '_sync_status': SyncStatus.ok.index,
+          '_sync_operation': SyncOperation.insert.index,
+          '_sync_created_at': 2,
+        },
+        LocalFirstEvent.kEventId,
+      );
+
+      final fetched = await storage.getById(repo.name, 'legacy');
+      expect(fetched?[LocalFirstEvent.kEventId], 'evt-legacy');
+      expect(fetched?[LocalFirstEvent.kSyncStatus], SyncStatus.ok.index);
+      expect(fetched?[LocalFirstEvent.kSyncCreatedAt], 2);
+    });
+
+    test('query should short-circuit when whereIn is empty', () async {
+      final results = await storage.query(
+        baseQuery.where('id', whereIn: const []),
+      );
+
+      expect(results, isEmpty);
+    });
+
+    test('getById should retain lastEventId even when event metadata missing',
+        () async {
+      await storage.insert(
+        repo.name,
+        {
+          'id': 'missing-meta',
+          LocalFirstEvent.kLastEventId: 'ghost',
+          'username': 'ghost',
+        },
+        'id',
+      );
+
+      final fetched = await storage.getById(repo.name, 'missing-meta');
+      expect(fetched?[LocalFirstEvent.kLastEventId], 'ghost');
+      expect(fetched?[LocalFirstEvent.kSyncStatus], isNull);
+    });
   });
 }

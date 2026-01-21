@@ -370,5 +370,38 @@ void main() {
 
       expect(value, 'v');
     });
+
+    test('should support deprecated key/value helpers', () async {
+      final repo = _SpyRepository('legacy');
+      final client = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        syncStrategies: [strategy],
+      );
+
+      await client.setKeyValue('legacy-key', 'legacy-value');
+      final value = await client.getKeyValue('legacy-key');
+
+      expect(value, 'legacy-value');
+      // Exercise the deprecated methods directly for coverage.
+      expect(await client.getKeyValue('missing'), isNull);
+      await client.setKeyValue('legacy-key', 'legacy-value-2');
+    });
+
+    test('TestHelperLocalFirstClient should expose internals for testing', () {
+      final repo = _SpyRepository('r1');
+      final client = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        syncStrategies: [strategy],
+      );
+      final helper = TestHelperLocalFirstClient(client);
+
+      expect(helper.repositories.single, same(repo));
+      expect(helper.onInitializeCompleter.isCompleted, isFalse);
+      expect(helper.connectionController.isClosed, isFalse);
+      expect(helper.latestConnection, isNull);
+      helper.connectionController.add(true);
+    });
   });
 }
