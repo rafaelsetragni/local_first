@@ -6,7 +6,11 @@ part of '../../local_first.dart';
 /// intended for tests or lightweight scenarios where persistence is not needed.
 class InMemoryConfigKeyValueStorage implements ConfigKeyValueStorage {
   bool _initialized = false;
-  final Map<String, Object> _metadata = {};
+  String _namespace = 'default';
+  final Map<String, Map<String, Object>> _namespacedMetadata = {};
+
+  Map<String, Object> get _metadata =>
+      _namespacedMetadata.putIfAbsent(_namespace, () => {});
 
   void _ensureInitialized() {
     if (!_initialized) {
@@ -32,8 +36,16 @@ class InMemoryConfigKeyValueStorage implements ConfigKeyValueStorage {
 
   @override
   Future<void> close() async {
-    _metadata.clear();
+    _namespacedMetadata.clear();
+    _namespace = 'default';
     _initialized = false;
+  }
+
+  @override
+  Future<void> useNamespace(String namespace) async {
+    if (_namespace == namespace) return;
+    _namespace = namespace;
+    if (!_initialized) return;
   }
 
   @override

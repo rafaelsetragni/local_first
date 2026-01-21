@@ -4,11 +4,25 @@ part of '../../local_first.dart';
 class InMemoryLocalFirstStorage implements LocalFirstStorage {
   bool _initialized = false;
 
-  final JsonMap<Map<String, JsonMap>> _data = {};
-  final JsonMap<Map<String, JsonMap>> _events = {};
-  final Map<String, Object> _metadata = {};
-  final JsonMap<Set<_InMemoryQueryObserver>> _observers = {};
-  final JsonMap<JsonMap<LocalFieldType>> _schemas = {};
+  String _namespace = 'default';
+
+  final Map<String, JsonMap<Map<String, JsonMap>>> _dataByNamespace = {};
+  final Map<String, JsonMap<Map<String, JsonMap>>> _eventsByNamespace = {};
+  final Map<String, Map<String, Object>> _metadataByNamespace = {};
+  final Map<String, JsonMap<Set<_InMemoryQueryObserver>>> _observersByNamespace =
+      {};
+  final Map<String, JsonMap<JsonMap<LocalFieldType>>> _schemasByNamespace = {};
+
+  JsonMap<Map<String, JsonMap>> get _data =>
+      _dataByNamespace.putIfAbsent(_namespace, () => {});
+  JsonMap<Map<String, JsonMap>> get _events =>
+      _eventsByNamespace.putIfAbsent(_namespace, () => {});
+  Map<String, Object> get _metadata =>
+      _metadataByNamespace.putIfAbsent(_namespace, () => {});
+  JsonMap<Set<_InMemoryQueryObserver>> get _observers =>
+      _observersByNamespace.putIfAbsent(_namespace, () => {});
+  JsonMap<JsonMap<LocalFieldType>> get _schemas =>
+      _schemasByNamespace.putIfAbsent(_namespace, () => {});
 
   static const Set<String> _metadataKeys = {
     LocalFirstEvent.kEventId,
@@ -26,11 +40,21 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
   @override
   Future<void> close() async {
     if (!_initialized) return;
-    for (final observer in _observers.values.expand((o) => o).toList()) {
-      await observer.controller.close();
+    for (final observerSet in _observersByNamespace.values) {
+      for (final observer in observerSet.values.expand((o) => o).toList()) {
+        await observer.controller.close();
+      }
+      observerSet.clear();
     }
-    _observers.clear();
     _initialized = false;
+  }
+
+  @override
+  Future<void> useNamespace(String namespace) async {
+    if (_namespace == namespace) return;
+    await close();
+    _namespace = namespace;
+    await initialize();
   }
 
   @visibleForTesting

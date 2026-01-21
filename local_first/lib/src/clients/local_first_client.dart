@@ -108,6 +108,15 @@ class LocalFirstClient {
     }
   }
 
+  /// Switches the active namespace/database for both the main storage and the
+  /// optional config storage delegate.
+  Future<void> useNamespace(String namespace) async {
+    await _localStorage.useNamespace(namespace);
+    if (!identical(_configStorage, _localStorage)) {
+      await _configStorage.useNamespace(namespace);
+    }
+  }
+
   /// Disposes the LocalFirstClient instance and closes the local database.
   ///
   /// Call this when you're done using the LocalFirstClient instance.

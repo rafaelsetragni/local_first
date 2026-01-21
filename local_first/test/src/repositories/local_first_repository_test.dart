@@ -82,6 +82,9 @@ class _StubStorage implements LocalFirstStorage {
   Future<Set<String>> getConfigKeys() async => {};
 
   @override
+  Future<void> useNamespace(String namespace) async {}
+
+  @override
   Future<void> initialize() async {}
 
   @override

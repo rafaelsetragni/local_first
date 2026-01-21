@@ -92,6 +92,9 @@ class _NoopStorage implements LocalFirstStorage {
   Future<T?> getConfigValue<T>(String key) async => null;
 
   @override
+  Future<void> useNamespace(String namespace) async {}
+
+  @override
   Future<bool> removeConfig(String key) async => true;
 
   @override
@@ -184,6 +187,9 @@ class _RecordingStorage implements LocalFirstStorage {
 
   @override
   Future<T?> getConfigValue<T>(String key) async => null;
+
+  @override
+  Future<void> useNamespace(String namespace) async {}
 
   @override
   Future<bool> removeConfig(String key) async => true;

@@ -7,6 +7,7 @@ class _SpyStorage implements LocalFirstStorage {
   int initialized = 0;
   int cleared = 0;
   int closed = 0;
+  int namespaceChanges = 0;
   final Map<String, Object?> meta = {};
 
   @override
@@ -17,6 +18,11 @@ class _SpyStorage implements LocalFirstStorage {
   @override
   Future<void> close() async {
     closed++;
+  }
+
+  @override
+  Future<void> useNamespace(String namespace) async {
+    namespaceChanges++;
   }
 
   @override
@@ -130,6 +136,7 @@ class _SpyStorage implements LocalFirstStorage {
 class _SpyConfigStorage implements ConfigKeyValueStorage {
   int initialized = 0;
   int closed = 0;
+  int namespaceChanges = 0;
   final Map<String, Object?> meta = {};
 
   @override
@@ -167,6 +174,11 @@ class _SpyConfigStorage implements ConfigKeyValueStorage {
   @override
   Future<void> initialize() async {
     initialized++;
+  }
+
+  @override
+  Future<void> useNamespace(String namespace) async {
+    namespaceChanges++;
   }
 }
 
@@ -453,6 +465,21 @@ void main() {
 
       await client.dispose();
       expect(configStorage.closed, 1);
+    });
+
+    test('useNamespace propagates to both storages when different', () async {
+      final repo = _SpyRepository('r1');
+      final configStorage = _SpyConfigStorage();
+      final client = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        keyValueStorage: configStorage,
+        syncStrategies: [strategy],
+      );
+
+      await client.useNamespace('ns1');
+      expect(storage.namespaceChanges, 1);
+      expect(configStorage.namespaceChanges, 1);
     });
 
     test('should support deprecated key/value helpers', () async {

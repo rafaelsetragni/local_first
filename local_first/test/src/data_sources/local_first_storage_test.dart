@@ -19,6 +19,7 @@ class _FakeStorage extends LocalFirstStorage {
   bool initialized = false;
   bool closed = false;
   bool cleared = false;
+  int namespaceChanges = 0;
   final Map<String, Object?> meta = {};
   final List<JsonMap> events = [];
   List<LocalFirstEvent<dynamic>> lastEmittedEvents = const [];
@@ -37,6 +38,11 @@ class _FakeStorage extends LocalFirstStorage {
   Future<void> close() async {
     closed = true;
     await _controller.close();
+  }
+
+  @override
+  Future<void> useNamespace(String namespace) async {
+    namespaceChanges++;
   }
 
   @override

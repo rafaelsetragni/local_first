@@ -307,6 +307,15 @@ void main() {
       expect(await storage.getConfigKeys(), isEmpty);
     });
 
+    test('useNamespace isolates config values in-memory', () async {
+      await storage.setConfigValue('k', 'v1');
+      await storage.useNamespace('other');
+      expect(await storage.getConfigValue('k'), isNull);
+      await storage.setConfigValue('k', 'v2');
+      await storage.useNamespace('default');
+      expect(await storage.getConfigValue('k'), 'v1');
+    });
+
     test('close should terminate active watchers', () async {
       final stream = storage.watchQuery(baseQuery);
       final done = expectLater(stream, emitsDone);

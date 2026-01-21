@@ -101,6 +101,9 @@ class _StorageStub implements LocalFirstStorage {
   Future<bool> containsId(String tableName, String id) async => false;
 
   @override
+  Future<void> useNamespace(String namespace) async {}
+
+  @override
   Future<void> ensureSchema(
     String tableName,
     JsonMap<LocalFieldType> schema, {

@@ -12,6 +12,9 @@ abstract class ConfigKeyValueStorage {
   /// Closes the storage backend and releases resources.
   Future<void> close();
 
+  /// Switches the active namespace/database when supported.
+  Future<void> useNamespace(String namespace);
+
   /// Returns whether a given key exists.
   Future<bool> containsConfigKey(String key);
 

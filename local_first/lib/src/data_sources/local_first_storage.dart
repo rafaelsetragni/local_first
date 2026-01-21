@@ -24,6 +24,10 @@ abstract class LocalFirstStorage implements ConfigKeyValueStorage {
   @override
   Future<void> initialize();
 
+  /// Switches the active namespace/database when supported.
+  @override
+  Future<void> useNamespace(String namespace);
+
   /// Closes the database connection.
   ///
   /// Called when disposing the LocalFirstClient instance.
