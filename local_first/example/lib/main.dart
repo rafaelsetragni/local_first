@@ -4,7 +4,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:local_first/local_first.dart';
-import 'package:local_first_hive_storage/local_first_hive_storage.dart';
+import 'package:local_first/local_first.dart';
 import 'package:mongo_dart/mongo_dart.dart' hide State, Center;
 
 // To use this example, first you need to start a MongoDB service, and
@@ -786,7 +786,7 @@ class RepositoryService {
         counterLogRepository,
         sessionCounterRepository,
       ],
-      localStorage: HiveLocalFirstStorage(),
+      localStorage: InMemoryLocalFirstStorage(),
       syncStrategies: [syncStrategy],
     );
 
@@ -900,16 +900,14 @@ class RepositoryService {
 
   Future<T> _withGlobalString<T>(Future<T> Function() action) async {
     final storage = localFirst?.localStorage;
-    if (storage is HiveLocalFirstStorage) {
-      final previous = storage.namespace;
-      await storage.useNamespace('default');
-      try {
-        return await action();
-      } finally {
-        await storage.useNamespace(previous);
-      }
+    if (storage == null) return await action();
+    final previous = _currentNamespace;
+    await storage.useNamespace('default');
+    try {
+      return await action();
+    } finally {
+      await storage.useNamespace(previous);
     }
-    return await action();
   }
 
   String _sessionMetaKey(String username) {
@@ -1094,10 +1092,7 @@ class RepositoryService {
     _currentNamespace = namespace;
     syncStrategy.namespace = namespace;
 
-    final storage = db.localStorage;
-    if (storage is HiveLocalFirstStorage) {
-      await storage.useNamespace(namespace);
-    }
+    await db.localStorage.useNamespace(namespace);
   }
 
   /// Normalizes a username into a namespace-safe string.
