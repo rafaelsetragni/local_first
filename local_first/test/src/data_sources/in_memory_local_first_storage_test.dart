@@ -10,11 +10,15 @@ class _User {
 
   JsonMap toJson() => {'id': id, 'username': username, 'age': age};
 
-  factory _User.fromJson(JsonMap json) => _User(
-        json['id'] as String,
-        json['username'] as String,
-        age: (json['age'] as num?)?.toInt() ?? 0,
-      );
+  factory _User.fromJson(JsonMap json) {
+    final parsedAge = (json['age'] as num?)?.toInt() ?? 0;
+    if (parsedAge < 0) throw ArgumentError('Invalid age');
+    return _User(
+      json['id'] as String,
+      json['username'] as String,
+      age: parsedAge,
+    );
+  }
 }
 
 JsonMap _event({
@@ -333,6 +337,57 @@ void main() {
       final result = await storage.getEventById('unknown-table', 'evt-missing');
 
       expect(result, isNull);
+    });
+
+    test('getById should return null when table is missing', () async {
+      final result = await storage.getById('ghost-table', 'any-id');
+
+      expect(result, isNull);
+    });
+
+    test('getById should return null when id is absent in table', () async {
+      await writeState(id: 'exists', eventId: 'evt-exists');
+
+      final result = await storage.getById(repo.name, 'missing-id');
+
+      expect(result, isNull);
+    });
+
+    test('query should skip entries when repository fromJson throws', () async {
+      final throwingRepo = LocalFirstRepository<_User>.create(
+        name: 'invalid-users',
+        getId: (u) => u.id,
+        toJson: (u) => u.toJson(),
+        fromJson: _User.fromJson,
+      );
+      final query = LocalFirstQuery<_User>(
+        repositoryName: throwingRepo.name,
+        delegate: storage,
+        repository: throwingRepo,
+      );
+      await storage.insert(
+        throwingRepo.name,
+        {
+          'id': 'u-throw',
+          'username': 'bad',
+          'age': -1,
+          LocalFirstEvent.kLastEventId: 'evt-throw',
+        },
+        'id',
+      );
+      await storage.insertEvent(
+        throwingRepo.name,
+        _event(
+          eventId: 'evt-throw',
+          dataId: 'u-throw',
+          operation: SyncOperation.insert,
+        ),
+        LocalFirstEvent.kEventId,
+      );
+
+      final events = await storage.query(query);
+
+      expect(events, isEmpty);
     });
 
     test('query should ignore malformed entries while parsing', () async {
