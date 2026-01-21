@@ -33,6 +33,25 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     _initialized = false;
   }
 
+  @visibleForTesting
+  Future<void> addClosedObserverForTest(String repositoryName) async {
+    final controller =
+        StreamController<List<LocalFirstEvent<dynamic>>>.broadcast();
+    await controller.close();
+    final observer = _InMemoryQueryObserver<dynamic>(
+      emit: () async {},
+      controller: controller,
+    );
+    _observers
+        .putIfAbsent(repositoryName, () => <_InMemoryQueryObserver>{})
+        .add(observer);
+    await observer.emit();
+  }
+
+  @visibleForTesting
+  int observerCount(String repositoryName) =>
+      _observers[repositoryName]?.length ?? 0;
+
   void _ensureInitialized() {
     if (!_initialized) {
       throw StateError(

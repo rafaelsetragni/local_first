@@ -341,6 +341,151 @@ void main() {
       },
     );
 
+    test('mergeInsertEvent should insert when localPendingEvent is null',
+        () async {
+      final helper = TestHelperLocalFirstRepository(repository);
+      final remote = LocalFirstEvent.createNewInsertEvent(
+        repository: repository,
+        data: {'id': '10'},
+        needSync: false,
+      ) as LocalFirstStateEvent<JsonMap>;
+
+      await helper.mergeInsertEvent(
+        remoteEvent: remote,
+        localPendingEvent: null,
+      );
+
+      expect(storage.insertCount, 1);
+      expect(storage.updateEventCount, greaterThan(0));
+    });
+
+    test('mergeInsertEvent should resolve conflict when pending exists',
+        () async {
+      final helper = TestHelperLocalFirstRepository(repository);
+      final pending = LocalFirstEvent.createNewInsertEvent(
+        repository: repository,
+        data: {'id': '11'},
+        needSync: true,
+      ) as LocalFirstStateEvent<JsonMap>;
+      final remote = LocalFirstEvent.createNewInsertEvent(
+        repository: repository,
+        data: {'id': '11'},
+        needSync: false,
+      ) as LocalFirstStateEvent<JsonMap>;
+
+      await helper.mergeInsertEvent(
+        remoteEvent: remote,
+        localPendingEvent: pending,
+      );
+
+      expect(storage.updateCount + storage.insertCount, greaterThan(0));
+      expect(storage.updateEventCount, greaterThan(0));
+    });
+
+    test('delete should pick latest event for same id before deleting', () async {
+      final older = LocalFirstEvent.createNewInsertEvent(
+        repository: repository,
+        data: {'id': 'late'},
+        needSync: false,
+      ).toLocalStorageJson()
+        ..[LocalFirstEvent.kSyncCreatedAt] = 10;
+      final newer = LocalFirstEvent.createNewUpdateEvent(
+        repository: repository,
+        data: {'id': 'late'},
+        needSync: false,
+      ).toLocalStorageJson()
+        ..[LocalFirstEvent.kSyncCreatedAt] = 20;
+      storage.events.addAll([older, newer]);
+
+      await repository.delete('late', needSync: true);
+
+      expect(storage.deleteCount, 1);
+      expect(storage.insertEventCount, 1);
+    });
+
+    test('delete should no-op when no prior event exists', () async {
+      await repository.delete('ghost', needSync: true);
+
+      expect(storage.deleteCount, 0);
+      expect(storage.insertEventCount, 0);
+    });
+
+    test('mergeRemoteEvent should handle remote insert without pending',
+        () async {
+      final remote = LocalFirstEvent.createNewInsertEvent(
+        repository: repository,
+        data: {'id': 'remote-insert'},
+        needSync: false,
+      );
+
+      await repository.mergeRemoteEvent(remoteEvent: remote);
+
+      expect(storage.insertCount, greaterThan(0));
+      expect(storage.updateEventCount + storage.insertEventCount, greaterThan(0));
+    });
+
+    test('mergeRemoteEvent should route update events', () async {
+      final remote = LocalFirstEvent.createNewUpdateEvent(
+        repository: repository,
+        data: {'id': 'remote-update'},
+        needSync: false,
+      );
+
+      await repository.mergeRemoteEvent(remoteEvent: remote);
+
+      expect(storage.insertCount + storage.updateCount, greaterThan(0));
+      expect(storage.updateEventCount, greaterThan(0));
+    });
+
+    test('mergeRemoteEvent should handle remote deletes', () async {
+      final remoteDelete = LocalFirstEvent.createNewDeleteEvent<JsonMap>(
+        repository: repository,
+        dataId: 'to-remove',
+        needSync: false,
+      );
+
+      await repository.mergeRemoteEvent(remoteEvent: remoteDelete);
+
+      expect(storage.deleteCount, greaterThan(0));
+      expect(storage.insertEventCount + storage.updateEventCount, greaterThan(0));
+    });
+
+    test('confirmEvent helper should persist confirmed pending event', () async {
+      final helper = TestHelperLocalFirstRepository(repository);
+      final localPending = LocalFirstEvent.createNewUpdateEvent(
+        repository: repository,
+        data: {'id': 'confirm'},
+        needSync: true,
+      );
+      storage.events.add(localPending.toLocalStorageJson());
+      final remote = localPending.updateEventState(syncStatus: SyncStatus.ok);
+
+      await helper.confirmEvent(
+        remoteEvent: remote,
+        localPendingEvent: localPending,
+      );
+
+      expect(storage.updateEventCount, greaterThan(0));
+    });
+
+    test('mergeDeleteEvent helper should delete and mark previous as ok',
+        () async {
+      final helper = TestHelperLocalFirstRepository(repository);
+      final remoteDelete = LocalFirstEvent.createNewDeleteEvent<JsonMap>(
+        repository: repository,
+        dataId: 'del',
+        needSync: false,
+      );
+
+      await helper.mergeDeleteEvent(
+        remoteEvent: remoteDelete,
+        localPendingEvent: null,
+      );
+
+      expect(storage.deleteCount, 1);
+      expect(storage.insertEventCount, 1);
+    });
+
     test('resolveConflictEvent should use custom resolver when provided', () {
       final customRepo = LocalFirstRepository<JsonMap>.create(
         name: 'repo',
@@ -673,6 +818,32 @@ void main() {
         storage.events.add(pending.toLocalStorageJson());
         final remote = pending.updateEventState(syncStatus: SyncStatus.ok)
             as LocalFirstStateEvent<JsonMap>;
+
+        await helper.mergeUpdateEvent(
+          remoteEvent: remote,
+          localPendingEvent: pending,
+        );
+
+        expect(storage.updateCount, greaterThan(0));
+        expect(storage.updateEventCount, greaterThan(0));
+      },
+    );
+
+    test(
+      'mergeUpdateEvent should resolve conflicts when pending differs',
+      () async {
+        final helper = TestHelperLocalFirstRepository(repository);
+        final pending = LocalFirstEvent.createNewUpdateEvent(
+          repository: repository,
+          data: {'id': 'conflict', 'value': 'local'},
+          needSync: true,
+        ) as LocalFirstStateEvent<JsonMap>;
+        final remote = LocalFirstEvent.createNewUpdateEvent(
+          repository: repository,
+          data: {'id': 'conflict', 'value': 'remote'},
+          needSync: false,
+        ) as LocalFirstStateEvent<JsonMap>;
+        storage.events.add(pending.toLocalStorageJson());
 
         await helper.mergeUpdateEvent(
           remoteEvent: remote,

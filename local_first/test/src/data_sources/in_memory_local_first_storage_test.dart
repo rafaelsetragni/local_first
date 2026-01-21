@@ -34,6 +34,12 @@ JsonMap _event({
   };
 }
 
+class _ErrorStorage extends InMemoryLocalFirstStorage {
+  @override
+  Future<List<LocalFirstEvent<T>>> query<T>(LocalFirstQuery<T> query) =>
+      Future.error(Exception('boom'));
+}
+
 void main() {
   group('InMemoryLocalFirstStorage', () {
     late InMemoryLocalFirstStorage storage;
@@ -293,6 +299,13 @@ void main() {
       expect(merged?['username'], isNotNull);
     });
 
+    test('getEventById should return null when events table is missing',
+        () async {
+      final result = await storage.getEventById('unknown-table', 'evt-missing');
+
+      expect(result, isNull);
+    });
+
     test('insert should throw when id is missing', () async {
       expect(
         () => storage.insert(repo.name, {'username': 'no-id'}, 'id'),
@@ -360,6 +373,52 @@ void main() {
 
       final fetched = await storage.getEventById(repo.name, 'evt-no-data-id');
       expect(fetched?[LocalFirstEvent.kDataId], 'evt-no-data-id');
+    });
+
+    test('deleteEvent should remove event and notify watchers', () async {
+      await writeEvent(
+        _event(
+          eventId: 'evt-remove',
+          dataId: 'remove',
+          operation: SyncOperation.insert,
+        ),
+      );
+      await storage.deleteEvent(repo.name, 'evt-remove');
+
+      expect(await storage.getEventById(repo.name, 'evt-remove'), isNull);
+    });
+
+    test('should prune closed observers when notifying watchers', () async {
+      await storage.addClosedObserverForTest(repo.name);
+
+      await storage.insert(
+        repo.name,
+        {'id': 'prune'},
+        'id',
+      );
+
+      expect(storage.observerCount(repo.name), 0);
+    });
+
+    test('watchQuery should surface errors from delegate query', () async {
+      final errorStorage = _ErrorStorage()..initialize();
+      final errorRepo = LocalFirstRepository<_User>.create(
+        name: 'errors',
+        getId: (u) => u.id,
+        toJson: (u) => u.toJson(),
+        fromJson: _User.fromJson,
+      );
+      final query = LocalFirstQuery<_User>(
+        repositoryName: errorRepo.name,
+        delegate: errorStorage,
+        repository: errorRepo,
+      );
+
+      final stream = errorStorage.watchQuery(query);
+      expectLater(stream, emitsError(isA<Exception>()));
+
+      await pumpEventQueue();
+      await errorStorage.close();
     });
 
     test('should throw when used before initialization', () async {

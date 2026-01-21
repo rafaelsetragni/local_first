@@ -280,6 +280,24 @@ void main() {
           expect(event.dataId, '1');
         });
 
+        test('should build delete event with dataId', () {
+          final repo = _dummyRepo();
+          final json = {
+            'eventId': 'evt-del',
+            'operation': SyncOperation.delete.index,
+            'createdAt': DateTime.now().toUtc().millisecondsSinceEpoch,
+            'dataId': '99',
+          };
+
+          final event = LocalFirstEvent.fromRemoteJson(
+            repository: repo,
+            json: json,
+          ) as LocalFirstDeleteEvent<_DummyModel>;
+
+          expect(event.dataId, '99');
+          expect(event.data, isNull);
+        });
+
         test('should parse createdAt when provided as ISO string', () {
           final repo = _dummyRepo();
           final json = {
@@ -332,6 +350,7 @@ void main() {
           expect(remote[LocalFirstEvent.kSyncCreatedAt], isA<DateTime>());
           expect(local[LocalFirstEvent.kSyncCreatedAt], isA<int>());
           expect(updated.syncStatus, SyncStatus.failed);
+          expect(event.data, isNull);
         });
       });
       group('exceptions', () {
@@ -468,6 +487,35 @@ void main() {
           expect(updated.syncOperation, SyncOperation.update);
           expect(updated.syncCreatedAt, original.syncCreatedAt);
           expect(updated.eventId, original.eventId);
+        });
+
+        test('delete events should preserve dataId when updating status', () {
+          final repo = _dummyRepo();
+          final delete = LocalFirstEvent.createNewDeleteEvent<_DummyModel>(
+            repository: repo,
+            needSync: true,
+            dataId: 'dead-1',
+          ) as LocalFirstDeleteEvent<_DummyModel>;
+
+          final updated = delete.updateEventState(syncStatus: SyncStatus.ok);
+
+          expect(updated.dataId, 'dead-1');
+          expect(updated.syncStatus, SyncStatus.ok);
+          expect(updated.data, isNull);
+        });
+
+        test('delete updateEventState should default to existing status', () {
+          final repo = _dummyRepo();
+          final delete = LocalFirstEvent.createNewDeleteEvent<_DummyModel>(
+            repository: repo,
+            needSync: true,
+            dataId: 'dead-2',
+          ) as LocalFirstDeleteEvent<_DummyModel>;
+
+          final updated = delete.updateEventState();
+
+          expect(updated.syncStatus, delete.syncStatus);
+          expect(updated.syncOperation, delete.syncOperation);
         });
       });
     });
