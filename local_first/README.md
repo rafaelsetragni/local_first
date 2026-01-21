@@ -12,17 +12,75 @@
 
 Local-first data layer for Flutter apps that keeps your data available offline and synchronizes when the network returns. The goal is to provide a lightweight, pluggable engine that works with common local stores (Hive, SQLite, etc.) and can sync to any backend through custom strategies.
 
+Data tables are hydrated from the event stream, and the plugins remain compatible with pre-existing data tables—you don’t need to drop or recreate existing records to adopt local_first.
+
 > Status: early preview. The package is in active development (final stages) and the public API may change before the first stable release. Use the examples below as guidance for the intended design.
 
 ![Demo](https://live-update-demo.rafaelsetra.workers.dev/)
 
 ## Why local_first?
 
+- Local-first by design: build apps that keep ownership/control of data without relying on third-party services.
 - Fast, responsive apps that read/write locally first and sync in the background.
 - Works without a network connection; queues changes and resolves conflicts when back online.
-- Storage-agnostic: start with our Hive, SQLite, or your preferred custom database implementation.
+- Storage-agnostic: start with our Hive, SQLite, config-only SharedPreferences adapter, or your preferred custom database implementation. Data tables hydrate from events and stay compatible with existing tables—no rebuilds required.
 - Backend-agnostic: create your sync strategies, so you can integrate with your existent REST, gRPC, WebSockets, etc.
 - Minimal boilerplate: declare the storage, register your models with repositories, and start syncing.
+
+## Local-first principle
+
+Local-first apps give users instant feedback by reading and writing to the device first, even with no network. The sync layer runs in the background: when connectivity returns, queued changes are pushed and remote updates are pulled. Your UI never blocks on the server; the storage delegate is the primary interface your repositories talk to.
+
+## Source of truth
+
+During a session, the local database is the working source of truth. Remote systems are reconciled via pull/push cycles driven by your sync strategy. Namespacing (e.g., per user) lets you isolate data domains so a sign-in swap is just a `useNamespace` call on storage and config.
+
+The event table is the single source of truth. Every change is captured as an event (`event_id` + `created_at`, both UUID v7-based) and pushed to the backend; child apps pull those events to converge on eventual consistency. Multiple sync strategies can run concurrently, and idempotency is guaranteed by event identifiers so duplicates are ignored rather than reprocessed. Storage plugins hydrate the data tables from events, but they remain compatible with pre-existing data tables: the event stream drives state forward without requiring you to drop or recreate existing records.
+
+## Conflict resolution
+
+Plan your data model to avoid hotspots: prefer append-only logs, split records so multiple writers don’t touch the same row, and keep timestamps in UTC. If concurrent edits still happen, plug in resolution rules per repository—last-write-wins, timestamp comparison, or custom merge callbacks—to decide which state should prevail when syncing.
+
+### Conflict resolution modes
+
+- **Last-write-wins (LWW):** pick the event with the latest `updated_at` (or another monotonic field).
+- **Timestamp comparison:** prefer remote/local based on creation/update timestamps.
+- **Custom resolver:** implement domain-specific merge logic (e.g., merge maps, sum counters, reconcile lists).
+
+Example: registering LWW with `onConflict` when creating a repository:
+
+```dart
+final todoRepository = LocalFirstRepository<Todo>.create(
+  name: 'todo',
+  getId: (todo) => todo.id,
+  toJson: (todo) => todo.toJson(),
+  fromJson: Todo.fromJson,
+  onConflictEvent: (local, remote) {
+    final localUpdated = local.data.updatedAt;
+    final remoteUpdated = remote.data.updatedAt;
+    return remoteUpdated.isAfter(localUpdated) ? remote : local;
+  },
+);
+```
+
+## Server sync index
+
+Keep a remote cursor per repository (commonly `server_sequence` or `server_created_at`) so pulls fetch only new/changed events. Store this cursor in config/meta storage and advance it after each successful pull; this keeps sync idempotent and efficient when talking to any backend API.
+
+## Example app overview
+
+The bundled demo is a multi-user, namespaced counter with user profiles and session counters. It shows repositories talking to storage, config/meta reads/writes, and a sync strategy exchanging events with a mock backend. Use it as a blueprint for wiring your own models and strategies.
+
+## Running the examples
+
+Each adapter ships the same demo. Choose the storage you want to explore and run:
+
+- `local_first/example` (in-memory for dev)
+- `local_first_hive_storage/example` (Hive storage)
+- `local_first_sqlite_storage/example` (SQLite storage)
+- `local_first_shared_preferences/example` (config-only storage)
+
+From inside the chosen folder: `flutter run`.
 
 ## Features
 
@@ -39,9 +97,10 @@ Add the dependency to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  local_first: ^0.5.0
-  local_first_hive_storage: ^0.0.1  # optional
-  local_first_sqlite_storage: ^0.0.1 # optional
+  local_first: ^0.6.0
+  local_first_hive_storage: ^0.2.0  # optional
+  local_first_sqlite_storage: ^0.2.0 # optional
+  local_first_shared_preferences: ^0.1.0 # optional (config storage only)
 ```
 
 Then install it with:
