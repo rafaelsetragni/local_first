@@ -269,13 +269,13 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<void> setString(String key, String value) async {
+  Future<void> setConfigValue(String key, String value) async {
     _ensureInitialized();
     _metadata[key] = value;
   }
 
   @override
-  Future<String?> getString(String key) async {
+  Future<String?> getConfigValue(String key) async {
     _ensureInitialized();
     return _metadata[key];
   }

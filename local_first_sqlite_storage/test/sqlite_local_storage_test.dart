@@ -351,12 +351,12 @@ void main() {
         status: SyncStatus.ok,
         eventId: 'evt-1',
       );
-      await storage.setString('meta', 'value');
+      await storage.setConfigValue('meta', 'value');
 
       await storage.clearAllData();
 
       expect(await storage.getAll('users'), isEmpty);
-      expect(await storage.getString('meta'), isNull);
+      expect(await storage.getConfigValue('meta'), isNull);
     });
 
     test('useNamespace switches databases', () async {
@@ -438,10 +438,10 @@ void main() {
       expect(await storage.getAll('users'), isEmpty);
     });
 
-    test('setString/getString roundtrip and null when missing', () async {
-      expect(await storage.getString('k'), isNull);
-      await storage.setString('k', 'v');
-      expect(await storage.getString('k'), 'v');
+    test('setConfigValue/getConfigValue roundtrip and null when missing', () async {
+      expect(await storage.getConfigValue('k'), isNull);
+      await storage.setConfigValue('k', 'v');
+      expect(await storage.getConfigValue('k'), 'v');
     });
 
     test('containsId returns false when table empty', () async {

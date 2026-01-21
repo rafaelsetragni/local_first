@@ -357,7 +357,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<void> setString(String key, String value) async {
+  Future<void> setConfigValue(String key, String value) async {
     final db = await _database;
     await _ensureMetadataTable();
 
@@ -383,7 +383,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<String?> getString(String key) async {
+  Future<String?> getConfigValue(String key) async {
     final db = await _database;
     await _ensureMetadataTable();
 

@@ -109,12 +109,12 @@ class _FakeStorage extends LocalFirstStorage {
   }
 
   @override
-  Future<void> setString(String key, String value) async {
+  Future<void> setConfigValue(String key, String value) async {
     meta[key] = value;
   }
 
   @override
-  Future<String?> getString(String key) async => meta[key];
+  Future<String?> getConfigValue(String key) async => meta[key];
 
   @override
   Future<void> ensureSchema(
@@ -154,8 +154,8 @@ void main() {
     });
 
   test('set/get meta', () async {
-      await storage.setString('k', 'v');
-      expect(await storage.getString('k'), 'v');
+      await storage.setConfigValue('k', 'v');
+      expect(await storage.getConfigValue('k'), 'v');
     });
 
     test('insert/update/delete data', () async {

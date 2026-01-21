@@ -80,10 +80,10 @@ class _StorageStub implements LocalFirstStorage {
   Future<void> deleteAllEvents(String tableName) async {}
 
   @override
-  Future<void> setString(String key, String value) async {}
+  Future<void> setConfigValue(String key, String value) async {}
 
   @override
-  Future<String?> getString(String key) async => null;
+  Future<String?> getConfigValue(String key) async => null;
 
   @override
   Future<bool> containsId(String tableName, String id) async => false;

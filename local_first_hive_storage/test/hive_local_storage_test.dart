@@ -113,17 +113,17 @@ void main() {
     });
 
   test('set/get last sync and metadata', () async {
-      await storage.setString('key', 'value');
-      expect(await storage.getString('key'), 'value');
+      await storage.setConfigValue('key', 'value');
+      expect(await storage.getConfigValue('key'), 'value');
     });
 
     test('clearAllData wipes boxes and metadata', () async {
       await storage.insert('users', {'id': '1', 'username': 'Alice'}, 'id');
-      await storage.setString('key', 'value');
+      await storage.setConfigValue('key', 'value');
 
       await storage.clearAllData();
       expect(await storage.getAll('users'), isEmpty);
-      expect(await storage.getString('key'), isNull);
+      expect(await storage.getConfigValue('key'), isNull);
     });
 
     test('namespace isolation with useNamespace', () async {
@@ -428,8 +428,8 @@ void main() {
     test('should throw when used before initialization', () async {
       final fresh = HiveLocalFirstStorage(customPath: tempDir.path);
       expect(() => fresh.getAll('users'), throwsA(isA<StateError>()));
-      expect(() => fresh.setString('k', 'v'), throwsA(isA<StateError>()));
-      expect(() => fresh.getString('k'), throwsA(isA<StateError>()));
+      expect(() => fresh.setConfigValue('k', 'v'), throwsA(isA<StateError>()));
+      expect(() => fresh.getConfigValue('k'), throwsA(isA<StateError>()));
       expect(() => fresh.clearAllData(), throwsA(isA<StateError>()));
       expect(() => fresh.query(buildQuery()), throwsA(isA<StateError>()));
       expect(() => fresh.watchQuery(buildQuery()), throwsA(isA<StateError>()));

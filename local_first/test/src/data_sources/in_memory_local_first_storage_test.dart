@@ -252,7 +252,7 @@ void main() {
     });
 
     test('metadata and clear operations wipe state', () async {
-      await storage.setString('k', 'v');
+      await storage.setConfigValue('k', 'v');
       await writeState(id: 'persist', eventId: 'evt-x');
       await writeEvent(
         _event(
@@ -262,12 +262,12 @@ void main() {
         ),
       );
 
-      expect(await storage.getString('k'), 'v');
+      expect(await storage.getConfigValue('k'), 'v');
       expect(await storage.getAll(repo.name), isNotEmpty);
 
       await storage.clearAllData();
 
-      expect(await storage.getString('k'), isNull);
+      expect(await storage.getConfigValue('k'), isNull);
       expect(await storage.getAll(repo.name), isEmpty);
       expect(await storage.getAllEvents(repo.name), isEmpty);
     });

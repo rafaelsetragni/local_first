@@ -1088,12 +1088,12 @@ class RepositoryService {
 
   Future<String?> _getGlobalString(String key) async {
     if (localFirst == null) return null;
-    return _withGlobalString(() => localFirst!.getString(key));
+    return _withGlobalString(() => localFirst!.getConfigValue(key));
   }
 
   Future<void> _setGlobalString(String key, String value) async {
     if (localFirst == null) return;
-    await _withGlobalString(() => localFirst!.setString(key, value));
+    await _withGlobalString(() => localFirst!.setConfigValue(key, value));
   }
 
   Future<T> _withGlobalString<T>(Future<T> Function() action) async {
@@ -1597,12 +1597,15 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
       'Updated last sync for $repo to ${value.toIso8601String()}',
       name: logTag,
     );
-      await client.setString(_lastSyncKey(repo), value.toIso8601String());
+      await client.setConfigValue(
+        _lastSyncKey(repo),
+        value.toIso8601String(),
+      );
   }
 
   Future<DateTime?> _getLatest(String repo) async {
     return lastSyncedAt[repo] ??= await () async {
-      final value = await client.getString(_lastSyncKey(repo));
+      final value = await client.getConfigValue(_lastSyncKey(repo));
       return _parseDate(value);
     }();
   }

@@ -76,11 +76,11 @@ abstract class LocalFirstStorage {
   /// Deletes all items from the event table/collection.
   Future<void> deleteAllEvents(String tableName);
 
-  /// Stores arbitrary key/value metadata (string) similar to SharedPreferences.
-  Future<void> setString(String key, String value);
+  /// Stores arbitrary key/value metadata for config purposes.
+  Future<void> setConfigValue(String key, String value);
 
-  /// Reads arbitrary key/value metadata (string) similar to SharedPreferences.
-  Future<String?> getString(String key);
+  /// Reads arbitrary key/value metadata for config purposes.
+  Future<String?> getConfigValue(String key);
 
   /// Ensures the storage backend has an up-to-date schema for a repository.
   ///
