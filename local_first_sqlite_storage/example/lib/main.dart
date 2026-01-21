@@ -888,6 +888,28 @@ class RepositoryService {
   Future<void> _persistLastUsername(String username) =>
       _setGlobalString(_lastUsernameKey, username);
 
+  Future<String?> _getGlobalString(String key) async {
+    if (localFirst == null) return null;
+    return _withGlobalString(() => localFirst!.getConfigValue(key));
+  }
+
+  Future<void> _setGlobalString(String key, String value) async {
+    if (localFirst == null) return;
+    await _withGlobalString(() => localFirst!.setConfigValue(key, value));
+  }
+
+  Future<T> _withGlobalString<T>(Future<T> Function() action) async {
+    final storage = localFirst?.localStorage;
+    if (storage == null) return await action();
+    final previous = _currentNamespace;
+    await storage.useNamespace('default');
+    try {
+      return await action();
+    } finally {
+      await storage.useNamespace(previous);
+    }
+  }
+
   String _sessionMetaKey(String username) {
     final sanitized = _sanitizeNamespace(username);
     return '$_sessionIdPrefix$sanitized';
@@ -1070,10 +1092,7 @@ class RepositoryService {
     _currentNamespace = namespace;
     syncStrategy.namespace = namespace;
 
-    final storage = db.localStorage;
-    if (storage is SqliteLocalFirstStorage) {
-      await storage.useNamespace(namespace);
-    }
+    await db.localStorage.useNamespace(namespace);
   }
 
   /// Normalizes a username into a namespace-safe string.
@@ -1084,30 +1103,6 @@ class RepositoryService {
       '_',
     );
     return 'user__$sanitized';
-  }
-
-  Future<String?> _getGlobalString(String key) async {
-    if (localFirst == null) return null;
-    return _withGlobalString(() => localFirst!.getConfigValue(key));
-  }
-
-  Future<void> _setGlobalString(String key, String value) async {
-    if (localFirst == null) return;
-    await _withGlobalString(() => localFirst!.setConfigValue(key, value));
-  }
-
-  Future<T> _withGlobalString<T>(Future<T> Function() action) async {
-    final storage = localFirst?.localStorage;
-    if (storage is SqliteLocalFirstStorage) {
-      final previous = storage.namespace;
-      await storage.useNamespace('default');
-      try {
-        return await action();
-      } finally {
-        await storage.useNamespace(previous);
-      }
-    }
-    return await action();
   }
 }
 
