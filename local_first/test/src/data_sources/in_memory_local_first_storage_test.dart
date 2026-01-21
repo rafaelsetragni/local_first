@@ -299,11 +299,65 @@ void main() {
       expect(merged?['username'], isNotNull);
     });
 
+    test('getEventById should return null when event id is missing', () async {
+      await writeEvent(
+        _event(
+          eventId: 'evt-other',
+          dataId: 'other',
+          operation: SyncOperation.insert,
+        ),
+      );
+
+      final missing = await storage.getEventById(repo.name, 'evt-missing');
+      expect(missing, isNull);
+    });
+
+    test('getEventById should still return metadata without data payload',
+        () async {
+      await writeEvent(
+        _event(
+          eventId: 'evt-only-meta',
+          dataId: 'only-meta',
+          operation: SyncOperation.insert,
+        ),
+      );
+
+      final fetched = await storage.getEventById(repo.name, 'evt-only-meta');
+
+      expect(fetched?[LocalFirstEvent.kDataId], 'only-meta');
+      expect(fetched?[LocalFirstEvent.kLastEventId], 'evt-only-meta');
+    });
+
     test('getEventById should return null when events table is missing',
         () async {
       final result = await storage.getEventById('unknown-table', 'evt-missing');
 
       expect(result, isNull);
+    });
+
+    test('query should ignore malformed entries while parsing', () async {
+      await writeState(id: 'valid', eventId: 'evt-valid');
+      await writeEvent(
+        _event(
+          eventId: 'evt-valid',
+          dataId: 'valid',
+          operation: SyncOperation.insert,
+        ),
+      );
+      await writeEvent(
+        {
+          LocalFirstEvent.kEventId: 'evt-bad',
+          LocalFirstEvent.kDataId: 'bad',
+          LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+          LocalFirstEvent.kOperation: SyncOperation.insert.index,
+          LocalFirstEvent.kSyncCreatedAt:
+              DateTime.now().toUtc().millisecondsSinceEpoch,
+        },
+      );
+
+      final events = await storage.query(baseQuery);
+
+      expect(events.map((e) => e.eventId), ['evt-valid']);
     });
 
     test('insert should throw when id is missing', () async {
