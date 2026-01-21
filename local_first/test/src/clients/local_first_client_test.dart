@@ -7,7 +7,7 @@ class _SpyStorage implements LocalFirstStorage {
   int initialized = 0;
   int cleared = 0;
   int closed = 0;
-  final Map<String, String> meta = {};
+  final Map<String, Object?> meta = {};
 
   @override
   Future<void> clearAllData() async {
@@ -59,7 +59,10 @@ class _SpyStorage implements LocalFirstStorage {
       null;
 
   @override
-  Future<String?> getConfigValue(String key) async => meta[key];
+  Future<bool> containsConfigKey(String key) async => meta.containsKey(key);
+
+  @override
+  Future<T?> getConfigValue<T>(String key) async => meta[key] as T?;
 
   @override
   Future<void> initialize() async {
@@ -85,9 +88,25 @@ class _SpyStorage implements LocalFirstStorage {
       [];
 
   @override
-  Future<void> setConfigValue(String key, String value) async {
+  Future<bool> setConfigValue<T>(String key, T value) async {
     meta[key] = value;
+    return true;
   }
+
+  @override
+  Future<bool> removeConfig(String key) async {
+    meta.remove(key);
+    return true;
+  }
+
+  @override
+  Future<bool> clearConfig() async {
+    meta.clear();
+    return true;
+  }
+
+  @override
+  Future<Set<String>> getConfigKeys() async => meta.keys.toSet();
 
   @override
   Future<void> update(

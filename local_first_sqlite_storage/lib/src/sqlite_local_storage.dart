@@ -357,14 +357,83 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<void> setConfigValue(String key, String value) async {
+  String _encodeConfigValue(Object value) {
+    if (value is bool) return jsonEncode({'t': 'bool', 'v': value});
+    if (value is int) return jsonEncode({'t': 'int', 'v': value});
+    if (value is double) return jsonEncode({'t': 'double', 'v': value});
+    if (value is String) return jsonEncode({'t': 'string', 'v': value});
+    if (value is List && value.every((e) => e is String)) {
+      return jsonEncode({'t': 'string_list', 'v': List<String>.from(value)});
+    }
+    throw ArgumentError(
+      'Unsupported config value type ${value.runtimeType}. '
+      'Allowed: bool, int, double, String, List<String>.',
+    );
+  }
+
+  T? _decodeConfigValue<T>(String raw) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) return null;
+      final type = decoded['t'] as String?;
+      final value = decoded['v'];
+      switch (type) {
+        case 'bool':
+          return value is bool && (T == bool || T == dynamic) ? value as T : null;
+        case 'int':
+          return value is int && (T == int || T == dynamic) ? value as T : null;
+        case 'double':
+          if (value is num && (T == double || T == dynamic)) {
+            return value.toDouble() as T;
+          }
+          return null;
+        case 'string':
+          return value is String && (T == String || T == dynamic)
+              ? value as T
+              : null;
+        case 'string_list':
+          if (value is List && value.every((e) => e is String)) {
+            final list = List<String>.from(value);
+            if (list is T) return list as T;
+          }
+          return null;
+        default:
+          return null;
+      }
+    } catch (_) {
+      if (T == String || T == dynamic) return raw as T;
+      return null;
+    }
+  }
+
+  @override
+  Future<bool> containsConfigKey(String key) async {
+    final db = await _database;
+    await _ensureMetadataTable();
+    final rows = await db.query(
+      _metadataTable,
+      columns: ['key'],
+      where: 'key = ?',
+      whereArgs: [key],
+      limit: 1,
+    );
+    return rows.isNotEmpty;
+  }
+
+  @override
+  Future<bool> setConfigValue<T>(String key, T value) async {
     final db = await _database;
     await _ensureMetadataTable();
 
+    if (value is! Object) {
+      throw ArgumentError('Config value cannot be null.');
+    }
+    final encoded = _encodeConfigValue(value);
     await db.insert(_metadataTable, {
       'key': key,
-      'value': value,
+      'value': encoded,
     }, conflictAlgorithm: ConflictAlgorithm.replace);
+    return true;
   }
 
   @override
@@ -383,7 +452,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<String?> getConfigValue(String key) async {
+  Future<T?> getConfigValue<T>(String key) async {
     final db = await _database;
     await _ensureMetadataTable();
 
@@ -396,7 +465,32 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     if (rows.isEmpty) return null;
     final value = rows.first['value'];
-    return value is String ? value : null;
+    if (value is! String) return null;
+    return _decodeConfigValue<T>(value);
+  }
+
+  @override
+  Future<bool> removeConfig(String key) async {
+    final db = await _database;
+    await _ensureMetadataTable();
+    await db.delete(_metadataTable, where: 'key = ?', whereArgs: [key]);
+    return true;
+  }
+
+  @override
+  Future<bool> clearConfig() async {
+    final db = await _database;
+    await _ensureMetadataTable();
+    await db.delete(_metadataTable);
+    return true;
+  }
+
+  @override
+  Future<Set<String>> getConfigKeys() async {
+    final db = await _database;
+    await _ensureMetadataTable();
+    final rows = await db.query(_metadataTable, columns: ['key']);
+    return rows.map((row) => row['key']).whereType<String>().toSet();
   }
 
   @override
@@ -862,4 +956,5 @@ class TestHelperSqliteLocalFirstStorage {
   Future<void> ensureEventTable(String repositoryName) =>
       storage._ensureEventTable(repositoryName);
   Future<void> ensureMetadataTable() => storage._ensureMetadataTable();
+  String get metadataTable => storage._metadataTable;
 }

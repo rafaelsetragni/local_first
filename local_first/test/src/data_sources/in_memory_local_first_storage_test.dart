@@ -272,6 +272,41 @@ void main() {
       expect(await storage.getAllEvents(repo.name), isEmpty);
     });
 
+    test('config storage supports shared_preferences types and rejects others',
+        () async {
+      expect(await storage.containsConfigKey('missing'), isFalse);
+
+      expect(await storage.setConfigValue('bool', true), isTrue);
+      expect(await storage.setConfigValue('int', 1), isTrue);
+      expect(await storage.setConfigValue('double', 1.5), isTrue);
+      expect(await storage.setConfigValue('string', 'ok'), isTrue);
+      expect(
+        await storage.setConfigValue('list', <String>['a', 'b']),
+        isTrue,
+      );
+
+      expect(await storage.getConfigValue<bool>('bool'), isTrue);
+      expect(await storage.getConfigValue<int>('int'), 1);
+      expect(await storage.getConfigValue<double>('double'), 1.5);
+      expect(await storage.getConfigValue<String>('string'), 'ok');
+      expect(await storage.getConfigValue<List<String>>('list'), ['a', 'b']);
+      expect(await storage.getConfigValue<dynamic>('list'), ['a', 'b']);
+
+      expect(await storage.getConfigKeys(),
+          containsAll(<String>['bool', 'int', 'double', 'string', 'list']));
+
+      expect(
+        () => storage.setConfigValue('invalid', {'a': 1}),
+        throwsArgumentError,
+      );
+
+      expect(await storage.removeConfig('string'), isTrue);
+      expect(await storage.containsConfigKey('string'), isFalse);
+
+      await storage.clearConfig();
+      expect(await storage.getConfigKeys(), isEmpty);
+    });
+
     test('close should terminate active watchers', () async {
       final stream = storage.watchQuery(baseQuery);
       final done = expectLater(stream, emitsDone);

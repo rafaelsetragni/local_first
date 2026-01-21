@@ -6,7 +6,7 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
 
   final JsonMap<Map<String, JsonMap>> _data = {};
   final JsonMap<Map<String, JsonMap>> _events = {};
-  final Map<String, String> _metadata = {};
+  final Map<String, Object> _metadata = {};
   final JsonMap<Set<_InMemoryQueryObserver>> _observers = {};
   final JsonMap<JsonMap<LocalFieldType>> _schemas = {};
 
@@ -268,16 +268,66 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     await _notifyWatchers(tableName);
   }
 
-  @override
-  Future<void> setConfigValue(String key, String value) async {
-    _ensureInitialized();
-    _metadata[key] = value;
+  bool _isSupportedConfigValue(Object value) {
+    if (value is bool || value is int || value is double || value is String) {
+      return true;
+    }
+    if (value is List<String>) return true;
+    if (value is List && value.every((e) => e is String)) return true;
+    return false;
   }
 
   @override
-  Future<String?> getConfigValue(String key) async {
+  Future<bool> containsConfigKey(String key) async {
     _ensureInitialized();
-    return _metadata[key];
+    return _metadata.containsKey(key);
+  }
+
+  @override
+  Future<bool> setConfigValue<T>(String key, T value) async {
+    _ensureInitialized();
+    if (value is! Object || !_isSupportedConfigValue(value)) {
+      throw ArgumentError(
+        'Unsupported config value type ${value.runtimeType}. '
+        'Allowed: bool, int, double, String, List<String>.',
+      );
+    }
+    _metadata[key] = value is List ? List<String>.from(value) : value;
+    return true;
+  }
+
+  @override
+  Future<T?> getConfigValue<T>(String key) async {
+    _ensureInitialized();
+    final value = _metadata[key];
+    if (value == null) return null;
+    if (T == dynamic) return value as T;
+    if (value is List<String>) {
+      if (value is T) return value as T;
+      return null;
+    }
+    if (value is T) return value as T;
+    return null;
+  }
+
+  @override
+  Future<bool> removeConfig(String key) async {
+    _ensureInitialized();
+    _metadata.remove(key);
+    return true;
+  }
+
+  @override
+  Future<bool> clearConfig() async {
+    _ensureInitialized();
+    _metadata.clear();
+    return true;
+  }
+
+  @override
+  Future<Set<String>> getConfigKeys() async {
+    _ensureInitialized();
+    return _metadata.keys.toSet();
   }
 
   @override
@@ -296,7 +346,10 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     final results = <JsonMap>[];
     for (final raw in dataTable.values) {
       final normalized = _normalizeLegacyMap(JsonMap.from(raw));
-      final merged = await _attachEventMetadata(query.repositoryName, normalized);
+      final merged = await _attachEventMetadata(
+        query.repositoryName,
+        normalized,
+      );
       if (!query.includeDeleted &&
           merged[LocalFirstEvent.kOperation] == SyncOperation.delete.index) {
         continue;
@@ -432,7 +485,8 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     payload[LocalFirstEvent.kEventId] = id;
     payload.putIfAbsent(
       LocalFirstEvent.kDataId,
-      () => payload[LocalFirstEvent.kDataId] ??
+      () =>
+          payload[LocalFirstEvent.kDataId] ??
           payload['dataId'] ??
           payload[idField],
     );
@@ -497,10 +551,7 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
 }
 
 class _InMemoryQueryObserver<T> {
-  _InMemoryQueryObserver({
-    required this.emit,
-    required this.controller,
-  });
+  _InMemoryQueryObserver({required this.emit, required this.controller});
 
   final Future<void> Function() emit;
   final StreamController<List<LocalFirstEvent<T>>> controller;

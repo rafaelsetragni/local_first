@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_first/local_first.dart';
 import 'package:local_first_sqlite_storage/local_first_sqlite_storage.dart';
@@ -442,6 +444,70 @@ void main() {
       expect(await storage.getConfigValue('k'), isNull);
       await storage.setConfigValue('k', 'v');
       expect(await storage.getConfigValue('k'), 'v');
+    });
+
+    test('config storage supports shared_preferences types and rejects others',
+        () async {
+      await storage.setConfigValue('bool', true);
+      await storage.setConfigValue('int', 1);
+      await storage.setConfigValue('double', 1.5);
+      await storage.setConfigValue('string', 'ok');
+      await storage.setConfigValue('list', <String>['a', 'b']);
+
+      expect(await storage.getConfigValue<bool>('bool'), isTrue);
+      expect(await storage.getConfigValue<int>('int'), 1);
+      expect(await storage.getConfigValue<double>('double'), 1.5);
+      expect(await storage.getConfigValue<String>('string'), 'ok');
+      expect(await storage.getConfigValue<List<String>>('list'), ['a', 'b']);
+      expect(await storage.getConfigValue<dynamic>('list'), ['a', 'b']);
+
+      expect(await storage.getConfigKeys(),
+          containsAll(['bool', 'int', 'double', 'string', 'list']));
+      expect(await storage.containsConfigKey('string'), isTrue);
+
+      expect(() => storage.setConfigValue('invalid', {'a': 1}),
+          throwsArgumentError);
+
+      expect(
+        () => storage.setConfigValue('null', null),
+        throwsArgumentError,
+      );
+
+      await storage.removeConfig('string');
+      expect(await storage.containsConfigKey('string'), isFalse);
+
+      await storage.clearConfig();
+      expect(await storage.getConfigKeys(), isEmpty);
+    });
+
+    test('getConfigValue returns raw string when decode fails for String',
+        () async {
+      final helper = TestHelperSqliteLocalFirstStorage(storage);
+      final db = await helper.database;
+      await helper.ensureMetadataTable();
+      await db.insert(helper.metadataTable, {
+        'key': 'bad',
+        'value': 'not-json',
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+
+      expect(await storage.getConfigValue<String>('bad'), 'not-json');
+    });
+
+    test('getConfigValue returns null for unknown encoded config type',
+        () async {
+      final helper = TestHelperSqliteLocalFirstStorage(storage);
+      final db = await helper.database;
+      await helper.ensureMetadataTable();
+      await db.insert(
+        helper.metadataTable,
+        {
+          'key': 'unknown',
+          'value': jsonEncode({'t': 'alien', 'v': 'x'}),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+
+      expect(await storage.getConfigValue<String>('unknown'), isNull);
     });
 
     test('containsId returns false when table empty', () async {

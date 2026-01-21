@@ -136,18 +136,18 @@ class LocalFirstClient {
   }
 
   Future<String?> getConfigValue(String key) async {
-    return await localStorage.getConfigValue(key);
+    return await localStorage.getConfigValue<String>(key);
   }
 
-  Future<void> setConfigValue(String key, String value) async {
-    await localStorage.setConfigValue(key, value);
+  Future<bool> setConfigValue(String key, String value) async {
+    return await localStorage.setConfigValue<String>(key, value);
   }
 
   @Deprecated('Use getConfigValue instead')
   Future<String?> getKeyValue(String key) => getConfigValue(key);
 
   @Deprecated('Use setConfigValue instead')
-  Future<void> setKeyValue(String key, String value) =>
+  Future<bool> setKeyValue(String key, String value) =>
       setConfigValue(key, value);
 }
 
