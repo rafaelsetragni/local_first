@@ -20,7 +20,7 @@ Local-first data layer for Flutter apps that keeps your data available offline a
 
 - Fast, responsive apps that read/write locally first and sync in the background.
 - Works without a network connection; queues changes and resolves conflicts when back online.
-- Storage-agnostic: start with our Hive, SQLite, or your preferred custom database implementation.
+- Storage-agnostic: start with our Hive, SQLite, config-only SharedPreferences adapter, or your preferred custom database implementation.
 - Backend-agnostic: create your sync strategies, so you can integrate with your existent REST, gRPC, WebSockets, etc.
 - Minimal boilerplate: declare the storage, register your models with repositories, and start syncing.
 
@@ -39,9 +39,10 @@ Add the dependency to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  local_first: ^0.5.0
-  local_first_hive_storage: ^0.0.1  # optional
-  local_first_sqlite_storage: ^0.0.1 # optional
+  local_first: ^0.6.0
+  local_first_hive_storage: ^0.2.0  # optional
+  local_first_sqlite_storage: ^0.2.0 # optional
+  local_first_shared_preferences: ^0.1.0 # optional (config storage only)
 ```
 
 Then install it with:
