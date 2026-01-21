@@ -93,6 +93,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   /// Changes the active namespace, closing any open boxes.
+  @override
   Future<void> useNamespace(String namespace) async {
     if (_namespace == namespace) return;
     _namespace = namespace;

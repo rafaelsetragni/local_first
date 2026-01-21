@@ -5,7 +5,6 @@ import 'package:local_first/local_first.dart';
 import 'package:local_first_sqlite_storage/local_first_sqlite_storage.dart';
 import 'package:mockito/annotations.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'package:sqflite/sqlite_api.dart';
 
 @GenerateMocks([QueryBehavior, DatabaseFactory, Database])
 class DummyModel {

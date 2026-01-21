@@ -776,9 +776,7 @@ void main() {
     });
 
     test('deleteDataById should delete from storage', () async {
-      final helper = TestHelperLocalFirstRepository(repository);
-
-      await helper.deleteDataById('1');
+      await TestHelperLocalFirstRepository(repository).deleteDataById('1');
 
       expect(storage.deleteCount, 1);
     });
@@ -786,7 +784,6 @@ void main() {
     test(
       'mergeRemoteEvent should confirm pending event when ids match',
       () async {
-        final helper = TestHelperLocalFirstRepository(repository);
         final pending = LocalFirstEvent.createNewInsertEvent(
           repository: repository,
           data: {'id': '1'},

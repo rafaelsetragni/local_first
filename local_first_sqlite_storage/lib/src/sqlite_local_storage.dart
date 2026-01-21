@@ -98,6 +98,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
   /// Changes the active namespace, closing the current database and
   /// opening a separate database file for the new namespace.
+  @override
   Future<void> useNamespace(String namespace) async {
     if (_namespace == namespace) return;
     _validateIdentifier(namespace, 'namespace');
@@ -356,7 +357,6 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     await _notifyWatchers(tableName);
   }
 
-  @override
   String _encodeConfigValue(Object value) {
     if (value is bool) return jsonEncode({'t': 'bool', 'v': value});
     if (value is int) return jsonEncode({'t': 'int', 'v': value});
