@@ -1,6 +1,6 @@
 name: local_first_hive_storage
 description: "Hive adapter for local_first: schema-less, offline-first storage with Hive boxes and metadata support."
-version: 0.1.0
+version: 0.2.0
 repository: https://github.com/rafaelsetragni/local_first
 issue_tracker: https://github.com/rafaelsetragni/local_first/issues
 

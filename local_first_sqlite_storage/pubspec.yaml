@@ -1,6 +1,6 @@
 name: local_first_sqlite_storage
 description: "SQLite adapter for local_first: structured tables, indexes, and filtered queries."
-version: 0.1.0
+version: 0.2.0
 repository: https://github.com/rafaelsetragni/local_first
 issue_tracker: https://github.com/rafaelsetragni/local_first/issues
 
