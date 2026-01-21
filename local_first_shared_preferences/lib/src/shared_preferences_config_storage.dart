@@ -5,7 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// Config storage backed by `shared_preferences`, namespaced via key prefixing.
 class SharedPreferencesConfigStorage implements ConfigKeyValueStorage {
   SharedPreferencesConfigStorage({String namespace = 'default'})
-      : _namespace = namespace.isEmpty ? 'default' : namespace;
+    : _namespace = namespace.isEmpty ? 'default' : namespace;
 
   SharedPreferences? _prefs;
   bool _initialized = false;
@@ -23,7 +23,7 @@ class SharedPreferencesConfigStorage implements ConfigKeyValueStorage {
     return prefs;
   }
 
-  String _key(String key) => '${_namespace}::$key';
+  String _key(String key) => '$_namespace::$key';
 
   @override
   Future<void> initialize() async {
@@ -110,8 +110,10 @@ class SharedPreferencesConfigStorage implements ConfigKeyValueStorage {
   Future<Set<String>> getConfigKeys() async {
     final prefs = _prefsOrThrow();
     final prefix = '$_namespace::';
-    return prefs.getKeys().where((k) => k.startsWith(prefix)).map(
-          (k) => k.substring(prefix.length),
-        ).toSet();
+    return prefs
+        .getKeys()
+        .where((k) => k.startsWith(prefix))
+        .map((k) => k.substring(prefix.length))
+        .toSet();
   }
 }
