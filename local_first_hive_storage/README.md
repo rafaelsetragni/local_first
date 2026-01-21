@@ -9,6 +9,14 @@
 
 Child package of the [local_first](https://pub.dev/packages/local_first) ecosystem. This Hive adapter provides schema-less, offline-first storage using Hive boxes, plus metadata support and reactive queries.
 
+| Supported config type | Example                   |
+| --------------------- | ------------------------- |
+| `bool`                | `true`                    |
+| `int`                 | `42`                      |
+| `double`              | `3.14`                    |
+| `String`              | `'hello'`                 |
+| `List<String>`        | `['a', 'b']`              |
+
 ## Why use this adapter?
 
 - Fast key/value storage with Hive.
@@ -105,6 +113,18 @@ Run tests from this package root:
 flutter test
 ```
 
+## Example app
+
+This package ships the same demo app used across the ecosystem. To run it:
+
+```bash
+cd local_first_hive_storage/example
+flutter run
+```
+
+## Contributing
+
+Please read the contribution guidelines in the root project before opening issues or PRs: see `../CONTRIBUTING.md`.
 ## License
 
 MIT (see LICENSE).

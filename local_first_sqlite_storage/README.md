@@ -9,6 +9,14 @@
 
 Child package of the [local_first](https://pub.dev/packages/local_first) ecosystem. This SQLite adapter provides structured tables with typed schemas, indexes, and server-like filtering/sorting for offline-first apps.
 
+| Supported config type | Example                   |
+| --------------------- | ------------------------- |
+| `bool`                | `true`                    |
+| `int`                 | `42`                      |
+| `double`              | `3.14`                    |
+| `String`              | `'hello'`                 |
+| `List<String>`        | `['a', 'b']`              |
+
 ## Why use this adapter?
 
 - Structured schema with per-column indexes.
@@ -109,6 +117,19 @@ Run tests from this package root:
 ```
 flutter test
 ```
+
+## Example app
+
+This package ships the shared demo app. To run it:
+
+```bash
+cd local_first_sqlite_storage/example
+flutter run
+```
+
+## Contributing
+
+Please read the contribution guidelines in the root project before opening issues or PRs: see `../CONTRIBUTING.md`.
 
 ## License
 
