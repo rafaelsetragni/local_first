@@ -99,7 +99,7 @@ Future<void> main() async {
 - Creates tables and indexes based on provided schema.
 - Query builder with comparisons, IN/NOT IN, null checks, sorting, limit/offset.
 - Stores full JSON in a `data` column and leverages schema columns for performance.
-- Namespaces and metadata (`setMeta` / `getMeta`).
+- Namespaces and metadata (`setString` / `getString`).
 - Reactive `watchQuery`.
 
 ## Testing

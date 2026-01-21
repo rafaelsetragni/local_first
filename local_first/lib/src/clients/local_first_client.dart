@@ -135,13 +135,19 @@ class LocalFirstClient {
     return results.expand((e) => e).toList();
   }
 
-  Future<String?> getMeta(String key) async {
-    return await localStorage.getMeta(key);
+  Future<String?> getString(String key) async {
+    return await localStorage.getString(key);
   }
 
-  Future<void> setKeyValue(String key, String value) async {
-    await localStorage.setMeta(key, value);
+  Future<void> setString(String key, String value) async {
+    await localStorage.setString(key, value);
   }
+
+  @Deprecated('Use getString instead')
+  Future<String?> getKeyValue(String key) => getString(key);
+
+  @Deprecated('Use setString instead')
+  Future<void> setKeyValue(String key, String value) => setString(key, value);
 }
 
 /// Test helper exposing internal state of [LocalFirstClient] for unit tests.

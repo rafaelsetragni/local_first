@@ -80,10 +80,10 @@ class _StorageStub implements LocalFirstStorage {
   Future<void> deleteAllEvents(String tableName) async {}
 
   @override
-  Future<void> setMeta(String key, String value) async {}
+  Future<void> setString(String key, String value) async {}
 
   @override
-  Future<String?> getMeta(String key) async => null;
+  Future<String?> getString(String key) async => null;
 
   @override
   Future<bool> containsId(String tableName, String id) async => false;
@@ -318,6 +318,42 @@ void main() {
         expect(filter.matches({'a': 5}), isTrue);
         expect(filter.matches({'a': 0}), isFalse);
         expect(filter.matches({'a': 11}), isFalse);
+      });
+
+      test('should evaluate inclusive comparison operators', () {
+        const filter = QueryFilter(
+          field: 'a',
+          isLessThanOrEqualTo: 5,
+          isGreaterThanOrEqualTo: 3,
+        );
+        expect(filter.matches({'a': 4}), isTrue);
+        expect(filter.matches({'a': 5}), isTrue);
+        expect(filter.matches({'a': 2}), isFalse);
+        expect(filter.matches({'a': 6}), isFalse);
+      });
+
+      test('should return false when value is not comparable', () {
+        const filter = QueryFilter(
+          field: 'a',
+          isGreaterThanOrEqualTo: 1,
+        );
+        expect(filter.matches({'a': const Object()}), isFalse);
+      });
+
+      test('should return false when value is not comparable for <=', () {
+        const filter = QueryFilter(
+          field: 'a',
+          isLessThanOrEqualTo: 10,
+        );
+        expect(filter.matches({'a': const Object()}), isFalse);
+      });
+
+      test('should return false when value is not comparable for >=', () {
+        const filter = QueryFilter(
+          field: 'a',
+          isGreaterThanOrEqualTo: 2,
+        );
+        expect(filter.matches({'a': const Object()}), isFalse);
       });
 
       test('should evaluate whereIn and whereNotIn lists', () {

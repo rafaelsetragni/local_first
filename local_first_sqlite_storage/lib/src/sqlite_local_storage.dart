@@ -29,6 +29,8 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   String _namespace;
   final DatabaseFactory _factory;
 
+  String get namespace => _namespace;
+
   Database? _db;
   bool _initialized = false;
 
@@ -355,7 +357,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<void> setMeta(String key, String value) async {
+  Future<void> setString(String key, String value) async {
     final db = await _database;
     await _ensureMetadataTable();
 
@@ -381,7 +383,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   @override
-  Future<String?> getMeta(String key) async {
+  Future<String?> getString(String key) async {
     final db = await _database;
     await _ensureMetadataTable();
 

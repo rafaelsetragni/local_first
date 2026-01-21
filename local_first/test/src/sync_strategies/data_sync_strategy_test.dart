@@ -86,7 +86,7 @@ class _NoopStorage implements LocalFirstStorage {
   Future<JsonMap?> getEventById(String tableName, String id) async => null;
 
   @override
-  Future<String?> getMeta(String key) async => null;
+  Future<String?> getString(String key) async => null;
 
   @override
   Future<void> initialize() async {}
@@ -106,7 +106,7 @@ class _NoopStorage implements LocalFirstStorage {
         [];
 
   @override
-  Future<void> setMeta(String key, String value) async {}
+  Future<void> setString(String key, String value) async {}
 
   @override
   Future<void> update(String tableName, String id, JsonMap item) async {}
@@ -168,7 +168,7 @@ class _RecordingStorage implements LocalFirstStorage {
   Future<JsonMap?> getEventById(String tableName, String id) async => null;
 
   @override
-  Future<String?> getMeta(String key) async => null;
+  Future<String?> getString(String key) async => null;
 
   @override
   Future<void> initialize() async {}
@@ -188,7 +188,7 @@ class _RecordingStorage implements LocalFirstStorage {
       [];
 
   @override
-  Future<void> setMeta(String key, String value) async {}
+  Future<void> setString(String key, String value) async {}
 
   @override
   Future<void> update(String tableName, String id, JsonMap item) async {
@@ -261,17 +261,33 @@ void main() {
       expect(client.pendingCalls, ['repo1']);
     });
 
-    test('should delegate pullChangesToLocal to client', () async {
-      final payload = [
-        {LocalFirstEvent.kRepository: 'repo1'},
-      ];
+  test('should delegate pullChangesToLocal to client', () async {
+    final payload = [
+      {LocalFirstEvent.kRepository: 'repo1'},
+    ];
 
       await strategy.pullChangesToLocal(
         repositoryName: 'repo1',
         remoteChanges: payload,
       );
 
-      expect(client.pulledChanges.single, payload);
+    expect(client.pulledChanges.single, payload);
+  });
+
+  test('connectionChanges getter should expose client stream reference', () {
+    expect(strategy.connectionChanges, isA<Stream<bool>>());
+  });
+
+  test('connectionChanges getter should proxy underlying client stream',
+      () async {
+    final events = <bool>[];
+    final sub = strategy.connectionChanges.listen(events.add);
+
+      client.reportConnectionState(true);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(events, [true]);
+      await sub.cancel();
     });
 
     test('markEventsAsSynced should mark current and previous events as ok',
@@ -338,5 +354,84 @@ void main() {
         isEmpty,
       );
     });
+
+  test('markEventsAsSynced should pick the latest event per data id', () async {
+    final storage = _RecordingStorage();
+    final repo = LocalFirstRepository<JsonMap>.create(
+      name: 'repo',
+      getId: (item) => item['id'] as String,
+        toJson: (item) => item,
+        fromJson: (json) => json,
+      );
+      LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        syncStrategies: [strategy],
+      );
+      final older = LocalFirstEvent.createNewInsertEvent(
+        repository: repo,
+        data: {'id': '1'},
+        needSync: true,
+      );
+      final latest = LocalFirstEvent.createNewUpdateEvent(
+        repository: repo,
+        data: {'id': '1'},
+        needSync: true,
+      );
+
+      await strategy.markEventsAsSynced([latest, older]);
+
+      expect(storage.updateEventCount, 1);
+      expect(storage.updateCount, 1);
+    expect(
+      storage.lastUpdatedData?[LocalFirstEvent.kLastEventId],
+      latest.eventId,
+    );
+  });
+
+  test('markEventsAsSynced keeps newest when older duplicate arrives', () async {
+    final storage = _RecordingStorage();
+    final repo = LocalFirstRepository<JsonMap>.create(
+      name: 'repo',
+      getId: (item) => item['id'] as String,
+      toJson: (item) => item,
+      fromJson: (json) => json,
+    );
+    LocalFirstClient(
+      repositories: [repo],
+      localStorage: storage,
+      syncStrategies: [strategy],
+    );
+    final older = LocalFirstEvent<JsonMap>.fromLocalStorage(
+      repository: repo,
+      json: {
+        LocalFirstEvent.kEventId: 'older',
+        LocalFirstEvent.kDataId: '1',
+        LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+        LocalFirstEvent.kOperation: SyncOperation.insert.index,
+        LocalFirstEvent.kSyncCreatedAt: 1000,
+        'id': '1',
+      },
+    );
+    final latest = LocalFirstEvent<JsonMap>.fromLocalStorage(
+      repository: repo,
+      json: {
+        LocalFirstEvent.kEventId: 'latest',
+        LocalFirstEvent.kDataId: '1',
+        LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+        LocalFirstEvent.kOperation: SyncOperation.insert.index,
+        LocalFirstEvent.kSyncCreatedAt: 2000,
+        'id': '1',
+      },
+    );
+
+    await strategy.markEventsAsSynced([older, latest]);
+
+    expect(storage.updateEventCount, 1);
+    expect(
+      storage.updatedEvents.single[LocalFirstEvent.kEventId],
+      latest.eventId,
+    );
+  });
   });
 }
