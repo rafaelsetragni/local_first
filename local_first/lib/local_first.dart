@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 
 part 'src/data_sources/local_first_storage.dart';
 part 'src/data_sources/key_value_storage.dart';
+part 'src/data_sources/in_memory_config_key_value_storage.dart';
 part 'src/data_sources/in_memory_local_first_storage.dart';
 part 'src/data_sources/local_first_query.dart';
 part 'src/clients/local_first_client.dart';
