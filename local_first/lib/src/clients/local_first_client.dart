@@ -163,12 +163,6 @@ class LocalFirstClient {
     return await _configStorage.setConfigValue<String>(key, value);
   }
 
-  @Deprecated('Use getConfigValue instead')
-  Future<String?> getKeyValue(String key) => getConfigValue(key);
-
-  @Deprecated('Use setConfigValue instead')
-  Future<bool> setKeyValue(String key, String value) =>
-      setConfigValue(key, value);
 }
 
 /// Test helper exposing internal state of [LocalFirstClient] for unit tests.
