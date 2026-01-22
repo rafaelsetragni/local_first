@@ -2,7 +2,9 @@ import 'package:flutter/widgets.dart';
 import 'package:local_first/local_first.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Config storage backed by `shared_preferences`, namespaced via key prefixing.
+  /// Simple config storage backed by `shared_preferences`, with all keys
+  /// automatically prefixed by a namespace so different users/sessions stay
+  /// isolated.
 class SharedPreferencesConfigStorage implements ConfigKeyValueStorage {
   SharedPreferencesConfigStorage({String namespace = 'default'})
     : _namespace = namespace.isEmpty ? 'default' : namespace;
@@ -11,6 +13,7 @@ class SharedPreferencesConfigStorage implements ConfigKeyValueStorage {
   bool _initialized = false;
   String _namespace;
 
+  /// Current namespace prefix applied to all keys.
   String get namespace => _namespace;
 
   SharedPreferences _prefsOrThrow() {
@@ -25,6 +28,7 @@ class SharedPreferencesConfigStorage implements ConfigKeyValueStorage {
 
   String _key(String key) => '$_namespace::$key';
 
+  /// Prepares the `SharedPreferences` instance so reads and writes can happen.
   @override
   Future<void> initialize() async {
     WidgetsFlutterBinding.ensureInitialized();
@@ -32,24 +36,43 @@ class SharedPreferencesConfigStorage implements ConfigKeyValueStorage {
     _initialized = true;
   }
 
+  /// Resets the adapter and drops the cached prefs instance.
   @override
   Future<void> close() async {
     _prefs = null;
     _initialized = false;
   }
 
+  /// Switches the namespace prefix used for every key/value pair.
+  ///
+  /// - [namespace]: Logical bucket name (for example, a user id). Empty strings
+  ///   fall back to `default` so callers never create a blank prefix.
+  ///
+  /// Throws [StateError] if the storage has not been initialized.
   @override
   Future<void> useNamespace(String namespace) async {
     if (_namespace == namespace) return;
     _namespace = namespace.isEmpty ? 'default' : namespace;
   }
 
+  /// Checks if a namespaced config key already exists.
+  ///
+  /// - [key]: Raw key without namespace; the method handles prefixing.
+  ///
+  /// Throws [StateError] if the storage has not been initialized.
   @override
   Future<bool> containsConfigKey(String key) async {
     final prefs = _prefsOrThrow();
     return prefs.containsKey(_key(key));
   }
 
+  /// Saves a config value under the current namespace.
+  ///
+  /// - [key]: Raw key without namespace; the method handles prefixing.
+  /// - [value]: Allowed types: bool, int, double, String or List<String>. Any
+  ///   other type triggers an [ArgumentError].
+  ///
+  /// Throws [StateError] if the storage has not been initialized.
   @override
   Future<bool> setConfigValue<T>(String key, T value) async {
     final prefs = _prefsOrThrow();
@@ -76,6 +99,11 @@ class SharedPreferencesConfigStorage implements ConfigKeyValueStorage {
     );
   }
 
+  /// Reads a config value for the given key.
+  ///
+  /// - [key]: Raw key without namespace; the method handles prefixing.
+  ///
+  /// Throws [StateError] if the storage has not been initialized.
   @override
   Future<T?> getConfigValue<T>(String key) async {
     final prefs = _prefsOrThrow();
@@ -90,12 +118,20 @@ class SharedPreferencesConfigStorage implements ConfigKeyValueStorage {
     return null;
   }
 
+  /// Deletes a single config entry from the current namespace.
+  ///
+  /// - [key]: Raw key without namespace; the method handles prefixing.
+  ///
+  /// Throws [StateError] if the storage has not been initialized.
   @override
   Future<bool> removeConfig(String key) async {
     final prefs = _prefsOrThrow();
     return prefs.remove(_key(key));
   }
 
+  /// Wipes every config entry stored in the current namespace.
+  ///
+  /// Throws [StateError] if the storage has not been initialized.
   @override
   Future<bool> clearConfig() async {
     final prefs = _prefsOrThrow();
@@ -106,6 +142,9 @@ class SharedPreferencesConfigStorage implements ConfigKeyValueStorage {
     return true;
   }
 
+  /// Lists all config keys for the active namespace.
+  ///
+  /// Throws [StateError] if the storage has not been initialized.
   @override
   Future<Set<String>> getConfigKeys() async {
     final prefs = _prefsOrThrow();

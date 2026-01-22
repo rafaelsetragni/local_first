@@ -18,8 +18,6 @@ class LocalFirstClient {
       StreamController<bool>.broadcast();
   bool? _latestConnection;
 
-  Future get awaitInitialization => _onInitialize.future;
-
   /// Gets the local database delegate used for storage.
   LocalFirstStorage get localStorage => _localStorage;
 
@@ -36,6 +34,9 @@ class LocalFirstClient {
 
   /// Latest known connection state (if any).
   bool? get latestConnectionState => _latestConnection;
+
+  /// Waits for the client to finish initialization.
+  Future get awaitInitialization => _onInitialize.future;
 
   /// Creates an instance of LocalFirstClient.
   ///
@@ -72,17 +73,19 @@ class LocalFirstClient {
     _repositories = List.unmodifiable(repositories);
   }
 
-  /// Gets a repository by its name.
+  /// Looks up a repository by name so you can call repository-specific methods.
   ///
   /// Throws [StateError] if no node with the given name exists.
+  ///
+  /// - [name]: Repository name to retrieve.
   LocalFirstRepository getRepositoryByName(String name) {
     return _repositories.firstWhere((repo) => repo.name == name);
   }
 
   /// Initializes the LocalFirstClient and all its repositories.
   ///
-  /// This must be called before using any LocalFirstClient functionality.
-  /// It initializes the local database and all registered repositories.
+  /// Call this once before doing any reads/writes so the storages are ready and
+  /// each repository can set up its schema/state.
   Future<void> initialize() async {
     await _localStorage.initialize();
     if (!identical(_configStorage, _localStorage)) {
@@ -97,8 +100,8 @@ class LocalFirstClient {
 
   /// Clears all data from the local database.
   ///
-  /// This will delete all stored data and reset all repositories.
-  /// Use with caution as this operation cannot be undone.
+  /// This wipes every table and reinitializes each repository. Use with
+  /// caution—there is no undo.
   Future<void> clearAllData() async {
     await _localStorage.clearAllData();
 
@@ -110,6 +113,8 @@ class LocalFirstClient {
 
   /// Switches the active namespace/database for both the main storage and the
   /// optional config storage delegate.
+  ///
+  /// - [namespace]: Target namespace name.
   Future<void> useNamespace(String namespace) async {
     await _localStorage.useNamespace(namespace);
     if (!identical(_configStorage, _localStorage)) {
@@ -128,6 +133,13 @@ class LocalFirstClient {
     await _localStorage.close();
   }
 
+  /// Applies remote changes for a specific repository by parsing and merging
+  /// each incoming event.
+  ///
+  /// Throws [FormatException] if any payload is malformed.
+  ///
+  /// - [repositoryName]: Name of the repository to apply changes to.
+  /// - [changes]: Raw remote events to merge.
   Future<void> pullChanges({
     required String repositoryName,
     required List<JsonMap> changes,
@@ -145,6 +157,9 @@ class LocalFirstClient {
     }
   }
 
+  /// Retrieves all pending events for the given repository name.
+  ///
+  /// - [repositoryName]: Target repository name.
   Future<LocalFirstEvents> getAllPendingEvents({
     required String repositoryName,
   }) async {
@@ -155,10 +170,17 @@ class LocalFirstClient {
     return results.expand((e) => e).toList();
   }
 
+  /// Reads a config value from the configured key/value storage.
+  ///
+  /// - [key]: Config key to read.
   Future<String?> getConfigValue(String key) async {
     return await _configStorage.getConfigValue<String>(key);
   }
 
+  /// Writes a config value to the configured key/value storage.
+  ///
+  /// - [key]: Config key to write.
+  /// - [value]: Config value to store.
   Future<bool> setConfigValue(String key, String value) async {
     return await _configStorage.setConfigValue<String>(key, value);
   }

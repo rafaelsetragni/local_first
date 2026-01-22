@@ -33,6 +33,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   /// Namespace used to isolate data per user/session.
   String _namespace;
 
+  /// Current namespace that scopes box directories.
   String get namespace => _namespace;
 
   final HiveInterface _hive;
@@ -65,6 +66,9 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
        _initFlutter = initFlutter ?? Hive.initFlutter,
        _lazyCollections = lazyCollections;
 
+  /// Opens Hive boxes for the current namespace so reads/writes can start.
+  ///
+  /// Throws [StateError] if initialization fails.
   @override
   Future<void> initialize() async {
     if (_initialized) return;
@@ -82,6 +86,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     _initialized = true;
   }
 
+  /// Closes all opened Hive boxes and resets state.
   @override
   Future<void> close() async {
     if (!_initialized) return;
@@ -93,6 +98,12 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   }
 
   /// Changes the active namespace, closing any open boxes.
+  /// Switches to a different namespace, reopening boxes so each user/session
+  /// gets its own set of Hive boxes.
+  ///
+  /// - [namespace]: Logical bucket name (for example, a user id).
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<void> useNamespace(String namespace) async {
     if (_namespace == namespace) return;
@@ -161,6 +172,11 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     return box;
   }
 
+  /// Returns all non-deleted records for the given table.
+  ///
+  /// - [tableName]: Repository name to read from.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<List<JsonMap>> getAll(String tableName) async {
     final box = await _getBox(tableName);
@@ -176,6 +192,11 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     return items;
   }
 
+  /// Returns all events, merged with their associated state data.
+  ///
+  /// - [tableName]: Repository name to read from.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<List<JsonMap>> getAllEvents(String tableName) async {
     final eventBox = await _getBox(tableName, isEvent: true);
@@ -192,6 +213,12 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     return items;
   }
 
+  /// Fetches a record by id, excluding tombstoned entries.
+  ///
+  /// - [tableName]: Repository name to read from.
+  /// - [id]: Record id.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<JsonMap?> getById(String tableName, String id) {
     return _getBox(tableName).then((box) async {
@@ -203,6 +230,12 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     });
   }
 
+  /// Fetches an event by id merged with its data payload.
+  ///
+  /// - [tableName]: Repository name to read from.
+  /// - [id]: Event id.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<JsonMap?> getEventById(String tableName, String id) {
     return _getBox(tableName, isEvent: true).then((eventBox) async {
@@ -215,6 +248,13 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     });
   }
 
+  /// Inserts or replaces a record in the state box.
+  ///
+  /// - [tableName]: Repository name to write to.
+  /// - [item]: Record payload including metadata.
+  /// - [idField]: Field used as primary key.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<void> insert(String tableName, JsonMap item, String idField) async {
     final box = await _getBox(tableName);
@@ -228,6 +268,14 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     await box.put(id, payload);
   }
 
+  /// Inserts or replaces an event in the event box.
+  ///
+  /// - [tableName]: Repository name to write to.
+  /// - [item]: Event payload including metadata.
+  /// - [idField]: Field used as event id.
+  ///
+  /// Throws [StateError] if called before [initialize]. Throws [ArgumentError]
+  /// if the payload is missing a valid id.
   @override
   Future<void> insertEvent(
     String tableName,
@@ -247,6 +295,13 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     await box.put(id, meta);
   }
 
+  /// Updates an existing record payload.
+  ///
+  /// - [tableName]: Repository name to write to.
+  /// - [id]: Record id.
+  /// - [item]: Updated payload.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<void> update(String tableName, String id, JsonMap item) async {
     final box = await _getBox(tableName);
@@ -259,6 +314,13 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     await box.put(id, payload);
   }
 
+  /// Updates an existing event payload.
+  ///
+  /// - [tableName]: Repository name to write to.
+  /// - [id]: Event id.
+  /// - [item]: Updated payload.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<void> updateEvent(String tableName, String id, JsonMap item) async {
     final box = await _getBox(tableName, isEvent: true);
@@ -273,24 +335,46 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     await box.put(id, meta);
   }
 
+  /// Deletes a record from the state box.
+  ///
+  /// - [repositoryName]: Repository name whose record should be removed.
+  /// - [id]: Record id.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<void> delete(String repositoryName, String id) async {
     final box = await _getBox(repositoryName);
     await box.delete(id);
   }
 
+  /// Deletes a stored event.
+  ///
+  /// - [repositoryName]: Repository name whose event should be removed.
+  /// - [id]: Event id.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<void> deleteEvent(String repositoryName, String id) async {
     final box = await _getBox(repositoryName, isEvent: true);
     await box.delete(id);
   }
 
+  /// Clears all records for the specified table.
+  ///
+  /// - [tableName]: Repository name whose records should be dropped.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<void> deleteAll(String tableName) async {
     final box = await _getBox(tableName);
     await box.clear();
   }
 
+  /// Clears all events for the specified table.
+  ///
+  /// - [tableName]: Repository name whose events should be dropped.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<void> deleteAllEvents(String tableName) async {
     final box = await _getBox(tableName, isEvent: true);
@@ -305,6 +389,11 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     return false;
   }
 
+  /// Returns whether a config key is present in Hive metadata.
+  ///
+  /// - [key]: Config key to check.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<bool> containsConfigKey(String key) async {
     if (!_initialized) {
@@ -315,6 +404,13 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     return _metadataBox.containsKey(key);
   }
 
+  /// Stores a config value in Hive metadata.
+  ///
+  /// - [key]: Config key to write.
+  /// - [value]: Allowed types: bool, int, double, String or List<String>.
+  ///
+  /// Throws [StateError] if called before [initialize]. Throws [ArgumentError]
+  /// when the value type is unsupported.
   @override
   Future<bool> setConfigValue<T>(String key, T value) async {
     if (!_initialized) {
@@ -335,6 +431,11 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     return true;
   }
 
+  /// Reads a config value from Hive metadata using the requested type.
+  ///
+  /// - [key]: Config key to read.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<T?> getConfigValue<T>(String key) async {
     if (!_initialized) {
@@ -354,6 +455,9 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     return null;
   }
 
+  /// Removes a namespaced config entry.
+  ///
+  /// - [key]: Config key to remove.
   @override
   Future<bool> removeConfig(String key) async {
     if (!_initialized) {
@@ -365,6 +469,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     return true;
   }
 
+  /// Clears all config metadata stored in Hive.
   @override
   Future<bool> clearConfig() async {
     if (!_initialized) {
@@ -376,6 +481,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     return true;
   }
 
+  /// Lists config keys currently stored in the metadata box.
   @override
   Future<Set<String>> getConfigKeys() async {
     if (!_initialized) {
@@ -386,12 +492,18 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     return _metadataBox.keys.cast<String>().toSet();
   }
 
+  /// Returns whether the state box contains the given id.
   @override
   Future<bool> containsId(String tableName, String id) async {
     final box = await _getBox(tableName);
     return box.containsKey(id);
   }
 
+  /// Ensures schema compatibility; Hive stores maps so no-op here.
+  ///
+  /// - [tableName]: Repository name.
+  /// - [schema]: Column types keyed by field.
+  /// - [idFieldName]: Primary key field name.
   @override
   Future<void> ensureSchema(
     String tableName,
@@ -402,6 +514,8 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     return;
   }
 
+  /// Deletes all boxes and metadata for the current namespace, then
+  /// reinitializes the namespace so it is empty and ready to use.
   @override
   Future<void> clearAllData() async {
     if (!_initialized) {
@@ -521,6 +635,11 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   // Query Support (optimized for Hive)
   // ============================================
 
+  /// Executes a query against Hive data with in-memory filtering.
+  ///
+  /// - [query]: Query definition including filters, sorts and pagination.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<List<LocalFirstEvent<T>>> query<T>(LocalFirstQuery<T> query) async {
     if (!_initialized) {
@@ -619,6 +738,11 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
         : events.where((e) => !e.isDeleted).toList();
   }
 
+  /// Watches a query and emits updates when underlying boxes change.
+  ///
+  /// - [query]: Query definition to observe.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query) {
     if (!_initialized) {

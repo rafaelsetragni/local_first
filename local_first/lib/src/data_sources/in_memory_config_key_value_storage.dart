@@ -29,11 +29,13 @@ class InMemoryConfigKeyValueStorage implements ConfigKeyValueStorage {
     return false;
   }
 
+  /// Marks this storage as ready for use.
   @override
   Future<void> initialize() async {
     _initialized = true;
   }
 
+  /// Clears all namespaces and returns to the default state.
   @override
   Future<void> close() async {
     _namespacedMetadata.clear();
@@ -41,6 +43,12 @@ class InMemoryConfigKeyValueStorage implements ConfigKeyValueStorage {
     _initialized = false;
   }
 
+  /// Switches the active namespace without clearing existing data.
+  ///
+  /// - [namespace]: Logical bucket name (for example, a user id). Data in other
+  ///   namespaces is preserved until switched back.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<void> useNamespace(String namespace) async {
     if (_namespace == namespace) return;
@@ -48,12 +56,24 @@ class InMemoryConfigKeyValueStorage implements ConfigKeyValueStorage {
     if (!_initialized) return;
   }
 
+  /// Checks if the provided key exists in the current namespace.
+  ///
+  /// - [key]: Raw key without namespace; this storage applies the namespace.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<bool> containsConfigKey(String key) async {
     _ensureInitialized();
     return _metadata.containsKey(key);
   }
 
+  /// Persists a config value in memory for quick access in tests or demos.
+  ///
+  /// - [key]: Raw key without namespace; this storage applies the namespace.
+  /// - [value]: Allowed types: bool, int, double, String or List<String>. Any
+  ///   other type triggers an [ArgumentError].
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<bool> setConfigValue<T>(String key, T value) async {
     _ensureInitialized();
@@ -67,6 +87,11 @@ class InMemoryConfigKeyValueStorage implements ConfigKeyValueStorage {
     return true;
   }
 
+  /// Reads a config value using the provided generic type.
+  ///
+  /// - [key]: Raw key without namespace; this storage applies the namespace.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<T?> getConfigValue<T>(String key) async {
     _ensureInitialized();
@@ -81,6 +106,11 @@ class InMemoryConfigKeyValueStorage implements ConfigKeyValueStorage {
     return null;
   }
 
+  /// Removes a config entry from the current namespace.
+  ///
+  /// - [key]: Raw key without namespace; this storage applies the namespace.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<bool> removeConfig(String key) async {
     _ensureInitialized();
@@ -88,6 +118,9 @@ class InMemoryConfigKeyValueStorage implements ConfigKeyValueStorage {
     return true;
   }
 
+  /// Clears every config entry in the current namespace.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<bool> clearConfig() async {
     _ensureInitialized();
@@ -95,6 +128,9 @@ class InMemoryConfigKeyValueStorage implements ConfigKeyValueStorage {
     return true;
   }
 
+  /// Lists all config keys in the current namespace.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<Set<String>> getConfigKeys() async {
     _ensureInitialized();
