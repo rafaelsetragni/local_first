@@ -1,3 +1,11 @@
+## 0.6.0
+
+- Added `local_first_shared_preferences` adapter with namespaced config storage and example app.
+- Unified example apps across adapters and defaulted core example to in-memory storage.
+- Expanded documentation with supported config types tables, example run instructions, and contribution links.
+- Refined config storage APIs (optional delegate, namespace propagation) and achieved full test coverage.
+- Simplified remote pull API to make per-repository backend integrations easier.
+
 ## 0.5.0
 
 - Split storage adapters into separate publishable packages:

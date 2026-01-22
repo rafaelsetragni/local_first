@@ -9,6 +9,14 @@
 
 Child package of the [local_first](https://pub.dev/packages/local_first) ecosystem. This SQLite adapter provides structured tables with typed schemas, indexes, and server-like filtering/sorting for offline-first apps.
 
+| Supported config type | Example                   |
+| --------------------- | ------------------------- |
+| `bool`                | `true`                    |
+| `int`                 | `42`                      |
+| `double`              | `3.14`                    |
+| `String`              | `'hello'`                 |
+| `List<String>`        | `['a', 'b']`              |
+
 ## Why use this adapter?
 
 - Structured schema with per-column indexes.
@@ -33,24 +41,28 @@ dependencies:
 import 'package:local_first/local_first.dart';
 import 'package:local_first_sqlite_storage/local_first_sqlite_storage.dart';
 
-class Todo with LocalFirstModel {
-  Todo({required this.id, required this.title})
-      : updatedAt = DateTime.now();
+// Keep your model immutable; LocalFirstEvent wraps it with sync metadata.
+class Todo {
+  const Todo({
+    required this.id,
+    required this.title,
+    required this.updatedAt,
+  });
 
   final String id;
   final String title;
   final DateTime updatedAt;
 
-  @override
-  Map<String, dynamic> toJson() => {
+  JsonMaptoJson() => {
         'id': id,
         'title': title,
-        'updated_at': updatedAt.toIso8601String(),
+        'updated_at': updatedAt.toUtc().toIso8601String(),
       };
 
-  factory Todo.fromJson(Map<String, dynamic> json) => Todo(
+  factory Todo.fromJson(JsonMapjson) => Todo(
         id: json['id'] as String,
         title: json['title'] as String,
+        updatedAt: DateTime.parse(json['updated_at']).toUtc(),
       );
 
   static Todo resolveConflict(Todo local, Todo remote) =>
@@ -79,7 +91,14 @@ Future<void> main() async {
   );
 
   await client.initialize();
-  await todoRepository.upsert(Todo(id: '1', title: 'Buy milk'));
+  await todoRepository.upsert(
+    Todo(
+      id: '1',
+      title: 'Buy milk',
+      updatedAt: DateTime.now().toUtc(),
+    ),
+    needSync: true,
+  );
 }
 ```
 
@@ -88,7 +107,7 @@ Future<void> main() async {
 - Creates tables and indexes based on provided schema.
 - Query builder with comparisons, IN/NOT IN, null checks, sorting, limit/offset.
 - Stores full JSON in a `data` column and leverages schema columns for performance.
-- Namespaces and metadata (`setMeta` / `getMeta`).
+- Namespaces and metadata (`setConfigValue` / `getConfigValue`).
 - Reactive `watchQuery`.
 
 ## Testing
@@ -98,6 +117,19 @@ Run tests from this package root:
 ```
 flutter test
 ```
+
+## Example app
+
+This package ships the shared demo app. To run it:
+
+```bash
+cd local_first_sqlite_storage/example
+flutter run
+```
+
+## Contributing
+
+Please read the contribution guidelines in the root project before opening issues or PRs: see `../CONTRIBUTING.md`.
 
 ## License
 

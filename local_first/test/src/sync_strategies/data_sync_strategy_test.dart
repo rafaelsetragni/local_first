@@ -1,195 +1,475 @@
-// ignore_for_file: override_on_non_overriding_member
+import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_first/local_first.dart';
-import 'package:mocktail/mocktail.dart';
-
-class _DummyModel with LocalFirstModel {
-  _DummyModel(this.id);
-  final String id;
-
-  @override
-  Map<String, dynamic> toJson() => {'id': id};
-}
-
-class _MockClient extends Mock implements LocalFirstClient {}
 
 class _TestStrategy extends DataSyncStrategy {
-  LocalFirstClient? lastAttached;
+  LocalFirstClient get exposedClient => client;
+
+  void callReport(bool connected) => reportConnectionState(connected);
+}
+
+class _SpyLocalFirstClient extends LocalFirstClient {
+  _SpyLocalFirstClient({required DataSyncStrategy strategy})
+    : super(
+        repositories: const [],
+        localStorage: _NoopStorage(),
+        syncStrategies: [strategy],
+      );
+
+  final List<String> pendingCalls = [];
+  final List<List<JsonMap>> pulledChanges = [];
+  final List<bool> reportedConnections = [];
 
   @override
-  void attach(LocalFirstClient client) {
-    super.attach(client);
-    lastAttached = client;
+  void reportConnectionState(bool connected) {
+    reportedConnections.add(connected);
+    super.reportConnectionState(connected);
   }
 
   @override
-  Future<SyncStatus> onPushToRemote(LocalFirstModel localData) async {
-    return SyncStatus.ok;
+  Future<LocalFirstEvents> getAllPendingEvents({
+    required String repositoryName,
+  }) async {
+    pendingCalls.add(repositoryName);
+    return [];
+  }
+
+  @override
+  Future<void> pullChanges({
+    required String repositoryName,
+    required List<JsonMap> changes,
+  }) async {
+    pulledChanges.add(changes);
   }
 }
 
-class _FakeStorage implements LocalFirstStorage {
-  final Map<String, Map<String, Map<String, dynamic>>> _tables = {};
-  final Map<String, String> _meta = {};
-  bool initialized = false;
+class _NoopStorage implements LocalFirstStorage {
+  @override
+  Future<void> clearAllData() async {}
 
   @override
-  Future<void> initialize() async {
-    initialized = true;
-  }
+  Future<void> close() async {}
 
   @override
-  Future<void> close() async {
-    initialized = false;
-  }
+  Future<bool> containsId(String tableName, String id) async => false;
 
   @override
-  Future<void> clearAllData() async {
-    _tables.clear();
-    _meta.clear();
-  }
+  Future<void> delete(String repositoryName, String id) async {}
 
   @override
-  Future<List<Map<String, dynamic>>> getAll(String tableName) async {
-    return _tables[tableName]?.values.map((e) => Map.of(e)).toList() ?? [];
-  }
+  Future<void> deleteAll(String tableName) async {}
 
   @override
-  Future<Map<String, dynamic>?> getById(String tableName, String id) async {
-    return _tables[tableName]?[id];
-  }
+  Future<void> deleteAllEvents(String tableName) async {}
 
   @override
-  Future<void> insert(
-    String tableName,
-    Map<String, dynamic> item,
-    String idField,
-  ) async {
-    _tables.putIfAbsent(tableName, () => {});
-    _tables[tableName]![item[idField] as String] = item;
-  }
-
-  @override
-  Future<void> update(
-    String tableName,
-    String id,
-    Map<String, dynamic> item,
-  ) async {
-    _tables.putIfAbsent(tableName, () => {});
-    _tables[tableName]![id] = item;
-  }
-
-  @override
-  Future<void> delete(String repositoryName, String id) async {
-    _tables[repositoryName]?.remove(id);
-  }
-
-  @override
-  Future<void> deleteAll(String tableName) async {
-    _tables[tableName]?.clear();
-  }
-
-  @override
-  Future<DateTime?> getLastSyncAt(String repositoryName) async => null;
-
-  @override
-  Future<void> setLastSyncAt(String repositoryName, DateTime time) async {}
-
-  @override
-  Future<void> setMeta(String key, String value) async {
-    _meta[key] = value;
-  }
-
-  @override
-  Future<String?> getMeta(String key) async => _meta[key];
-
-  @override
-  Future<List<Map<String, dynamic>>> query(LocalFirstQuery query) async {
-    return _tables[query.repositoryName]?.values
-            .map((e) => Map.of(e))
-            .toList() ??
-        [];
-  }
-
-  @override
-  Stream<List<Map<String, dynamic>>> watchQuery(LocalFirstQuery query) async* {
-    yield await this.query(query);
-  }
+  Future<void> deleteEvent(String repositoryName, String id) async {}
 
   @override
   Future<void> ensureSchema(
     String tableName,
-    Map<String, LocalFieldType> schema, {
+    JsonMap<LocalFieldType> schema, {
     required String idFieldName,
   }) async {}
+
+  @override
+  Future<List<JsonMap>> getAll(String tableName) async => [];
+
+  @override
+  Future<List<JsonMap>> getAllEvents(String tableName) async => [];
+
+  @override
+  Future<JsonMap?> getById(String tableName, String id) async => null;
+
+  @override
+  Future<JsonMap?> getEventById(String tableName, String id) async => null;
+
+  @override
+  Future<bool> containsConfigKey(String key) async => false;
+
+  @override
+  Future<T?> getConfigValue<T>(String key) async => null;
+
+  @override
+  Future<void> useNamespace(String namespace) async {}
+
+  @override
+  Future<bool> removeConfig(String key) async => true;
+
+  @override
+  Future<bool> clearConfig() async => true;
+
+  @override
+  Future<Set<String>> getConfigKeys() async => {};
+
+  @override
+  Future<void> initialize() async {}
+
+  @override
+  Future<void> insert(String tableName, JsonMap item, String idField) async {}
+
+  @override
+  Future<void> insertEvent(
+    String tableName,
+    JsonMap item,
+    String idField,
+  ) async {}
+
+  @override
+  Future<List<LocalFirstEvent<T>>> query<T>(LocalFirstQuery<T> query) async =>
+      [];
+
+  @override
+  Future<bool> setConfigValue<T>(String key, T value) async => true;
+
+  @override
+  Future<void> update(String tableName, String id, JsonMap item) async {}
+
+  @override
+  Future<void> updateEvent(String tableName, String id, JsonMap item) async {}
+
+  @override
+  Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query) =>
+      const Stream.empty();
+}
+
+class _RecordingStorage implements LocalFirstStorage {
+  final List<JsonMap> events = [];
+  final List<JsonMap> updatedEvents = [];
+  int updateCount = 0;
+  int updateEventCount = 0;
+  JsonMap? lastUpdatedData;
+
+  @override
+  Future<void> clearAllData() async {}
+
+  @override
+  Future<void> close() async {}
+
+  @override
+  Future<bool> containsId(String tableName, String id) async => false;
+
+  @override
+  Future<void> delete(String repositoryName, String id) async {}
+
+  @override
+  Future<void> deleteAll(String tableName) async {}
+
+  @override
+  Future<void> deleteAllEvents(String tableName) async {}
+
+  @override
+  Future<void> deleteEvent(String repositoryName, String id) async {}
+
+  @override
+  Future<void> ensureSchema(
+    String tableName,
+    JsonMap<LocalFieldType> schema, {
+    required String idFieldName,
+  }) async {}
+
+  @override
+  Future<List<JsonMap>> getAll(String tableName) async => [];
+
+  @override
+  Future<List<JsonMap>> getAllEvents(String tableName) async =>
+      List.unmodifiable(events);
+
+  @override
+  Future<JsonMap?> getById(String tableName, String id) async => null;
+
+  @override
+  Future<JsonMap?> getEventById(String tableName, String id) async => null;
+
+  @override
+  Future<bool> containsConfigKey(String key) async => false;
+
+  @override
+  Future<T?> getConfigValue<T>(String key) async => null;
+
+  @override
+  Future<void> useNamespace(String namespace) async {}
+
+  @override
+  Future<bool> removeConfig(String key) async => true;
+
+  @override
+  Future<bool> clearConfig() async => true;
+
+  @override
+  Future<Set<String>> getConfigKeys() async => {};
+
+  @override
+  Future<void> initialize() async {}
+
+  @override
+  Future<void> insert(String tableName, JsonMap item, String idField) async {}
+
+  @override
+  Future<void> insertEvent(
+    String tableName,
+    JsonMap item,
+    String idField,
+  ) async {}
+
+  @override
+  Future<List<LocalFirstEvent<T>>> query<T>(LocalFirstQuery<T> query) async =>
+      [];
+
+  @override
+  Future<bool> setConfigValue<T>(String key, T value) async => true;
+
+  @override
+  Future<void> update(String tableName, String id, JsonMap item) async {
+    updateCount++;
+    lastUpdatedData = item;
+  }
+
+  @override
+  Future<void> updateEvent(String tableName, String id, JsonMap item) async {
+    updateEventCount++;
+    updatedEvents.add(item);
+  }
+
+  @override
+  Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query) =>
+      const Stream.empty();
 }
 
 void main() {
-  setUpAll(() {
-    registerFallbackValue(<LocalFirstModel>[]);
-  });
-
   group('DataSyncStrategy', () {
-    test('attach stores client', () {
-      final strategy = _TestStrategy();
-      final client = _MockClient();
+    late _TestStrategy strategy;
+    late _SpyLocalFirstClient client;
 
-      strategy.attach(client);
-
-      expect(strategy.lastAttached, equals(client));
+    setUp(() {
+      strategy = _TestStrategy();
+      client = _SpyLocalFirstClient(strategy: strategy);
     });
 
-    test('client getter exposes attached client', () {
-      final strategy = _TestStrategy();
-      final client = _MockClient();
-
-      strategy.attach(client);
-
-      expect(strategy.client, same(client));
+    test('should attach client on construction', () {
+      expect(strategy.exposedClient, same(client));
     });
 
-    test('getPendingObjects delegates to client', () async {
-      final strategy = _TestStrategy();
-      final client = _MockClient();
-      final pending = [_DummyModel('1')];
-
-      when(
-        () => client.getAllPendingObjects(),
-      ).thenAnswer((_) async => pending);
-      strategy.attach(client);
-
-      final result = await strategy.getPendingObjects();
-
-      expect(result, pending);
-      verify(() => client.getAllPendingObjects()).called(1);
-    });
-
-    test('pullChangesToLocal calls client pull logic', () async {
-      final strategy = _TestStrategy();
-      final storage = _FakeStorage();
-      final repo = LocalFirstRepository<_DummyModel>.create(
-        name: 'users',
-        getId: (m) => m.id,
-        toJson: (m) => m.toJson(),
-        fromJson: (json) => _DummyModel(json['id'] as String),
-        onConflict: (l, r) => l,
+    test('should return pending on default onPushToRemote', () async {
+      final repo = LocalFirstRepository<JsonMap>.create(
+        name: 'dummy',
+        getId: (item) => '',
+        toJson: (item) => item,
+        fromJson: (json) => json,
       );
-      final client = LocalFirstClient(
-        repositories: [repo],
-        localStorage: storage,
-        syncStrategies: [strategy],
+      final event = LocalFirstEvent.createNewInsertEvent(
+        needSync: true,
+        data: {'id': '1'},
+        repository: repo,
       );
-      await client.initialize();
 
-      await strategy.pullChangesToLocal({
-        'timestamp': DateTime.now().toIso8601String(),
-        'changes': {},
-      });
+      final status = await strategy.onPushToRemote(event);
 
-      final metaKey = '__last_sync__users';
-      final value = await storage.getMeta(metaKey);
-      expect(value, isNotNull);
+      expect(status, SyncStatus.pending);
     });
+
+    test('should forward reportConnectionState to client', () async {
+      final events = <bool>[];
+      final subscription = client.connectionChanges.listen(events.add);
+
+      strategy.callReport(true);
+      strategy.callReport(false);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(client.reportedConnections, [true, false]);
+      expect(events, [true, false]);
+      expect(strategy.latestConnectionState, isFalse);
+
+      await subscription.cancel();
+    });
+
+    test('should delegate getPendingEvents to client', () async {
+      final result = await strategy.getPendingEvents(repositoryName: 'repo1');
+
+      expect(result, isEmpty);
+      expect(client.pendingCalls, ['repo1']);
+    });
+
+    test('should delegate pullChangesToLocal to client', () async {
+      final payload = [
+        {LocalFirstEvent.kRepository: 'repo1'},
+      ];
+
+      await strategy.pullChangesToLocal(
+        repositoryName: 'repo1',
+        remoteChanges: payload,
+      );
+
+      expect(client.pulledChanges.single, payload);
+    });
+
+    test('connectionChanges getter should expose client stream reference', () {
+      expect(strategy.connectionChanges, isA<Stream<bool>>());
+    });
+
+    test(
+      'connectionChanges getter should proxy underlying client stream',
+      () async {
+        final events = <bool>[];
+        final sub = strategy.connectionChanges.listen(events.add);
+
+        client.reportConnectionState(true);
+        await Future<void>.delayed(Duration.zero);
+
+        expect(events, [true]);
+        await sub.cancel();
+      },
+    );
+
+    test(
+      'markEventsAsSynced should mark current and previous events as ok',
+      () async {
+        final storage = _RecordingStorage();
+        final repo = LocalFirstRepository<JsonMap>.create(
+          name: 'repo',
+          getId: (item) => item['id'] as String,
+          toJson: (item) => item,
+          fromJson: (json) => json,
+        );
+        LocalFirstClient(
+          repositories: [repo],
+          localStorage: storage,
+          syncStrategies: [strategy],
+        );
+        final older = LocalFirstEvent.createNewInsertEvent(
+          repository: repo,
+          data: {'id': '1'},
+          needSync: true,
+        );
+        final latest = LocalFirstEvent.createNewUpdateEvent(
+          repository: repo,
+          data: {'id': '1'},
+          needSync: true,
+        );
+        final otherId = LocalFirstEvent.createNewInsertEvent(
+          repository: repo,
+          data: {'id': '2'},
+          needSync: true,
+        );
+        final referenceCreatedAt = latest.syncCreatedAt.millisecondsSinceEpoch;
+        storage.events.addAll([
+          older.toLocalStorageJson()
+            ..[LocalFirstEvent.kSyncCreatedAt] = referenceCreatedAt - 1,
+          latest.toLocalStorageJson()
+            ..[LocalFirstEvent.kSyncCreatedAt] = referenceCreatedAt + 1,
+          otherId.toLocalStorageJson()
+            ..[LocalFirstEvent.kSyncCreatedAt] = referenceCreatedAt - 1,
+        ]);
+
+        await strategy.markEventsAsSynced([latest]);
+
+        expect(storage.updateCount, greaterThanOrEqualTo(1));
+        expect(storage.updateEventCount, 2); // latest + older
+        expect(
+          storage.updatedEvents
+              .where((e) => e[LocalFirstEvent.kEventId] == latest.eventId)
+              .single[LocalFirstEvent.kSyncStatus],
+          SyncStatus.ok.index,
+        );
+        expect(
+          storage.updatedEvents
+              .where((e) => e[LocalFirstEvent.kEventId] == older.eventId)
+              .single[LocalFirstEvent.kSyncStatus],
+          SyncStatus.ok.index,
+        );
+        expect(
+          storage.updatedEvents.where(
+            (e) => e[LocalFirstEvent.kEventId] == otherId.eventId,
+          ),
+          isEmpty,
+        );
+      },
+    );
+
+    test(
+      'markEventsAsSynced should pick the latest event per data id',
+      () async {
+        final storage = _RecordingStorage();
+        final repo = LocalFirstRepository<JsonMap>.create(
+          name: 'repo',
+          getId: (item) => item['id'] as String,
+          toJson: (item) => item,
+          fromJson: (json) => json,
+        );
+        LocalFirstClient(
+          repositories: [repo],
+          localStorage: storage,
+          syncStrategies: [strategy],
+        );
+        final older = LocalFirstEvent.createNewInsertEvent(
+          repository: repo,
+          data: {'id': '1'},
+          needSync: true,
+        );
+        final latest = LocalFirstEvent.createNewUpdateEvent(
+          repository: repo,
+          data: {'id': '1'},
+          needSync: true,
+        );
+
+        await strategy.markEventsAsSynced([latest, older]);
+
+        expect(storage.updateEventCount, 1);
+        expect(storage.updateCount, 1);
+        expect(
+          storage.lastUpdatedData?[LocalFirstEvent.kLastEventId],
+          latest.eventId,
+        );
+      },
+    );
+
+    test(
+      'markEventsAsSynced keeps newest when older duplicate arrives',
+      () async {
+        final storage = _RecordingStorage();
+        final repo = LocalFirstRepository<JsonMap>.create(
+          name: 'repo',
+          getId: (item) => item['id'] as String,
+          toJson: (item) => item,
+          fromJson: (json) => json,
+        );
+        LocalFirstClient(
+          repositories: [repo],
+          localStorage: storage,
+          syncStrategies: [strategy],
+        );
+        final older = LocalFirstEvent<JsonMap>.fromLocalStorage(
+          repository: repo,
+          json: {
+            LocalFirstEvent.kEventId: 'older',
+            LocalFirstEvent.kDataId: '1',
+            LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+            LocalFirstEvent.kOperation: SyncOperation.insert.index,
+            LocalFirstEvent.kSyncCreatedAt: 1000,
+            'id': '1',
+          },
+        );
+        final latest = LocalFirstEvent<JsonMap>.fromLocalStorage(
+          repository: repo,
+          json: {
+            LocalFirstEvent.kEventId: 'latest',
+            LocalFirstEvent.kDataId: '1',
+            LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+            LocalFirstEvent.kOperation: SyncOperation.insert.index,
+            LocalFirstEvent.kSyncCreatedAt: 2000,
+            'id': '1',
+          },
+        );
+
+        await strategy.markEventsAsSynced([older, latest]);
+
+        expect(storage.updateEventCount, 1);
+        expect(
+          storage.updatedEvents.single[LocalFirstEvent.kEventId],
+          latest.eventId,
+        );
+      },
+    );
   });
 }

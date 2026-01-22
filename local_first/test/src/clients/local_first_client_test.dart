@@ -3,312 +3,496 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_first/local_first.dart';
 
-class _TestModel with LocalFirstModel {
-  _TestModel(this.id, {this.value});
-  final String id;
-  final String? value;
+class _SpyStorage implements LocalFirstStorage {
+  int initialized = 0;
+  int cleared = 0;
+  int closed = 0;
+  int namespaceChanges = 0;
+  final Map<String, Object?> meta = {};
 
   @override
-  Map<String, dynamic> toJson() => {
-    'id': id,
-    if (value != null) 'value': value,
-  };
-
-  factory _TestModel.fromJson(Map<String, dynamic> json) =>
-      _TestModel(json['id'] as String, value: json['value'] as String?);
-}
-
-class _OkStrategy extends DataSyncStrategy {
-  @override
-  Future<SyncStatus> onPushToRemote(LocalFirstModel localData) async {
-    return SyncStatus.ok;
-  }
-}
-
-class _InitProbeRepo extends LocalFirstRepository<_TestModel> {
-  _InitProbeRepo({
-    required super.name,
-    required super.getId,
-    required super.toJson,
-    required super.fromJson,
-    required super.onConflict,
-  });
-
-  bool initialized = false;
-  bool resetCalled = false;
-
-  @override
-  Future<void> initialize() async {
-    initialized = true;
-    await super.initialize();
-  }
-
-  @override
-  void reset() {
-    resetCalled = true;
-    initialized = false;
-    super.reset();
-  }
-}
-
-class _InMemoryStorage implements LocalFirstStorage {
-  bool initialized = false;
-  bool closed = false;
-  final Map<String, Map<String, Map<String, dynamic>>> tables = {};
-  final Map<String, String> meta = {};
-  final Map<String, StreamController<List<Map<String, dynamic>>>> _controllers =
-      {};
-
-  StreamController<List<Map<String, dynamic>>> _controller(String name) {
-    return _controllers.putIfAbsent(
-      name,
-      () => StreamController<List<Map<String, dynamic>>>.broadcast(),
-    );
-  }
-
-  Future<void> _emit(String tableName) async {
-    if (_controllers[tableName]?.isClosed ?? true) return;
-    _controller(tableName).add(await getAll(tableName));
-  }
-
-  @override
-  Future<void> initialize() async {
-    initialized = true;
+  Future<void> clearAllData() async {
+    cleared++;
   }
 
   @override
   Future<void> close() async {
-    closed = true;
-    for (final c in _controllers.values) {
-      await c.close();
-    }
+    closed++;
   }
 
   @override
-  Future<void> clearAllData() async {
-    tables.clear();
-    meta.clear();
-    for (final c in _controllers.values) {
-      if (!c.isClosed) c.add([]);
-    }
+  Future<void> useNamespace(String namespace) async {
+    namespaceChanges++;
   }
 
   @override
-  Future<void> deleteAll(String tableName) async {
-    tables[tableName]?.clear();
-    await _emit(tableName);
-  }
+  Future<bool> containsId(String tableName, String id) async => false;
 
   @override
-  Future<void> delete(String repositoryName, String id) async {
-    tables[repositoryName]?.remove(id);
-    await _emit(repositoryName);
-  }
+  Future<void> delete(String repositoryName, String id) async {}
 
   @override
-  Future<List<Map<String, dynamic>>> getAll(String tableName) async {
-    return tables[tableName]?.values.map((e) => Map.of(e)).toList() ?? [];
-  }
+  Future<void> deleteAll(String tableName) async {}
 
   @override
-  Future<Map<String, dynamic>?> getById(String tableName, String id) async {
-    return tables[tableName]?[id];
-  }
-
-  Future<DateTime?> getLastSyncAt(String repositoryName) async => null;
+  Future<void> deleteAllEvents(String tableName) async {}
 
   @override
-  Future<String?> getMeta(String key) async => meta[key];
-
-  @override
-  Future<void> insert(
-    String tableName,
-    Map<String, dynamic> item,
-    String idField,
-  ) async {
-    tables.putIfAbsent(tableName, () => {});
-    tables[tableName]![item[idField] as String] = item;
-    await _emit(tableName);
-  }
-
-  Future<void> setLastSyncAt(String repositoryName, DateTime time) async {}
-
-  @override
-  Future<void> setMeta(String key, String value) async {
-    meta[key] = value;
-  }
-
-  @override
-  Future<void> update(
-    String tableName,
-    String id,
-    Map<String, dynamic> item,
-  ) async {
-    tables.putIfAbsent(tableName, () => {});
-    tables[tableName]![id] = item;
-    await _emit(tableName);
-  }
-
-  @override
-  Future<List<Map<String, dynamic>>> query(LocalFirstQuery query) async {
-    return getAll(query.repositoryName);
-  }
-
-  @override
-  Stream<List<Map<String, dynamic>>> watchQuery(LocalFirstQuery query) {
-    final controller = _controller(query.repositoryName);
-    controller.addStream(Stream.value([]));
-    return controller.stream;
-  }
+  Future<void> deleteEvent(String repositoryName, String id) async {}
 
   @override
   Future<void> ensureSchema(
     String tableName,
     Map<String, LocalFieldType> schema, {
     required String idFieldName,
+  }) async {}
+
+  @override
+  Future<List<Map<String, dynamic>>> getAll(String tableName) async => [];
+
+  @override
+  Future<List<Map<String, dynamic>>> getAllEvents(String tableName) async => [];
+
+  @override
+  Future<Map<String, dynamic>?> getById(String tableName, String id) async =>
+      null;
+
+  @override
+  Future<Map<String, dynamic>?> getEventById(
+    String tableName,
+    String id,
+  ) async => null;
+
+  @override
+  Future<bool> containsConfigKey(String key) async => meta.containsKey(key);
+
+  @override
+  Future<T?> getConfigValue<T>(String key) async => meta[key] as T?;
+
+  @override
+  Future<void> initialize() async {
+    initialized++;
+  }
+
+  @override
+  Future<void> insert(
+    String tableName,
+    Map<String, dynamic> item,
+    String idField,
+  ) async {}
+
+  @override
+  Future<void> insertEvent(
+    String tableName,
+    Map<String, dynamic> item,
+    String idField,
+  ) async {}
+
+  @override
+  Future<List<LocalFirstEvent<T>>> query<T>(LocalFirstQuery<T> query) async =>
+      [];
+
+  @override
+  Future<bool> setConfigValue<T>(String key, T value) async {
+    meta[key] = value;
+    return true;
+  }
+
+  @override
+  Future<bool> removeConfig(String key) async {
+    meta.remove(key);
+    return true;
+  }
+
+  @override
+  Future<bool> clearConfig() async {
+    meta.clear();
+    return true;
+  }
+
+  @override
+  Future<Set<String>> getConfigKeys() async => meta.keys.toSet();
+
+  @override
+  Future<void> update(
+    String tableName,
+    String id,
+    Map<String, dynamic> item,
+  ) async {}
+
+  @override
+  Future<void> updateEvent(
+    String tableName,
+    String id,
+    Map<String, dynamic> item,
+  ) async {}
+
+  @override
+  Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query) =>
+      const Stream.empty();
+}
+
+class _SpyConfigStorage implements ConfigKeyValueStorage {
+  int initialized = 0;
+  int closed = 0;
+  int namespaceChanges = 0;
+  final Map<String, Object?> meta = {};
+
+  @override
+  Future<bool> clearConfig() async {
+    meta.clear();
+    return true;
+  }
+
+  @override
+  Future<bool> containsConfigKey(String key) async => meta.containsKey(key);
+
+  @override
+  Future<bool> removeConfig(String key) async {
+    meta.remove(key);
+    return true;
+  }
+
+  @override
+  Future<bool> setConfigValue<T>(String key, T value) async {
+    meta[key] = value;
+    return true;
+  }
+
+  @override
+  Future<T?> getConfigValue<T>(String key) async => meta[key] as T?;
+
+  @override
+  Future<Set<String>> getConfigKeys() async => meta.keys.toSet();
+
+  @override
+  Future<void> close() async {
+    closed++;
+  }
+
+  @override
+  Future<void> initialize() async {
+    initialized++;
+  }
+
+  @override
+  Future<void> useNamespace(String namespace) async {
+    namespaceChanges++;
+  }
+}
+
+class _SpyRepository extends LocalFirstRepository<dynamic> {
+  _SpyRepository(String name)
+    : super(
+        name: name,
+        getId: (item) => item['id'] as String,
+        toJson: (item) => item,
+        fromJson: (json) => json,
+      );
+
+  bool initialized = false;
+  bool resetCalled = false;
+  int pendingCalls = 0;
+  List<LocalFirstEvent<dynamic>> pendingToReturn = const [];
+  final List<LocalFirstEvent<dynamic>> mergedRemote = [];
+
+  @override
+  Future<void> initialize() async {
+    initialized = true;
+  }
+
+  @override
+  Future<void> reset() async {
+    resetCalled = true;
+  }
+
+  @override
+  Future<List<LocalFirstEvent<dynamic>>> getPendingEvents() async {
+    pendingCalls++;
+    return pendingToReturn;
+  }
+
+  @override
+  Future<void> mergeRemoteEvent({
+    required LocalFirstEvent<dynamic> remoteEvent,
   }) async {
-    return;
+    mergedRemote.add(remoteEvent);
+  }
+}
+
+class _SpyStrategy extends DataSyncStrategy {
+  LocalFirstClient? attached;
+
+  @override
+  void attach(LocalFirstClient client) {
+    attached = client;
+    super.attach(client);
   }
 }
 
 void main() {
   group('LocalFirstClient', () {
-    late _InMemoryStorage storage;
-    late LocalFirstRepository<_TestModel> repo;
-    late LocalFirstClient client;
+    late _SpyStorage storage;
+    late _SpyStrategy strategy;
 
-    setUp(() async {
-      storage = _InMemoryStorage();
-      repo = LocalFirstRepository<_TestModel>.create(
-        name: 'tests',
-        getId: (m) => m.id,
-        toJson: (m) => m.toJson(),
-        fromJson: _TestModel.fromJson,
-        onConflict: (l, r) => l,
-      );
-      client = LocalFirstClient(
-        repositories: [repo],
-        localStorage: storage,
-        syncStrategies: [_OkStrategy()],
-      );
+    setUp(() {
+      storage = _SpyStorage();
+      strategy = _SpyStrategy();
     });
 
-    test('initialize sets up storage and repositories', () async {
-      await client.initialize();
-      expect(storage.initialized, isTrue);
-    });
-
-    test('duplicate repository names throw ArgumentError', () {
+    test('should require at least one sync strategy', () {
       expect(
         () => LocalFirstClient(
-          repositories: [repo, repo],
-          localStorage: _InMemoryStorage(),
-          syncStrategies: [_OkStrategy()],
+          repositories: [],
+          localStorage: storage,
+          syncStrategies: [],
         ),
-        throwsA(isA<ArgumentError>()),
+        throwsAssertionError,
       );
     });
 
-    test('getRepositoryByName returns repo and throws when missing', () async {
+    test('should throw on duplicate repository names', () {
+      final repo1 = _SpyRepository('repo');
+      final repo2 = _SpyRepository('repo');
+
+      expect(
+        () => LocalFirstClient(
+          repositories: [repo1, repo2],
+          localStorage: storage,
+          syncStrategies: [strategy],
+        ),
+        throwsArgumentError,
+      );
+    });
+
+    test('should attach strategy and expose client', () {
+      final repo = _SpyRepository('r1');
+      final client = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        syncStrategies: [strategy],
+      );
+
+      expect(strategy.attached, same(client));
+    });
+
+    test('should initialize storage and repositories', () async {
+      final repo = _SpyRepository('r1');
+      final client = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        syncStrategies: [strategy],
+      );
+
       await client.initialize();
-      expect(client.getRepositoryByName('tests'), equals(repo));
+      await client.awaitInitialization;
+
+      expect(storage.initialized, 1);
+      expect(repo.initialized, isTrue);
+    });
+
+    test('should clear data and reinitialize repositories', () async {
+      final repo = _SpyRepository('r1');
+      final client = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        syncStrategies: [strategy],
+      );
+
+      await client.clearAllData();
+
+      expect(storage.cleared, 1);
+      expect(repo.resetCalled, isTrue);
+      expect(repo.initialized, isTrue);
+    });
+
+    test('should dispose storage and close connection stream', () async {
+      final repo = _SpyRepository('r1');
+      final client = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        syncStrategies: [strategy],
+      );
+      await client.dispose();
+
+      expect(storage.closed, 1);
+      expect(client.latestConnectionState, isNull);
+      // Should not throw when reporting after dispose.
+      client.reportConnectionState(true);
+    });
+
+    test('should return repository by name', () {
+      final repo = _SpyRepository('r1');
+      final client = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        syncStrategies: [strategy],
+      );
+
+      expect(client.getRepositoryByName('r1'), same(repo));
       expect(() => client.getRepositoryByName('missing'), throwsStateError);
     });
 
-    test('clearAllData wipes storage and reinitializes repositories', () async {
-      final probeRepo = _InitProbeRepo(
-        name: 'probe',
-        getId: (m) => m.id,
-        toJson: (m) => m.toJson(),
-        fromJson: _TestModel.fromJson,
-        onConflict: (l, r) => l,
-      );
-      final clientWithProbe = LocalFirstClient(
-        repositories: [probeRepo],
+    test('should stream connection changes', () async {
+      final repo = _SpyRepository('r1');
+      final client = LocalFirstClient(
+        repositories: [repo],
         localStorage: storage,
-        syncStrategies: [_OkStrategy()],
+        syncStrategies: [strategy],
       );
-      await clientWithProbe.initialize();
-      await probeRepo.upsert(_TestModel('1'));
+      final values = <bool>[];
+      final sub = client.connectionChanges.listen(values.add);
 
-      expect(await storage.getById('probe', '1'), isNotNull);
-      expect(probeRepo.initialized, isTrue);
+      client.reportConnectionState(true);
+      client.reportConnectionState(false);
+      await Future<void>.delayed(Duration.zero);
 
-      await clientWithProbe.clearAllData();
-
-      expect(await storage.getById('probe', '1'), isNull);
-      expect(probeRepo.resetCalled, isTrue);
-      expect(probeRepo.initialized, isTrue);
+      expect(values, [true, false]);
+      expect(client.latestConnectionState, isFalse);
+      await sub.cancel();
     });
 
-    test('setKeyValue / getMeta delegates to storage', () async {
-      await client.setKeyValue('k', 'v');
-      expect(await client.getMeta('k'), 'v');
+    test('should pull changes and forward to repository', () async {
+      final repo = _SpyRepository('r1');
+      final client = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        syncStrategies: [strategy],
+      );
+      final payload = {
+        LocalFirstEvent.kEventId: IdUtil.uuidV7(),
+        LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
+        LocalFirstEvent.kOperation: SyncOperation.insert.index,
+        LocalFirstEvent.kSyncCreatedAt: DateTime.now()
+            .toUtc()
+            .millisecondsSinceEpoch,
+        LocalFirstEvent.kDataId: '1',
+        LocalFirstEvent.kData: {'id': '1'},
+      };
+
+      await client.pullChanges(repositoryName: 'r1', changes: [payload]);
+
+      expect(repo.mergedRemote, hasLength(1));
+      expect(repo.mergedRemote.single.dataId, '1');
     });
 
-    test('getAllPendingObjects aggregates pending from repositories', () async {
-      await client.initialize();
-      await storage.insert('tests', {
-        'id': 'p1',
-        'value': 'pending',
-        '_sync_status': SyncStatus.pending.index,
-        '_sync_operation': SyncOperation.insert.index,
-        '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
-      }, 'id');
-
-      final pending = await client.getAllPendingObjects();
-      expect(pending.length, 1);
-      expect(pending.first, isA<_TestModel>());
-      expect((pending.first as _TestModel).id, 'p1');
-    });
-
-    test('dispose closes storage', () async {
-      await client.initialize();
-      await client.dispose();
-      expect(storage.closed, isTrue);
-    });
-
-    test('awaitInitialization completes only after initialize runs', () async {
-      final completerOrder = <String>[];
-
-      unawaited(
-        client.awaitInitialization.then((_) {
-          completerOrder.add('awaitInitialization');
-        }),
+    test('should throw on malformed remote events', () async {
+      final repo = _SpyRepository('r1');
+      final client = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        syncStrategies: [strategy],
       );
 
-      // Ensure not completed before initialize
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-      expect(completerOrder, isEmpty);
+      expect(
+        () => client.pullChanges(
+          repositoryName: 'r1',
+          changes: [
+            {LocalFirstEvent.kEventId: 'invalid'},
+          ],
+        ),
+        throwsFormatException,
+      );
+    });
 
-      await client.initialize();
-      await Future<void>.delayed(const Duration(milliseconds: 10));
+    test('should get pending events for repository', () async {
+      final repo1 = _SpyRepository('r1')..pendingToReturn = [];
+      final repo2 = _SpyRepository('r2')..pendingToReturn = [];
+      final client = LocalFirstClient(
+        repositories: [repo1, repo2],
+        localStorage: storage,
+        syncStrategies: [strategy],
+      );
 
-      expect(completerOrder, contains('awaitInitialization'));
+      repo1.pendingToReturn = [
+        LocalFirstEvent.createNewInsertEvent(
+          repository: repo1,
+          data: {'id': '1'},
+          needSync: true,
+        ),
+      ];
+      repo2.pendingToReturn = [
+        LocalFirstEvent.createNewInsertEvent(
+          repository: repo2,
+          data: {'id': '2'},
+          needSync: true,
+        ),
+      ];
+
+      final result = await client.getAllPendingEvents(repositoryName: 'r1');
+
+      expect(result.map((e) => e.dataId), ['1']);
+      expect(repo1.pendingCalls, 1);
+      expect(repo2.pendingCalls, 0);
+    });
+
+    test('should delegate meta operations to storage', () async {
+      final repo = _SpyRepository('r1');
+      final client = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        syncStrategies: [strategy],
+      );
+
+      await client.setConfigValue('k', 'v');
+      final value = await client.getConfigValue('k');
+
+      expect(value, 'v');
     });
 
     test(
-      'pullChangesToLocal throws on invalid offline response format',
+      'should delegate meta operations to provided key-value storage',
       () async {
-        await client.initialize();
-        final strategy = client.syncStrategies.first;
-        final invalidPayloads = [
-          <String, dynamic>{}, // missing everything
-          <String, dynamic>{
-            'timestamp': DateTime.now().toIso8601String(),
-          }, // missing changes
-          <String, dynamic>{
-            'changes': <String, dynamic>{},
-          }, // missing timestamp
-        ];
+        final repo = _SpyRepository('r1');
+        final configStorage = _SpyConfigStorage();
+        final client = LocalFirstClient(
+          repositories: [repo],
+          localStorage: storage,
+          keyValueStorage: configStorage,
+          syncStrategies: [strategy],
+        );
 
-        for (final payload in invalidPayloads) {
-          expect(
-            () => strategy.pullChangesToLocal(payload),
-            throwsA(isA<FormatException>()),
-          );
-        }
+        await client.initialize();
+        await client.setConfigValue('k', 'v');
+
+        expect(configStorage.meta['k'], 'v');
+        expect(storage.meta['k'], isNull);
+        expect(configStorage.initialized, 1);
+
+        await client.dispose();
+        expect(configStorage.closed, 1);
       },
     );
+
+    test('useNamespace propagates to both storages when different', () async {
+      final repo = _SpyRepository('r1');
+      final configStorage = _SpyConfigStorage();
+      final client = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        keyValueStorage: configStorage,
+        syncStrategies: [strategy],
+      );
+
+      await client.useNamespace('ns1');
+      expect(storage.namespaceChanges, 1);
+      expect(configStorage.namespaceChanges, 1);
+    });
+
+    test('TestHelperLocalFirstClient should expose internals for testing', () {
+      final repo = _SpyRepository('r1');
+      final client = LocalFirstClient(
+        repositories: [repo],
+        localStorage: storage,
+        syncStrategies: [strategy],
+      );
+      final helper = TestHelperLocalFirstClient(client);
+
+      expect(helper.repositories.single, same(repo));
+      expect(helper.onInitializeCompleter.isCompleted, isFalse);
+      expect(helper.connectionController.isClosed, isFalse);
+      expect(helper.latestConnection, isNull);
+      helper.connectionController.add(true);
+    });
   });
 }

@@ -2,29 +2,30 @@ part of '../../local_first.dart';
 
 /// Represents a query with filters and sorting.
 ///
-/// Provides a fluent API for building complex queries with filtering,
-/// ordering, and pagination capabilities.
-class LocalFirstQuery<T extends LocalFirstModel> {
+/// Concrete storage backends must apply filtering/sorting; this class only
+/// carries the query shape and delegates execution.
+class LocalFirstQuery<T> {
   final String repositoryName;
   final List<QueryFilter> filters;
   final List<QuerySort> sorts;
   final int? limit;
   final int? offset;
+  final bool includeDeleted;
   final LocalFirstStorage _delegate;
-  final T Function(Map<String, dynamic>) _fromJson;
   final LocalFirstRepository<T> _repository;
+
+  LocalFirstRepository<T> get repository => _repository;
 
   LocalFirstQuery({
     required this.repositoryName,
     required LocalFirstStorage delegate,
-    required T Function(Map<String, dynamic>) fromJson,
     required LocalFirstRepository<T> repository,
     this.filters = const [],
     this.sorts = const [],
     this.limit,
     this.offset,
+    this.includeDeleted = false,
   }) : _delegate = delegate,
-       _fromJson = fromJson,
        _repository = repository;
 
   LocalFirstQuery<T> copyWith({
@@ -32,16 +33,17 @@ class LocalFirstQuery<T extends LocalFirstModel> {
     List<QuerySort>? sorts,
     int? limit,
     int? offset,
+    bool? includeDeleted,
   }) {
     return LocalFirstQuery<T>(
       repositoryName: repositoryName,
       delegate: _delegate,
-      fromJson: _fromJson,
       repository: _repository,
       filters: filters ?? this.filters,
       sorts: sorts ?? this.sorts,
       limit: limit ?? this.limit,
       offset: offset ?? this.offset,
+      includeDeleted: includeDeleted ?? this.includeDeleted,
     );
   }
 
@@ -120,59 +122,24 @@ class LocalFirstQuery<T extends LocalFirstModel> {
     return copyWith(offset: count);
   }
 
+  /// Includes soft-deleted items (delete events) in results.
+  LocalFirstQuery<T> withDeleted({bool include = true}) {
+    return copyWith(includeDeleted: include);
+  }
+
   /// Executes the query and returns all matching results.
   ///
-  /// Returns a list of models with sync metadata.
-  Future<List<T>> getAll() async {
-    final results = await _delegate.query(this);
-    return _mapResults(results);
+  /// Storage backends are responsible for applying filters/sorts and
+  /// hydrating events.
+  Future<List<LocalFirstEvent<T>>> getAll() async {
+    return _delegate.query<T>(this);
   }
 
   /// Returns a reactive stream of query results.
   ///
   /// The stream will emit new values whenever the underlying data changes.
-  ///
-  /// Example:
-  /// ```dart
-  /// query()
-  ///   .where('status', isEqualTo: 'active')
-  ///   .watch()
-  ///   .listen((items) => print('Active items: ${items.length}'));
-  /// ```
-  Stream<List<T>> watch() {
-    return _delegate.watchQuery(this).map(_mapResults).asBroadcastStream();
-  }
-
-  List<T> _mapResults(List<Map<String, dynamic>> results) {
-    return results
-        .map((json) {
-          final itemJson = Map<String, dynamic>.from(json);
-          final item = _fromJson(
-            itemJson..removeWhere((key, _) => key.startsWith('_sync_')),
-          );
-
-          // Extract sync metadata stored alongside the model
-          final syncStatus = json['_sync_status'] != null
-              ? SyncStatus.values[json['_sync_status'] as int]
-              : SyncStatus.ok;
-
-          final syncOperation = json['_sync_operation'] != null
-              ? SyncOperation.values[json['_sync_operation'] as int]
-              : SyncOperation.insert;
-
-          item._setSyncStatus(syncStatus);
-          item._setSyncOperation(syncOperation);
-          final createdAt = json['_sync_created_at'] as int?;
-          item._setSyncCreatedAt(
-            createdAt != null
-                ? DateTime.fromMillisecondsSinceEpoch(createdAt, isUtc: true)
-                : null,
-          );
-          item._setRepositoryName(repositoryName);
-          return item;
-        })
-        .where((obj) => !obj.isDeleted)
-        .toList();
+  Stream<List<LocalFirstEvent<T>>> watch() {
+    return _delegate.watchQuery<T>(this).asBroadcastStream();
   }
 }
 
@@ -205,7 +172,7 @@ class QueryFilter {
   });
 
   /// Checks if an item matches this filter (fallback for DBs without native query support).
-  bool matches(Map<String, dynamic> item) {
+  bool matches(JsonMap item) {
     final value = item[field];
 
     if (isNull != null) {

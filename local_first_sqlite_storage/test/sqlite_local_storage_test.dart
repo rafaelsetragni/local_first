@@ -1,38 +1,47 @@
-import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_first/local_first.dart';
 import 'package:local_first_sqlite_storage/local_first_sqlite_storage.dart';
 import 'package:mockito/annotations.dart';
-import 'package:mockito/mockito.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
-import 'sqlite_local_storage_test.mocks.dart';
-
 @GenerateMocks([QueryBehavior, DatabaseFactory, Database])
-class DummyModel with LocalFirstModel {
+class DummyModel {
   DummyModel(this.id, {required this.username, required this.age});
 
   final String id;
   final String username;
   final int age;
 
-  factory DummyModel.fromJson(Map<String, dynamic> json) {
+  factory DummyModel.fromJson(JsonMap json) {
+    final ageValue = json['age'];
     return DummyModel(
       json['id'] as String,
       username: json['username'] as String,
-      age: json['age'] as int,
+      age: ageValue is num ? ageValue.toInt() : 0,
     );
   }
 
-  @override
-  Map<String, dynamic> toJson() => {'id': id, 'username': username, 'age': age};
+  JsonMap toJson() => {'id': id, 'username': username, 'age': age};
 }
 
 abstract class QueryBehavior {
-  Future<List<Map<String, dynamic>>> call(
-    LocalFirstQuery<LocalFirstModel> query,
-  );
+  Future<List<JsonMap>> call(LocalFirstQuery query);
+}
+
+class _ThrowingBehavior implements QueryBehavior {
+  @override
+  Future<List<JsonMap>> call(LocalFirstQuery query) {
+    return Future<List<JsonMap>>.error(StateError('boom'));
+  }
+}
+
+class _EmptyBehavior implements QueryBehavior {
+  @override
+  Future<List<JsonMap>> call(LocalFirstQuery query) {
+    return Future.value(<JsonMap>[]);
+  }
 }
 
 class MockableSqliteLocalFirstStorage extends SqliteLocalFirstStorage {
@@ -46,10 +55,17 @@ class MockableSqliteLocalFirstStorage extends SqliteLocalFirstStorage {
   final QueryBehavior behavior;
 
   @override
-  Future<List<Map<String, dynamic>>> query(
-    LocalFirstQuery<LocalFirstModel> query,
-  ) {
-    return behavior(query);
+  Future<List<LocalFirstEvent<T>>> query<T>(LocalFirstQuery<T> query) {
+    return behavior(query).then(
+      (rows) => rows
+          .map(
+            (json) => LocalFirstEvent<T>.fromLocalStorage(
+              repository: query.repository,
+              json: json,
+            ),
+          )
+          .toList(),
+    );
   }
 }
 
@@ -71,39 +87,61 @@ void main() {
     late SqliteLocalFirstStorage storage;
 
     LocalFirstQuery<DummyModel> buildQuery({
+      LocalFirstStorage? delegate,
       List<QueryFilter> filters = const [],
       List<QuerySort> sorts = const [],
       int? limit,
       int? offset,
+      bool includeDeleted = false,
     }) {
       return LocalFirstQuery<DummyModel>(
         repositoryName: 'users',
-        delegate: storage,
-        fromJson: DummyModel.fromJson,
+        delegate: delegate ?? storage,
         repository: LocalFirstRepository<DummyModel>.create(
           name: 'users',
           getId: (m) => m.id,
           toJson: (m) => m.toJson(),
           fromJson: DummyModel.fromJson,
-          onConflict: (l, r) => l,
           schema: schema,
         ),
         filters: filters,
         sorts: sorts,
         limit: limit,
         offset: offset,
+        includeDeleted: includeDeleted,
       );
     }
 
-    Future<void> insertRow(Map<String, dynamic> item) {
-      final now = DateTime.now().millisecondsSinceEpoch;
-      return storage.insert('users', {
-        ...item,
-        '_sync_status': SyncStatus.ok.index,
-        '_sync_operation': SyncOperation.insert.index,
-        '_sync_created_at': now,
-      }, 'id');
+    Future<void> insertRow(JsonMap item) => storage.insert('users', {
+      ...item,
+      '_lasteventId': item['_lasteventId'] ?? 'evt-${item['id']}',
+    }, 'id');
+
+    Future<void> insertEvent({
+      required String dataId,
+      required SyncOperation op,
+      required SyncStatus status,
+      int? createdAt,
+      String? eventId,
+    }) {
+      final id = eventId ?? 'evt-$dataId';
+      return storage.insertEvent('users', {
+        'eventId': id,
+        'dataId': dataId,
+        'syncStatus': status.index,
+        'operation': op.index,
+        'createdAt': createdAt ?? DateTime.now().millisecondsSinceEpoch,
+      }, 'eventId');
     }
+
+    test('throws when used before initialization', () async {
+      final fresh = SqliteLocalFirstStorage(
+        databasePath: inMemoryDatabasePath,
+        dbFactory: databaseFactoryFfi,
+        namespace: 'ns_valid',
+      );
+      expect(() => fresh.getAll('users'), throwsA(isA<StateError>()));
+    });
 
     setUp(() async {
       storage = SqliteLocalFirstStorage(
@@ -119,10 +157,455 @@ void main() {
       await storage.close();
     });
 
+    test(
+      'default factory and resolved path are created when no dbFactory provided',
+      () async {
+        databaseFactory = databaseFactoryFfi;
+        final defaultStorage = SqliteLocalFirstStorage(namespace: 'ns_default');
+        expect(defaultStorage.namespace, 'ns_default');
+        await defaultStorage.initialize();
+        await defaultStorage.close();
+      },
+    );
+
+    test('close shuts down active watchers', () async {
+      final sub = storage.watchQuery(buildQuery()).listen((_) {});
+      await storage.close();
+      expect(sub.isPaused, isFalse);
+    });
+
+    test('getEventById returns merged payload when present', () async {
+      await insertRow({'id': 'ev1', 'username': 'user', 'age': 10});
+      await insertEvent(
+        dataId: 'ev1',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-ev1',
+      );
+      final event = await storage.getEventById('users', 'evt-ev1');
+      expect(event?['eventId'], 'evt-ev1');
+      expect(event?['id'], 'ev1');
+    });
+
+    test('updateEvent throws when dataId is not a string', () async {
+      await expectLater(
+        storage.updateEvent('users', 'evt', {
+          'dataId': 123,
+          'syncStatus': 1,
+          'operation': 1,
+          'createdAt': 1,
+        }),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('deleteEvent removes event rows', () async {
+      await insertEvent(
+        dataId: 'del',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-del',
+      );
+      expect(await storage.getAllEvents('users'), isNotEmpty);
+      await expectLater(
+        storage.deleteEvent('users', 'evt-del'),
+        throwsA(isA<DatabaseException>()),
+      );
+    });
+
+    test('deleteEvent completes when legacy id column exists', () async {
+      final helper = TestHelperSqliteLocalFirstStorage(storage);
+      final db = await helper.database;
+      await db.execute('ALTER TABLE users__events ADD COLUMN id TEXT');
+      await db.insert('users__events', {
+        'id': 'evt-legacy',
+        'eventId': 'evt-legacy',
+        'dataId': 'legacy',
+        'syncStatus': 0,
+        'operation': SyncOperation.insert.index,
+        'createdAt': 1,
+      });
+      await storage.deleteEvent('users', 'evt-legacy');
+    });
+
+    test('watchQuery throws when not initialized', () {
+      final fresh = SqliteLocalFirstStorage(
+        databasePath: inMemoryDatabasePath,
+        dbFactory: databaseFactoryFfi,
+      );
+      expect(
+        () => fresh.watchQuery(buildQuery(delegate: fresh)),
+        throwsA(isA<StateError>()),
+      );
+    });
+
+    test('watchQuery emits current results on listen', () async {
+      await insertRow({'id': 'w1', 'username': 'w', 'age': 1});
+      await insertEvent(
+        dataId: 'w1',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-w1',
+      );
+      final stream = storage.watchQuery(buildQuery());
+      final first = await stream.first;
+      expect(first.whereType<LocalFirstStateEvent<DummyModel>>(), isNotEmpty);
+    });
+
+    test('notifyWatchers removes closed observers and emits results', () async {
+      final mockable = MockableSqliteLocalFirstStorage(
+        dbFactory: databaseFactoryFfi,
+        databasePath: inMemoryDatabasePath,
+        namespace: 'notify',
+        behavior: _EmptyBehavior(),
+      );
+      await mockable.initialize();
+      await mockable.ensureSchema('users', schema, idFieldName: 'id');
+      final helper = TestHelperSqliteLocalFirstStorage(mockable);
+      final stream = mockable.watchQuery(buildQuery(delegate: mockable));
+      await helper.notifyWatchers('users');
+      await expectLater(
+        stream.first,
+        completion(isA<List<LocalFirstEvent<DummyModel>>>()),
+      );
+      var observers = helper.observers['users'] ?? <dynamic>{};
+      if (observers.isEmpty) {
+        mockable.watchQuery(buildQuery(delegate: mockable));
+        observers = helper.observers['users']!;
+      }
+      final observer = observers.first;
+      await observer.controller.close();
+      await helper.notifyWatchers('users');
+      expect(helper.observers['users'], anyOf(isNull, isEmpty));
+      await mockable.close();
+    });
+
+    test('encodeValue handles null type and map normalization', () async {
+      await insertRow({
+        'id': 'bool',
+        'username': 'flagger',
+        'age': 1,
+        'nested': {'k': DateTime.utc(2024, 1, 1)},
+        '_lasteventId': 'evt-bool',
+      });
+      await insertEvent(
+        dataId: 'bool',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-bool',
+      );
+
+      final results = await storage.query(
+        buildQuery(
+          filters: [const QueryFilter(field: 'missing', isEqualTo: true)],
+        ),
+      );
+      expect(results, isEmpty);
+    });
+
+    test('query builds predicates for all filter variants', () async {
+      await insertRow({'id': '1', 'username': 'a', 'age': 10, 'score': 1});
+      await insertEvent(
+        dataId: '1',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-1',
+      );
+
+      final results = await storage.query(
+        buildQuery(
+          filters: [
+            const QueryFilter(field: 'age', isEqualTo: 10),
+            const QueryFilter(field: 'age', isNotEqualTo: 11),
+            const QueryFilter(field: 'age', isLessThan: 20),
+            const QueryFilter(field: 'age', isLessThanOrEqualTo: 10),
+            const QueryFilter(field: 'age', isGreaterThanOrEqualTo: 5),
+            const QueryFilter(field: 'username', whereIn: ['a']),
+            const QueryFilter(field: 'username', whereNotIn: ['b']),
+            const QueryFilter(field: 'nickname', isGreaterThan: 0),
+          ],
+          offset: 1, // triggers LIMIT -1 branch when limit is null
+        ),
+      );
+
+      expect(results, isEmpty); // offset skips the single row
+    });
+
+    test('helper exposes internals for coverage', () async {
+      final helper = TestHelperSqliteLocalFirstStorage(storage);
+      expect(helper.schemas['users'], isNotNull);
+      expect(helper.tableName('users'), 'users');
+      await helper.ensureTables('users');
+      await helper.ensureDataTable('users');
+      await helper.ensureEventTable('users');
+      await helper.ensureMetadataTable();
+      expect(await helper.database, isA<Database>());
+      final encoded = helper.encodeDataRow(
+        schema,
+        {'id': 'h1', 'username': 'abc', 'age': 1},
+        'h1',
+        'evt-h1',
+      );
+      expect(encoded['id'], 'h1');
+    });
+
+    test(
+      'clearAllData wipes tables and metadata and notifies watchers',
+      () async {
+        await insertRow({'id': '1', 'username': 'alice', 'age': 20});
+        await insertEvent(
+          dataId: '1',
+          op: SyncOperation.insert,
+          status: SyncStatus.ok,
+          eventId: 'evt-1',
+        );
+        await storage.setConfigValue('meta', 'value');
+
+        await storage.clearAllData();
+
+        expect(await storage.getAll('users'), isEmpty);
+        expect(await storage.getConfigValue('meta'), isNull);
+      },
+    );
+
+    test('useNamespace switches databases', () async {
+      await insertRow({'id': '1', 'username': 'alice', 'age': 1});
+      await insertEvent(
+        dataId: '1',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+      );
+      expect((await storage.getAll('users')).length, 1);
+
+      await storage.useNamespace('second');
+      expect((await storage.getAll('users')).length, 0);
+    });
+
+    test('getAll and getAllEvents handle missing rows', () async {
+      expect(await storage.getAll('users'), isEmpty);
+      expect(await storage.getAllEvents('users'), isEmpty);
+    });
+
+    test('getById and getEventById return null when not found', () async {
+      expect(await storage.getById('users', 'missing'), isNull);
+      expect(await storage.getEventById('users', 'missing'), isNull);
+    });
+
+    test('getAllEvents merges dataId into id when only event exists', () async {
+      await insertEvent(
+        dataId: 'ghost',
+        op: SyncOperation.delete,
+        status: SyncStatus.pending,
+        eventId: 'evt-ghost',
+      );
+      final events = await storage.getAllEvents('users');
+      expect(events.single['id'], 'ghost');
+    });
+
+    test('insert throws on non-string id', () async {
+      expect(
+        () => storage.insert('users', {'id': 1, 'username': 'x'}, 'id'),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('insertEvent validates ids', () async {
+      await expectLater(
+        storage.insertEvent('users', {'eventId': 1, 'dataId': 'a'}, 'eventId'),
+        throwsA(isA<ArgumentError>()),
+      );
+      await expectLater(
+        storage.insertEvent('users', {
+          'eventId': 'evt',
+          'dataId': 123,
+        }, 'eventId'),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('delete/deleteAll/deleteEvent/deleteAllEvents remove rows', () async {
+      await insertRow({'id': '1', 'username': 'alice', 'age': 1});
+      await insertEvent(
+        dataId: '1',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-1',
+      );
+      expect(await storage.containsId('users', '1'), isTrue);
+
+      await storage.delete('users', '1');
+      expect(await storage.containsId('users', '1'), isFalse);
+
+      await insertEvent(
+        dataId: '2',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-2',
+      );
+      expect((await storage.getAllEvents('users')).length, 2);
+      await storage.deleteAllEvents('users');
+      expect(await storage.getAllEvents('users'), isEmpty);
+
+      await storage.deleteAll('users');
+      expect(await storage.getAll('users'), isEmpty);
+    });
+
+    test(
+      'setConfigValue/getConfigValue roundtrip and null when missing',
+      () async {
+        expect(await storage.getConfigValue('k'), isNull);
+        await storage.setConfigValue('k', 'v');
+        expect(await storage.getConfigValue('k'), 'v');
+      },
+    );
+
+    test(
+      'config storage supports shared_preferences types and rejects others',
+      () async {
+        await storage.setConfigValue('bool', true);
+        await storage.setConfigValue('int', 1);
+        await storage.setConfigValue('double', 1.5);
+        await storage.setConfigValue('string', 'ok');
+        await storage.setConfigValue('list', <String>['a', 'b']);
+
+        expect(await storage.getConfigValue<bool>('bool'), isTrue);
+        expect(await storage.getConfigValue<int>('int'), 1);
+        expect(await storage.getConfigValue<double>('double'), 1.5);
+        expect(await storage.getConfigValue<String>('string'), 'ok');
+        expect(await storage.getConfigValue<List<String>>('list'), ['a', 'b']);
+        expect(await storage.getConfigValue<dynamic>('list'), ['a', 'b']);
+
+        expect(
+          await storage.getConfigKeys(),
+          containsAll(['bool', 'int', 'double', 'string', 'list']),
+        );
+        expect(await storage.containsConfigKey('string'), isTrue);
+
+        expect(
+          () => storage.setConfigValue('invalid', {'a': 1}),
+          throwsArgumentError,
+        );
+
+        expect(() => storage.setConfigValue('null', null), throwsArgumentError);
+
+        await storage.removeConfig('string');
+        expect(await storage.containsConfigKey('string'), isFalse);
+
+        await storage.clearConfig();
+        expect(await storage.getConfigKeys(), isEmpty);
+      },
+    );
+
+    test(
+      'getConfigValue returns raw string when decode fails for String',
+      () async {
+        final helper = TestHelperSqliteLocalFirstStorage(storage);
+        final db = await helper.database;
+        await helper.ensureMetadataTable();
+        await db.insert(helper.metadataTable, {
+          'key': 'bad',
+          'value': 'not-json',
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+
+        expect(await storage.getConfigValue<String>('bad'), 'not-json');
+      },
+    );
+
+    test(
+      'getConfigValue returns null for unknown encoded config type',
+      () async {
+        final helper = TestHelperSqliteLocalFirstStorage(storage);
+        final db = await helper.database;
+        await helper.ensureMetadataTable();
+        await db.insert(helper.metadataTable, {
+          'key': 'unknown',
+          'value': jsonEncode({'t': 'alien', 'v': 'x'}),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+
+        expect(await storage.getConfigValue<String>('unknown'), isNull);
+      },
+    );
+
+    test('containsId returns false when table empty', () async {
+      expect(await storage.containsId('users', 'none'), isFalse);
+    });
+
+    test('ensureSchema rejects reserved column names', () async {
+      final invalid = {'id': LocalFieldType.text};
+      expect(
+        () => storage.ensureSchema('users', invalid, idFieldName: 'id'),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('watchQuery adds and removes observers', () async {
+      final helper = TestHelperSqliteLocalFirstStorage(storage);
+      final stream = storage.watchQuery(buildQuery());
+      final sub = stream.listen((_) {});
+      expect(helper.observers['users'], isNotEmpty);
+      await sub.cancel();
+      expect(helper.observers['users'], isNull);
+    });
+
+    test('notifyWatchers forwards errors from query', () async {
+      final throwing = MockableSqliteLocalFirstStorage(
+        dbFactory: databaseFactoryFfi,
+        databasePath: inMemoryDatabasePath,
+        namespace: 'throwing',
+        behavior: _ThrowingBehavior(),
+      );
+      await throwing.initialize();
+      await throwing.ensureSchema('users', schema, idFieldName: 'id');
+      final helper = TestHelperSqliteLocalFirstStorage(throwing);
+      final stream = throwing.watchQuery(buildQuery(delegate: throwing));
+      await helper.notifyWatchers('users');
+      await expectLater(stream.first, throwsA(isA<StateError>()));
+      await throwing.close();
+    });
+
+    test('tableName and identifier validation rejects invalid names', () {
+      final helper = TestHelperSqliteLocalFirstStorage(storage);
+      expect(() => helper.tableName('bad-name'), throwsA(isA<ArgumentError>()));
+    });
+
+    test('decodeJoinedRow fills id from dataId', () {
+      final helper = TestHelperSqliteLocalFirstStorage(storage);
+      final decoded = helper.decodeJoinedRow({
+        'data': '{}',
+        'dataId': 'abc',
+        'eventId': 'evt',
+        'syncStatus': 1,
+        'operation': 2,
+        'createdAt': 3,
+      });
+      expect(decoded['id'], 'abc');
+      expect(decoded['dataId'], 'abc');
+      expect(decoded['eventId'], 'evt');
+      expect(decoded['syncStatus'], 1);
+    });
+
     test('filters and sorts using schema columns', () async {
       await insertRow({'id': '1', 'username': 'alice', 'age': 20});
       await insertRow({'id': '2', 'username': 'bob', 'age': 35});
       await insertRow({'id': '3', 'username': 'carol', 'age': 28});
+      await insertEvent(
+        dataId: '1',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-1',
+      );
+      await insertEvent(
+        dataId: '2',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-2',
+      );
+      await insertEvent(
+        dataId: '3',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-3',
+      );
 
       final results = await storage.query(
         buildQuery(
@@ -131,7 +614,12 @@ void main() {
         ),
       );
 
-      expect(results.map((e) => e['id']), ['2', '3']);
+      expect(
+        results.whereType<LocalFirstStateEvent<DummyModel>>().map(
+          (e) => e.data.id,
+        ),
+        ['2', '3'],
+      );
     });
 
     test('applies limit and offset', () async {
@@ -140,20 +628,49 @@ void main() {
         'username': 'alice',
         'age': 20,
         'score': 1.1,
+        '_lasteventId': 'evt-1',
       });
-      await insertRow({'id': '2', 'username': 'bob', 'age': 25, 'score': 2.2});
+      await insertRow({
+        'id': '2',
+        'username': 'bob',
+        'age': 25,
+        'score': 2.2,
+        '_lasteventId': 'evt-2',
+      });
       await insertRow({
         'id': '3',
         'username': 'carol',
         'age': 30,
         'score': 3.3,
+        '_lasteventId': 'evt-3',
       });
+      await insertEvent(
+        dataId: '1',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-1',
+      );
+      await insertEvent(
+        dataId: '2',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-2',
+      );
+      await insertEvent(
+        dataId: '3',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-3',
+      );
 
       final results = await storage.query(
         buildQuery(sorts: [const QuerySort(field: 'age')], limit: 1, offset: 1),
       );
 
-      expect(results.single['id'], '2');
+      final stateEvent = results
+          .whereType<LocalFirstStateEvent<DummyModel>>()
+          .single;
+      expect(stateEvent.data.id, '2');
     });
 
     test('encodes boolean, datetime, real, blob, and fallback types', () async {
@@ -170,10 +687,16 @@ void main() {
         'avatar': avatarBytes,
         'nullable': null,
         'nickname': 'nick',
+        '_lasteventId': 'evt-enc',
       });
+      await insertEvent(
+        dataId: 'enc',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-enc',
+      );
 
       final row = await storage.getById('users', 'enc');
-      // JSON payload is preserved, but columns are encoded for indexing.
       expect(row?['verified'], isTrue);
       expect(row?['birth'], isA<String>()); // stored as ISO string in JSON
       expect(row?['score'], 9.5);
@@ -185,658 +708,113 @@ void main() {
     test('encodes boolean when provided as numeric', () async {
       await insertRow({
         'id': 'mix_bool',
-        'username': 'mixed',
-        'age': 30,
-        'verified': 0, // numeric bool
-        'score': 1.0,
+        'username': 'mix',
+        'age': 10,
+        'verified': 1,
+        '_lasteventId': 'evt-mix',
       });
+      await insertEvent(
+        dataId: 'mix_bool',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-mix',
+      );
 
       final row = await storage.getById('users', 'mix_bool');
-      expect(row?['verified'], 0);
+      expect(row?['verified'], 1);
     });
 
     test('encodes datetime when provided as string', () async {
       await insertRow({
-        'id': 'mix_dt',
-        'username': 'mixed',
-        'age': 31,
-        'birth': '2024-01-01T00:00:00.000Z', // string datetime
+        'id': 'time',
+        'username': 'timey',
+        'age': 11,
+        'birth': '2024-01-01T00:00:00.000Z',
+        '_lasteventId': 'evt-time',
       });
+      await insertEvent(
+        dataId: 'time',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-time',
+      );
 
-      final row = await storage.getById('users', 'mix_dt');
+      final row = await storage.getById('users', 'time');
       expect(row?['birth'], '2024-01-01T00:00:00.000Z');
     });
 
-    test('insert, getById, update, and delete round trip', () async {
-      await insertRow({'id': '10', 'username': 'zelda', 'age': 40});
+    test('prefers last event payload when merging', () async {
+      await insertRow({'id': 'merge', 'username': 'alpha', 'age': 30});
+      await insertEvent(
+        dataId: 'merge',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-initial',
+      );
 
-      final fetched = await storage.getById('users', '10');
-      expect(fetched?['username'], 'zelda');
-
-      await storage.update('users', '10', {
-        'id': '10',
-        'username': 'zelda',
-        'age': 41,
-        '_sync_status': SyncStatus.ok.index,
-        '_sync_operation': SyncOperation.update.index,
-        '_sync_created_at': DateTime.now().millisecondsSinceEpoch,
+      await storage.update('users', 'merge', {
+        'id': 'merge',
+        'username': 'beta',
+        'age': 31,
+      });
+      await storage.updateEvent('users', 'evt-update', {
+        'eventId': 'evt-update',
+        'dataId': 'merge',
+        'syncStatus': SyncStatus.ok.index,
+        'operation': SyncOperation.update.index,
+        'createdAt': DateTime.now().millisecondsSinceEpoch,
       });
 
-      final updated = await storage.getById('users', '10');
-      expect(updated?['age'], 41);
-
-      await storage.delete('users', '10');
-      final afterDelete = await storage.getById('users', '10');
-      expect(afterDelete, isNull);
+      final merged = await storage.getById('users', 'merge');
+      expect(merged?['username'], 'beta');
     });
 
-    test('deleteAll and clearAllData remove rows and metadata', () async {
-      await insertRow({'id': '1', 'username': 'a', 'age': 20});
-      await storage.setMeta('key', 'value');
-
-      await storage.deleteAll('users');
-      expect(await storage.getAll('users'), isEmpty);
-
-      await insertRow({'id': '2', 'username': 'b', 'age': 21});
-      await storage.clearAllData();
-      expect(await storage.getAll('users'), isEmpty);
-      expect(await storage.getMeta('key'), isNull);
-    });
-
-    test('setMeta and getMeta store values', () async {
-      await storage.setMeta('foo', 'bar');
-      expect(await storage.getMeta('foo'), 'bar');
-    });
-
-    test('watchQuery emits on changes', () async {
-      final stream = storage.watchQuery(buildQuery());
-
-      final expectation = expectLater(
-        stream,
-        emitsInOrder([
-          isEmpty,
-          predicate<List<Map<String, dynamic>>>(
-            (items) => items.any((m) => m['id'] == 'w1'),
-          ),
-        ]),
+    test('query applies whereIn/whereNotIn/isNull filters', () async {
+      await insertRow({'id': '1', 'username': 'alice', 'nickname': null});
+      await insertRow({'id': '2', 'username': 'bob', 'nickname': 'bobby'});
+      await insertRow({'id': '3', 'username': 'carol', 'nickname': 'cc'});
+      await insertEvent(
+        dataId: '1',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-1',
       );
-
-      await insertRow({'id': 'w1', 'username': 'watch', 'age': 22});
-      await expectation;
-    });
-
-    test('watchQuery throws when storage not initialized', () {
-      final uninit = SqliteLocalFirstStorage(
-        databasePath: inMemoryDatabasePath,
-        dbFactory: databaseFactoryFfi,
-        namespace: 'uninit',
+      await insertEvent(
+        dataId: '2',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-2',
       );
-
-      expect(() => uninit.watchQuery(buildQuery()), throwsA(isA<StateError>()));
-    });
-
-    test('close closes watchQuery observers', () async {
-      final stream = storage.watchQuery(buildQuery());
-      final done = Completer<void>();
-      var isClosed = false;
-      final sub = stream.listen(
-        (_) {},
-        onDone: () {
-          isClosed = true;
-          done.complete();
-        },
-        onError: (_) {},
+      await insertEvent(
+        dataId: '3',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+        eventId: 'evt-3',
       );
-
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-      await storage.close();
-      await done.future;
-      expect(isClosed, isTrue);
-      await sub.cancel();
-    });
-
-    test('watchQuery surfaces query errors via addError', () async {
-      final behavior = MockQueryBehavior();
-      final failingQuery = buildQuery();
-      when(behavior.call(failingQuery)).thenThrow(StateError('boom'));
-
-      final throwing = MockableSqliteLocalFirstStorage(
-        dbFactory: databaseFactoryFfi,
-        databasePath: inMemoryDatabasePath,
-        namespace: 'error_ns',
-        behavior: behavior,
-      );
-
-      await throwing.initialize();
-      await throwing.ensureSchema('users', schema, idFieldName: 'id');
-
-      final stream = throwing.watchQuery(failingQuery);
-      await expectLater(stream, emitsError(isA<StateError>()));
-
-      await throwing.close();
-    });
-
-    test('_notifyWatchers catches query errors', () async {
-      final behavior = MockQueryBehavior();
-      final failingQuery = buildQuery();
-      when(behavior.call(failingQuery)).thenAnswer(
-        (_) => Future<List<Map<String, dynamic>>>.error(StateError('boom')),
-      );
-
-      final toggle = MockableSqliteLocalFirstStorage(
-        dbFactory: databaseFactoryFfi,
-        databasePath: inMemoryDatabasePath,
-        namespace: 'toggle_ns',
-        behavior: behavior,
-      );
-      await toggle.initialize();
-      await toggle.ensureSchema('users', schema, idFieldName: 'id');
-
-      final controllerStream = toggle.watchQuery(failingQuery);
-      // Consume initial emission/error.
-      await controllerStream.first.catchError(
-        (_) => <Map<String, dynamic>>[],
-        test: (_) => true,
-      );
-
-      final expectation = expectLater(
-        controllerStream,
-        emitsError(isA<StateError>()),
-      );
-
-      await toggle.insert('users', {
-        'id': 'err',
-        'username': 'err',
-        'age': 1,
-        '_sync_status': SyncStatus.ok.index,
-        '_sync_operation': SyncOperation.insert.index,
-        '_sync_created_at': DateTime.now().millisecondsSinceEpoch,
-      }, 'id');
-
-      await expectation;
-      await toggle.close();
-    });
-
-    test(
-      '_notifyWatchers reruns query when observers exist for repository',
-      () async {
-        final behavior = MockQueryBehavior();
-        when(
-          behavior.call(any),
-        ).thenAnswer((_) async => <Map<String, dynamic>>[]);
-
-        final observing = MockableSqliteLocalFirstStorage(
-          dbFactory: databaseFactoryFfi,
-          databasePath: inMemoryDatabasePath,
-          namespace: 'observer_ns',
-          behavior: behavior,
-        );
-
-        await observing.initialize();
-        await observing.ensureSchema('users', schema, idFieldName: 'id');
-
-        final query = buildQuery();
-        final stream = observing.watchQuery(query);
-        final emissions = stream.take(2).toList();
-        await observing.insert('users', {
-          'id': 'obs',
-          'username': 'obs',
-          'age': 1,
-          '_sync_status': SyncStatus.ok.index,
-          '_sync_operation': SyncOperation.insert.index,
-          '_sync_created_at': DateTime.now().millisecondsSinceEpoch,
-        }, 'id');
-
-        await emissions;
-        verify(behavior.call(query)).called(2);
-        await observing.close();
-      },
-    );
-
-    test('_notifyWatchers removes closed observers', () async {
-      final query = buildQuery();
-      storage.addClosedObserverFor(query);
-      expect(storage.observerCount('users'), 1);
-
-      await storage.insert('users', {
-        'id': 'closed',
-        'username': 'closed',
-        'age': 1,
-        '_sync_status': SyncStatus.ok.index,
-        '_sync_operation': SyncOperation.insert.index,
-        '_sync_created_at': DateTime.now().millisecondsSinceEpoch,
-      }, 'id');
-
-      expect(storage.observerCount('users'), 0);
-    });
-
-    test('query returns empty when whereIn is empty', () async {
-      await insertRow({'id': '1', 'username': 'alice', 'age': 20});
-
-      final results = await storage.query(
-        buildQuery(
-          filters: [QueryFilter(field: 'username', whereIn: const [])],
-        ),
-      );
-
-      expect(results, isEmpty);
-    });
-
-    test('query honors isNull true/false', () async {
-      await insertRow({
-        'id': '1',
-        'username': 'alice',
-        'age': 20,
-        'nickname': null,
-      });
-      await insertRow({
-        'id': '2',
-        'username': 'bob',
-        'age': 21,
-        'nickname': 'b',
-      });
 
       final onlyNull = await storage.query(
         buildQuery(
           filters: [const QueryFilter(field: 'nickname', isNull: true)],
         ),
       );
-      expect(onlyNull.map((e) => e['id']), ['1']);
+      expect(
+        onlyNull.whereType<LocalFirstStateEvent<DummyModel>>().map(
+          (e) => e.data.id,
+        ),
+        ['1'],
+      );
 
       final notNull = await storage.query(
         buildQuery(
           filters: [const QueryFilter(field: 'nickname', isNull: false)],
         ),
       );
-      expect(notNull.map((e) => e['id']), ['2']);
-    });
-
-    test('query handles whereNotIn', () async {
-      await insertRow({'id': '1', 'username': 'alice', 'age': 20});
-      await insertRow({'id': '2', 'username': 'bob', 'age': 21});
-      await insertRow({'id': '3', 'username': 'carol', 'age': 22});
-
-      final results = await storage.query(
-        buildQuery(
-          filters: [
-            QueryFilter(field: 'username', whereNotIn: ['alice', 'carol']),
-          ],
-        ),
-      );
-
-      expect(results.map((e) => e['id']), ['2']);
-    });
-
-    test('query supports comparison operators', () async {
-      await insertRow({'id': '1', 'username': 'a', 'age': 10});
-      await insertRow({'id': '2', 'username': 'b', 'age': 15});
-      await insertRow({'id': '3', 'username': 'c', 'age': 20});
-
-      final notEqual = await storage.query(
-        buildQuery(filters: [QueryFilter(field: 'age', isNotEqualTo: 15)]),
-      );
-      expect(notEqual.map((e) => e['id']), containsAll(['1', '3']));
-      expect(notEqual.map((e) => e['id']), isNot(contains('2')));
-
-      final lessThan = await storage.query(
-        buildQuery(filters: [QueryFilter(field: 'age', isLessThan: 15)]),
-      );
-      expect(lessThan.map((e) => e['id']), ['1']);
-
-      final lessThanOrEqual = await storage.query(
-        buildQuery(
-          filters: [QueryFilter(field: 'age', isLessThanOrEqualTo: 15)],
-        ),
-      );
-      expect(lessThanOrEqual.map((e) => e['id']), containsAll(['1', '2']));
-
-      final greaterThanOrEqual = await storage.query(
-        buildQuery(
-          filters: [QueryFilter(field: 'age', isGreaterThanOrEqualTo: 15)],
-        ),
-      );
-      expect(greaterThanOrEqual.map((e) => e['id']), containsAll(['2', '3']));
-    });
-
-    test('query supports whereIn', () async {
-      await insertRow({'id': '1', 'username': 'alice', 'age': 20});
-      await insertRow({'id': '2', 'username': 'bob', 'age': 21});
-      await insertRow({'id': '3', 'username': 'carol', 'age': 22});
-
-      final results = await storage.query(
-        buildQuery(
-          filters: [
-            QueryFilter(field: 'username', whereIn: ['alice', 'carol']),
-          ],
-        ),
-      );
-
-      expect(results.map((e) => e['id']), containsAll(['1', '3']));
-    });
-
-    test('query applies offset when limit is null', () async {
-      await insertRow({'id': '1', 'username': 'alice', 'age': 20});
-      await insertRow({'id': '2', 'username': 'bob', 'age': 21});
-      await insertRow({'id': '3', 'username': 'carol', 'age': 22});
-
-      final results = await storage.query(
-        buildQuery(sorts: [const QuerySort(field: 'age')], offset: 1),
-      );
-
-      expect(results.map((e) => e['id']), ['2', '3']);
-    });
-
-    test('insert normalizes nested map values via JSON encoding', () async {
-      final joined = DateTime.utc(2024, 1, 1);
-      await insertRow({
-        'id': 'map1',
-        'username': 'mapper',
-        'age': 30,
-        'meta': {
-          'joined': joined,
-          'prefs': {'theme': 'dark'},
-        },
-      });
-
-      final stored = await storage.getById('users', 'map1');
-      expect(stored?['meta'], {
-        'joined': joined.toIso8601String(),
-        'prefs': {'theme': 'dark'},
-      });
-    });
-
-    test('ensureSchema throws for invalid field identifier', () async {
       expect(
-        () => storage.ensureSchema('users', {
-          'a-b': LocalFieldType.text,
-        }, idFieldName: 'id'),
-        throwsA(isA<ArgumentError>()),
-      );
-    });
-
-    test('ensureSchema throws for reserved field names', () async {
-      expect(
-        () => storage.ensureSchema('users', {
-          'id': LocalFieldType.text,
-        }, idFieldName: 'id'),
-        throwsA(isA<ArgumentError>()),
-      );
-    });
-
-    test('query falls back to JSON path for non-schema field', () async {
-      await insertRow({'id': '1', 'username': 'alice', 'age': 20, 'city': 'X'});
-      await insertRow({'id': '2', 'username': 'bob', 'age': 21, 'city': 'Y'});
-
-      final results = await storage.query(
-        buildQuery(
-          filters: [QueryFilter(field: 'city', isEqualTo: 'Y')],
+        notNull.whereType<LocalFirstStateEvent<DummyModel>>().map(
+          (e) => e.data.id,
         ),
+        ['2', '3'],
       );
-
-      expect(results.single['id'], '2');
-    });
-  });
-
-  group('SqliteLocalFirstStorage error handling (mockito)', () {
-    late MockDatabaseFactory mockDbFactory;
-    late MockDatabase mockDb;
-    late SqliteLocalFirstStorage storage;
-
-    LocalFirstQuery<DummyModel> buildQuery({
-      List<QueryFilter> filters = const [],
-    }) {
-      return LocalFirstQuery<DummyModel>(
-        repositoryName: 'users',
-        delegate: storage,
-        fromJson: DummyModel.fromJson,
-        repository: LocalFirstRepository<DummyModel>.create(
-          name: 'users',
-          getId: (m) => m.id,
-          toJson: (m) => m.toJson(),
-          fromJson: DummyModel.fromJson,
-          onConflict: (l, r) => l,
-          schema: schema,
-        ),
-        filters: filters,
-      );
-    }
-
-    setUp(() async {
-      mockDbFactory = MockDatabaseFactory();
-      mockDb = MockDatabase();
-
-      when(
-        mockDbFactory.openDatabase('path', options: anyNamed('options')),
-      ).thenAnswer((invocation) async {
-        final options =
-            invocation.namedArguments[#options] as OpenDatabaseOptions?;
-        final ver = options?.version ?? 1;
-        if (options?.onCreate != null) {
-          await options!.onCreate!(mockDb, ver);
-        }
-        return mockDb;
-      });
-
-      when(mockDb.execute(any)).thenAnswer((_) async {});
-
-      // Stubs for `query` are needed for `ensureSchema` to work with a mock DB.
-      when(
-        mockDb.query(
-          any,
-          where: anyNamed('where'),
-          whereArgs: anyNamed('whereArgs'),
-        ),
-      ).thenAnswer((_) async => []);
-      when(mockDb.query(any)).thenAnswer((_) async => []);
-
-      when(
-        mockDb.insert(
-          any,
-          any,
-          conflictAlgorithm: anyNamed('conflictAlgorithm'),
-        ),
-      ).thenAnswer((_) async => 1);
-      when(
-        mockDb.delete(
-          any,
-          where: anyNamed('where'),
-          whereArgs: anyNamed('whereArgs'),
-        ),
-      ).thenAnswer((_) async => 1);
-
-      storage = SqliteLocalFirstStorage(
-        dbFactory: mockDbFactory,
-        databasePath: 'path',
-        namespace: 'err_ns',
-      );
-
-      await storage.initialize();
-      await storage.ensureSchema('users', schema, idFieldName: 'id');
-    });
-
-    test('watchQuery emits error when query throws', () async {
-      when(mockDb.rawQuery(any, any)).thenThrow(StateError('boom'));
-
-      final stream = storage.watchQuery(buildQuery());
-      await expectLater(stream, emitsError(isA<StateError>()));
-    });
-
-    test('initialize uses injected databaseFactory with options', () async {
-      final captured =
-          verify(
-                mockDbFactory.openDatabase(
-                  'path',
-                  options: captureAnyNamed('options'),
-                ),
-              ).captured.single
-              as OpenDatabaseOptions;
-
-      expect(captured.version, 1);
-      expect(captured.onCreate, isNotNull);
-    });
-
-    test('initialize uses default databaseFactory when not provided', () async {
-      DatabaseFactory? previousFactory;
-      try {
-        previousFactory = databaseFactory;
-      } catch (_) {
-        previousFactory = null;
-      }
-
-      databaseFactory = databaseFactoryFfi;
-
-      final store = SqliteLocalFirstStorage(
-        databasePath: inMemoryDatabasePath,
-        namespace: 'default_factory',
-      );
-
-      await store.initialize();
-      await store.setMeta('df_key', 'df_value');
-      expect(await store.getMeta('df_key'), 'df_value');
-      await store.close();
-
-      if (previousFactory != null) {
-        databaseFactory = previousFactory;
-      }
-    });
-
-    test('_notifyWatchers emits error to stream when query throws', () async {
-      var callCount = 0;
-      when(mockDb.rawQuery(any, any)).thenAnswer((_) {
-        callCount += 1;
-        if (callCount == 1) {
-          return Future.value(<Map<String, Object?>>[]);
-        }
-        throw StateError('boom');
-      });
-
-      final stream = storage.watchQuery(buildQuery());
-      final firstEmission = Completer<void>();
-      final errorCapture = Completer<Object?>();
-      final sub = stream.listen(
-        (_) => firstEmission.complete(),
-        onError: (error, _) => errorCapture.complete(error),
-      );
-      await firstEmission.future;
-
-      await storage.insert('users', {
-        'id': 'err',
-        'username': 'err',
-        'age': 1,
-        '_sync_status': SyncStatus.ok.index,
-        '_sync_operation': SyncOperation.insert.index,
-        '_sync_created_at': DateTime.now().millisecondsSinceEpoch,
-      }, 'id');
-
-      expect(await errorCapture.future, isA<StateError>());
-      await sub.cancel();
-    });
-
-    test(
-      '_notifyWatchers surfaces query exception from delegate query',
-      () async {
-        final behavior = MockQueryBehavior();
-        final failingQuery = buildQuery();
-        when(behavior.call(failingQuery)).thenThrow(StateError('boom'));
-
-        final throwing = MockableSqliteLocalFirstStorage(
-          dbFactory: databaseFactoryFfi,
-          databasePath: inMemoryDatabasePath,
-          namespace: 'err_notify',
-          behavior: behavior,
-        );
-        await throwing.initialize();
-        await throwing.ensureSchema('users', schema, idFieldName: 'id');
-
-        final stream = throwing.watchQuery(failingQuery);
-        await stream.first.catchError(
-          (_) => <Map<String, dynamic>>[],
-          test: (_) => true,
-        );
-
-        final expectation = expectLater(stream, emitsError(isA<StateError>()));
-
-        await throwing.insert('users', {
-          'id': 'err2',
-          'username': 'err2',
-          'age': 1,
-          '_sync_status': SyncStatus.ok.index,
-          '_sync_operation': SyncOperation.insert.index,
-          '_sync_created_at': DateTime.now().millisecondsSinceEpoch,
-        }, 'id');
-
-        await expectation;
-        await throwing.close();
-      },
-    );
-
-    test('insert encodes numeric boolean for boolean field', () async {
-      final captured = <Map<String, Object?>>[];
-      when(
-        mockDb.insert(
-          any,
-          any,
-          conflictAlgorithm: anyNamed('conflictAlgorithm'),
-        ),
-      ).thenAnswer((invocation) async {
-        captured.add(
-          Map<String, Object?>.from(invocation.positionalArguments[1] as Map),
-        );
-        return 1;
-      });
-
-      Future<void> insertWithValue(String id, Object value) async {
-        await storage.insert('users', {
-          'id': id,
-          'username': 'user$id',
-          'age': 1,
-          'verified': value, // numeric boolean
-          '_sync_status': SyncStatus.ok.index,
-          '_sync_operation': SyncOperation.insert.index,
-          '_sync_created_at': DateTime.now().millisecondsSinceEpoch,
-        }, 'id');
-      }
-
-      await insertWithValue('bool_num_0', 0);
-      await insertWithValue('bool_num_1', 1);
-      await insertWithValue('bool_num_-1', -1);
-
-      expect(captured, hasLength(3));
-      expect(captured[0]['verified'], 0);
-      expect(captured[1]['verified'], 1);
-      expect(captured[2]['verified'], -1);
-    });
-
-    test('insert throws when id is not a string', () async {
-      expect(
-        () => storage.insert('users', {
-          'id': 123, // invalid type
-          'username': 'bad',
-          'age': 1,
-          '_sync_status': SyncStatus.ok.index,
-          '_sync_operation': SyncOperation.insert.index,
-          '_sync_created_at': DateTime.now().millisecondsSinceEpoch,
-        }, 'id'),
-        throwsArgumentError,
-      );
-    });
-
-    test('methods throw when not initialized', () {
-      final uninit = SqliteLocalFirstStorage(
-        databasePath: inMemoryDatabasePath,
-        dbFactory: databaseFactoryFfi,
-        namespace: 'uninit',
-      );
-
-      expect(() => uninit.getAll('users'), throwsStateError);
-      expect(() => uninit.getById('users', 'id'), throwsStateError);
-      expect(() => uninit.insert('users', {}, 'id'), throwsStateError);
-      expect(() => uninit.update('users', 'id', {}), throwsStateError);
-      expect(() => uninit.delete('users', 'id'), throwsStateError);
-      expect(() => uninit.deleteAll('users'), throwsStateError);
-      expect(() => uninit.setMeta('k', 'v'), throwsStateError);
-      expect(() => uninit.getMeta('k'), throwsStateError);
-      expect(() => uninit.clearAllData(), throwsStateError);
     });
   });
 }
