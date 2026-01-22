@@ -291,177 +291,185 @@ void main() {
       expect(client.pendingCalls, ['repo1']);
     });
 
-  test('should delegate pullChangesToLocal to client', () async {
-    final payload = [
-      {LocalFirstEvent.kRepository: 'repo1'},
-    ];
+    test('should delegate pullChangesToLocal to client', () async {
+      final payload = [
+        {LocalFirstEvent.kRepository: 'repo1'},
+      ];
 
       await strategy.pullChangesToLocal(
         repositoryName: 'repo1',
         remoteChanges: payload,
       );
 
-    expect(client.pulledChanges.single, payload);
-  });
+      expect(client.pulledChanges.single, payload);
+    });
 
-  test('connectionChanges getter should expose client stream reference', () {
-    expect(strategy.connectionChanges, isA<Stream<bool>>());
-  });
+    test('connectionChanges getter should expose client stream reference', () {
+      expect(strategy.connectionChanges, isA<Stream<bool>>());
+    });
 
-  test('connectionChanges getter should proxy underlying client stream',
+    test(
+      'connectionChanges getter should proxy underlying client stream',
       () async {
-    final events = <bool>[];
-    final sub = strategy.connectionChanges.listen(events.add);
+        final events = <bool>[];
+        final sub = strategy.connectionChanges.listen(events.add);
 
-      client.reportConnectionState(true);
-      await Future<void>.delayed(Duration.zero);
+        client.reportConnectionState(true);
+        await Future<void>.delayed(Duration.zero);
 
-      expect(events, [true]);
-      await sub.cancel();
-    });
-
-    test('markEventsAsSynced should mark current and previous events as ok',
-        () async {
-      final storage = _RecordingStorage();
-      final repo = LocalFirstRepository<JsonMap>.create(
-        name: 'repo',
-        getId: (item) => item['id'] as String,
-        toJson: (item) => item,
-        fromJson: (json) => json,
-      );
-      LocalFirstClient(
-        repositories: [repo],
-        localStorage: storage,
-        syncStrategies: [strategy],
-      );
-      final older = LocalFirstEvent.createNewInsertEvent(
-        repository: repo,
-        data: {'id': '1'},
-        needSync: true,
-      );
-      final latest = LocalFirstEvent.createNewUpdateEvent(
-        repository: repo,
-        data: {'id': '1'},
-        needSync: true,
-      );
-      final otherId = LocalFirstEvent.createNewInsertEvent(
-        repository: repo,
-        data: {'id': '2'},
-        needSync: true,
-      );
-      final referenceCreatedAt =
-          latest.syncCreatedAt.millisecondsSinceEpoch;
-      storage.events.addAll([
-        older.toLocalStorageJson()
-          ..[LocalFirstEvent.kSyncCreatedAt] = referenceCreatedAt - 1,
-        latest.toLocalStorageJson()
-          ..[LocalFirstEvent.kSyncCreatedAt] = referenceCreatedAt + 1,
-        otherId.toLocalStorageJson()
-          ..[LocalFirstEvent.kSyncCreatedAt] = referenceCreatedAt - 1,
-      ]);
-
-      await strategy.markEventsAsSynced([latest]);
-
-      expect(storage.updateCount, greaterThanOrEqualTo(1));
-      expect(storage.updateEventCount, 2); // latest + older
-      expect(
-        storage.updatedEvents
-            .where(
-              (e) => e[LocalFirstEvent.kEventId] == latest.eventId,
-            )
-            .single[LocalFirstEvent.kSyncStatus],
-        SyncStatus.ok.index,
-      );
-      expect(
-        storage.updatedEvents
-            .where((e) => e[LocalFirstEvent.kEventId] == older.eventId)
-            .single[LocalFirstEvent.kSyncStatus],
-        SyncStatus.ok.index,
-      );
-      expect(
-        storage.updatedEvents
-            .where((e) => e[LocalFirstEvent.kEventId] == otherId.eventId),
-        isEmpty,
-      );
-    });
-
-  test('markEventsAsSynced should pick the latest event per data id', () async {
-    final storage = _RecordingStorage();
-    final repo = LocalFirstRepository<JsonMap>.create(
-      name: 'repo',
-      getId: (item) => item['id'] as String,
-        toJson: (item) => item,
-        fromJson: (json) => json,
-      );
-      LocalFirstClient(
-        repositories: [repo],
-        localStorage: storage,
-        syncStrategies: [strategy],
-      );
-      final older = LocalFirstEvent.createNewInsertEvent(
-        repository: repo,
-        data: {'id': '1'},
-        needSync: true,
-      );
-      final latest = LocalFirstEvent.createNewUpdateEvent(
-        repository: repo,
-        data: {'id': '1'},
-        needSync: true,
-      );
-
-      await strategy.markEventsAsSynced([latest, older]);
-
-      expect(storage.updateEventCount, 1);
-      expect(storage.updateCount, 1);
-    expect(
-      storage.lastUpdatedData?[LocalFirstEvent.kLastEventId],
-      latest.eventId,
-    );
-  });
-
-  test('markEventsAsSynced keeps newest when older duplicate arrives', () async {
-    final storage = _RecordingStorage();
-    final repo = LocalFirstRepository<JsonMap>.create(
-      name: 'repo',
-      getId: (item) => item['id'] as String,
-      toJson: (item) => item,
-      fromJson: (json) => json,
-    );
-    LocalFirstClient(
-      repositories: [repo],
-      localStorage: storage,
-      syncStrategies: [strategy],
-    );
-    final older = LocalFirstEvent<JsonMap>.fromLocalStorage(
-      repository: repo,
-      json: {
-        LocalFirstEvent.kEventId: 'older',
-        LocalFirstEvent.kDataId: '1',
-        LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
-        LocalFirstEvent.kOperation: SyncOperation.insert.index,
-        LocalFirstEvent.kSyncCreatedAt: 1000,
-        'id': '1',
-      },
-    );
-    final latest = LocalFirstEvent<JsonMap>.fromLocalStorage(
-      repository: repo,
-      json: {
-        LocalFirstEvent.kEventId: 'latest',
-        LocalFirstEvent.kDataId: '1',
-        LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
-        LocalFirstEvent.kOperation: SyncOperation.insert.index,
-        LocalFirstEvent.kSyncCreatedAt: 2000,
-        'id': '1',
+        expect(events, [true]);
+        await sub.cancel();
       },
     );
 
-    await strategy.markEventsAsSynced([older, latest]);
+    test(
+      'markEventsAsSynced should mark current and previous events as ok',
+      () async {
+        final storage = _RecordingStorage();
+        final repo = LocalFirstRepository<JsonMap>.create(
+          name: 'repo',
+          getId: (item) => item['id'] as String,
+          toJson: (item) => item,
+          fromJson: (json) => json,
+        );
+        LocalFirstClient(
+          repositories: [repo],
+          localStorage: storage,
+          syncStrategies: [strategy],
+        );
+        final older = LocalFirstEvent.createNewInsertEvent(
+          repository: repo,
+          data: {'id': '1'},
+          needSync: true,
+        );
+        final latest = LocalFirstEvent.createNewUpdateEvent(
+          repository: repo,
+          data: {'id': '1'},
+          needSync: true,
+        );
+        final otherId = LocalFirstEvent.createNewInsertEvent(
+          repository: repo,
+          data: {'id': '2'},
+          needSync: true,
+        );
+        final referenceCreatedAt = latest.syncCreatedAt.millisecondsSinceEpoch;
+        storage.events.addAll([
+          older.toLocalStorageJson()
+            ..[LocalFirstEvent.kSyncCreatedAt] = referenceCreatedAt - 1,
+          latest.toLocalStorageJson()
+            ..[LocalFirstEvent.kSyncCreatedAt] = referenceCreatedAt + 1,
+          otherId.toLocalStorageJson()
+            ..[LocalFirstEvent.kSyncCreatedAt] = referenceCreatedAt - 1,
+        ]);
 
-    expect(storage.updateEventCount, 1);
-    expect(
-      storage.updatedEvents.single[LocalFirstEvent.kEventId],
-      latest.eventId,
+        await strategy.markEventsAsSynced([latest]);
+
+        expect(storage.updateCount, greaterThanOrEqualTo(1));
+        expect(storage.updateEventCount, 2); // latest + older
+        expect(
+          storage.updatedEvents
+              .where((e) => e[LocalFirstEvent.kEventId] == latest.eventId)
+              .single[LocalFirstEvent.kSyncStatus],
+          SyncStatus.ok.index,
+        );
+        expect(
+          storage.updatedEvents
+              .where((e) => e[LocalFirstEvent.kEventId] == older.eventId)
+              .single[LocalFirstEvent.kSyncStatus],
+          SyncStatus.ok.index,
+        );
+        expect(
+          storage.updatedEvents.where(
+            (e) => e[LocalFirstEvent.kEventId] == otherId.eventId,
+          ),
+          isEmpty,
+        );
+      },
     );
-  });
+
+    test(
+      'markEventsAsSynced should pick the latest event per data id',
+      () async {
+        final storage = _RecordingStorage();
+        final repo = LocalFirstRepository<JsonMap>.create(
+          name: 'repo',
+          getId: (item) => item['id'] as String,
+          toJson: (item) => item,
+          fromJson: (json) => json,
+        );
+        LocalFirstClient(
+          repositories: [repo],
+          localStorage: storage,
+          syncStrategies: [strategy],
+        );
+        final older = LocalFirstEvent.createNewInsertEvent(
+          repository: repo,
+          data: {'id': '1'},
+          needSync: true,
+        );
+        final latest = LocalFirstEvent.createNewUpdateEvent(
+          repository: repo,
+          data: {'id': '1'},
+          needSync: true,
+        );
+
+        await strategy.markEventsAsSynced([latest, older]);
+
+        expect(storage.updateEventCount, 1);
+        expect(storage.updateCount, 1);
+        expect(
+          storage.lastUpdatedData?[LocalFirstEvent.kLastEventId],
+          latest.eventId,
+        );
+      },
+    );
+
+    test(
+      'markEventsAsSynced keeps newest when older duplicate arrives',
+      () async {
+        final storage = _RecordingStorage();
+        final repo = LocalFirstRepository<JsonMap>.create(
+          name: 'repo',
+          getId: (item) => item['id'] as String,
+          toJson: (item) => item,
+          fromJson: (json) => json,
+        );
+        LocalFirstClient(
+          repositories: [repo],
+          localStorage: storage,
+          syncStrategies: [strategy],
+        );
+        final older = LocalFirstEvent<JsonMap>.fromLocalStorage(
+          repository: repo,
+          json: {
+            LocalFirstEvent.kEventId: 'older',
+            LocalFirstEvent.kDataId: '1',
+            LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+            LocalFirstEvent.kOperation: SyncOperation.insert.index,
+            LocalFirstEvent.kSyncCreatedAt: 1000,
+            'id': '1',
+          },
+        );
+        final latest = LocalFirstEvent<JsonMap>.fromLocalStorage(
+          repository: repo,
+          json: {
+            LocalFirstEvent.kEventId: 'latest',
+            LocalFirstEvent.kDataId: '1',
+            LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+            LocalFirstEvent.kOperation: SyncOperation.insert.index,
+            LocalFirstEvent.kSyncCreatedAt: 2000,
+            'id': '1',
+          },
+        );
+
+        await strategy.markEventsAsSynced([older, latest]);
+
+        expect(storage.updateEventCount, 1);
+        expect(
+          storage.updatedEvents.single[LocalFirstEvent.kEventId],
+          latest.eventId,
+        );
+      },
+    );
   });
 }

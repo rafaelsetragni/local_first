@@ -61,8 +61,7 @@ class _SpyStorage implements LocalFirstStorage {
   Future<Map<String, dynamic>?> getEventById(
     String tableName,
     String id,
-  ) async =>
-      null;
+  ) async => null;
 
   @override
   Future<bool> containsConfigKey(String key) async => meta.containsKey(key);
@@ -184,12 +183,12 @@ class _SpyConfigStorage implements ConfigKeyValueStorage {
 
 class _SpyRepository extends LocalFirstRepository<dynamic> {
   _SpyRepository(String name)
-      : super(
-          name: name,
-          getId: (item) => item['id'] as String,
-          toJson: (item) => item,
-          fromJson: (json) => json,
-        );
+    : super(
+        name: name,
+        getId: (item) => item['id'] as String,
+        toJson: (item) => item,
+        fromJson: (json) => json,
+      );
 
   bool initialized = false;
   bool resetCalled = false;
@@ -331,10 +330,7 @@ void main() {
       );
 
       expect(client.getRepositoryByName('r1'), same(repo));
-      expect(
-        () => client.getRepositoryByName('missing'),
-        throwsStateError,
-      );
+      expect(() => client.getRepositoryByName('missing'), throwsStateError);
     });
 
     test('should stream connection changes', () async {
@@ -389,20 +385,19 @@ void main() {
       );
 
       expect(
-        () => client.pullChanges(repositoryName: 'r1', changes: [
-          {
-            LocalFirstEvent.kEventId: 'invalid',
-          }
-        ]),
+        () => client.pullChanges(
+          repositoryName: 'r1',
+          changes: [
+            {LocalFirstEvent.kEventId: 'invalid'},
+          ],
+        ),
         throwsFormatException,
       );
     });
 
     test('should get pending events for repository', () async {
-      final repo1 = _SpyRepository('r1')
-        ..pendingToReturn = [];
-      final repo2 = _SpyRepository('r2')
-        ..pendingToReturn = [];
+      final repo1 = _SpyRepository('r1')..pendingToReturn = [];
+      final repo2 = _SpyRepository('r2')..pendingToReturn = [];
       final client = LocalFirstClient(
         repositories: [repo1, repo2],
         localStorage: storage,
@@ -445,27 +440,29 @@ void main() {
       expect(value, 'v');
     });
 
-    test('should delegate meta operations to provided key-value storage',
-        () async {
-      final repo = _SpyRepository('r1');
-      final configStorage = _SpyConfigStorage();
-      final client = LocalFirstClient(
-        repositories: [repo],
-        localStorage: storage,
-        keyValueStorage: configStorage,
-        syncStrategies: [strategy],
-      );
+    test(
+      'should delegate meta operations to provided key-value storage',
+      () async {
+        final repo = _SpyRepository('r1');
+        final configStorage = _SpyConfigStorage();
+        final client = LocalFirstClient(
+          repositories: [repo],
+          localStorage: storage,
+          keyValueStorage: configStorage,
+          syncStrategies: [strategy],
+        );
 
-      await client.initialize();
-      await client.setConfigValue('k', 'v');
+        await client.initialize();
+        await client.setConfigValue('k', 'v');
 
-      expect(configStorage.meta['k'], 'v');
-      expect(storage.meta['k'], isNull);
-      expect(configStorage.initialized, 1);
+        expect(configStorage.meta['k'], 'v');
+        expect(storage.meta['k'], isNull);
+        expect(configStorage.initialized, 1);
 
-      await client.dispose();
-      expect(configStorage.closed, 1);
-    });
+        await client.dispose();
+        expect(configStorage.closed, 1);
+      },
+    );
 
     test('useNamespace propagates to both storages when different', () async {
       final repo = _SpyRepository('r1');

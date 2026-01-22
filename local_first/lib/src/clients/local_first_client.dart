@@ -162,7 +162,6 @@ class LocalFirstClient {
   Future<bool> setConfigValue(String key, String value) async {
     return await _configStorage.setConfigValue<String>(key, value);
   }
-
 }
 
 /// Test helper exposing internal state of [LocalFirstClient] for unit tests.

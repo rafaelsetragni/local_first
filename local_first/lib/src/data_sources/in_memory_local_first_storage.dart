@@ -9,8 +9,8 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
   final Map<String, JsonMap<Map<String, JsonMap>>> _dataByNamespace = {};
   final Map<String, JsonMap<Map<String, JsonMap>>> _eventsByNamespace = {};
   final Map<String, Map<String, Object>> _metadataByNamespace = {};
-  final Map<String, JsonMap<Set<_InMemoryQueryObserver>>> _observersByNamespace =
-      {};
+  final Map<String, JsonMap<Set<_InMemoryQueryObserver>>>
+  _observersByNamespace = {};
   final Map<String, JsonMap<JsonMap<LocalFieldType>>> _schemasByNamespace = {};
 
   JsonMap<Map<String, JsonMap>> get _data =>

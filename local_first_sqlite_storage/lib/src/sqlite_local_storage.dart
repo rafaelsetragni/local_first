@@ -379,7 +379,9 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       final value = decoded['v'];
       switch (type) {
         case 'bool':
-          return value is bool && (T == bool || T == dynamic) ? value as T : null;
+          return value is bool && (T == bool || T == dynamic)
+              ? value as T
+              : null;
         case 'int':
           return value is int && (T == int || T == dynamic) ? value as T : null;
         case 'double':

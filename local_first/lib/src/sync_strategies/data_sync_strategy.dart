@@ -51,13 +51,15 @@ abstract class DataSyncStrategy {
   /// `ok` status locally (and cascade the update to earlier events of
   /// the same record).
   Future<void> markEventsAsSynced(LocalFirstEvents events) async {
-    final latestByRepoAndId = <LocalFirstRepository, Map<String, LocalFirstEvent>>{};
+    final latestByRepoAndId =
+        <LocalFirstRepository, Map<String, LocalFirstEvent>>{};
 
     for (final event in events) {
       final repo = event.repository;
       final repoEvents = latestByRepoAndId.putIfAbsent(repo, () => {});
       final current = repoEvents[event.dataId];
-      if (current == null || event.syncCreatedAt.isAfter(current.syncCreatedAt)) {
+      if (current == null ||
+          event.syncCreatedAt.isAfter(current.syncCreatedAt)) {
         repoEvents[event.dataId] = event;
       }
     }
