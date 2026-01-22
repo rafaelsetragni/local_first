@@ -47,7 +47,7 @@ melos:
             -a local_first_hive_storage/coverage/lcov.info \
             -a local_first_sqlite_storage/coverage/lcov.info \
             -a local_first_shared_preferences/coverage/lcov.info \
-            -o coverage/lcov.info --ignore-errors missing
+            -o coverage/lcov.info
       packageFilters:
         dirExists:
           - test
