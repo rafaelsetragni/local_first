@@ -69,7 +69,7 @@ class SharedPreferencesConfigStorage implements ConfigKeyValueStorage {
   /// Saves a config value under the current namespace.
   ///
   /// - [key]: Raw key without namespace; the method handles prefixing.
-  /// - [value]: Allowed types: bool, int, double, String or List<String>. Any
+  /// - [value]: Allowed types: bool, int, double, String or `List<String>`. Any
   ///   other type triggers an [ArgumentError].
   ///
   /// Throws [StateError] if the storage has not been initialized.

@@ -70,7 +70,7 @@ class InMemoryConfigKeyValueStorage implements ConfigKeyValueStorage {
   /// Persists a config value in memory for quick access in tests or demos.
   ///
   /// - [key]: Raw key without namespace; this storage applies the namespace.
-  /// - [value]: Allowed types: bool, int, double, String or List<String>. Any
+  /// - [value]: Allowed types: bool, int, double, String or `List<String>`. Any
   ///   other type triggers an [ArgumentError].
   ///
   /// Throws [StateError] if called before [initialize].

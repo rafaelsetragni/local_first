@@ -413,7 +413,7 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
   /// Stores a config value in memory.
   ///
   /// - [key]: Config key to write. Namespacing is handled internally.
-  /// - [value]: Allowed types: bool, int, double, String or List<String>.
+  /// - [value]: Allowed types: bool, int, double, String or `List<String>`.
   ///
   /// Throws [StateError] if called before [initialize].
   @override

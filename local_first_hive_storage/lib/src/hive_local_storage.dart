@@ -407,7 +407,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   /// Stores a config value in Hive metadata.
   ///
   /// - [key]: Config key to write.
-  /// - [value]: Allowed types: bool, int, double, String or List<String>.
+  /// - [value]: Allowed types: bool, int, double, String or `List<String>`.
   ///
   /// Throws [StateError] if called before [initialize]. Throws [ArgumentError]
   /// when the value type is unsupported.
