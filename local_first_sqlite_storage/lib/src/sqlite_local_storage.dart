@@ -29,6 +29,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   String _namespace;
   final DatabaseFactory _factory;
 
+  /// Current namespace used to derive the database file name.
   String get namespace => _namespace;
 
   Database? _db;
@@ -58,6 +59,8 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return _db!;
   }
 
+  /// Opens (or creates) the SQLite database file for the current namespace so
+  /// reads and writes can happen.
   @override
   Future<void> initialize() async {
     if (_initialized) return;
@@ -80,6 +83,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     await _ensureMetadataTable(db: _db);
   }
 
+  /// Closes the database connection and shuts down any active query streams.
   @override
   Future<void> close() async {
     if (!_initialized) return;
@@ -96,8 +100,10 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     _initialized = false;
   }
 
-  /// Changes the active namespace, closing the current database and
-  /// opening a separate database file for the new namespace.
+  /// Changes the active namespace by closing the current database and opening a
+  /// separate database file for the new namespace.
+  ///
+  /// - [namespace]: Target namespace name.
   @override
   Future<void> useNamespace(String namespace) async {
     if (_namespace == namespace) return;
@@ -107,6 +113,8 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     await initialize();
   }
 
+  /// Deletes every table (including metadata) for the current namespace and
+  /// notifies listeners so they can refresh.
   @override
   Future<void> clearAllData() async {
     final db = await _database;
@@ -134,6 +142,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     await _ensureMetadataTable();
   }
 
+  /// Ensures the SQL table schema matches the repository definition.
+  ///
+  /// - [tableName]: Repository name.
+  /// - [schema]: Column types keyed by field.
+  /// - [idFieldName]: Primary key field name.
   @override
   Future<void> ensureSchema(
     String tableName,
@@ -144,6 +157,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     await _ensureTables(tableName);
   }
 
+  /// Returns all non-deleted rows for the specified table, ignoring tombstones.
+  ///
+  /// - [tableName]: Repository name to read from.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<List<JsonMap>> getAll(String tableName) async {
     final db = await _database;
@@ -164,6 +182,12 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
         .toList();
   }
 
+  /// Returns all event rows joined with their state data so callers can see the
+  /// full audit trail.
+  ///
+  /// - [tableName]: Repository name to read from.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<List<JsonMap>> getAllEvents(String tableName) async {
     final db = await _database;
@@ -182,6 +206,13 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return rows.map(_decodeJoinedRow).toList();
   }
 
+  /// Fetches a single row by id, returning `null` when the row is missing or
+  /// marked as deleted.
+  ///
+  /// - [tableName]: Repository name to read from.
+  /// - [id]: Record id.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<JsonMap?> getById(String tableName, String id) async {
     final db = await _database;
@@ -203,6 +234,12 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return _decodeJoinedRow(rows.first);
   }
 
+  /// Fetches a specific event by id joined with its data payload (if present).
+  ///
+  /// - [tableName]: Repository name to read from.
+  /// - [id]: Event id.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<JsonMap?> getEventById(String tableName, String id) async {
     final db = await _database;
@@ -225,6 +262,14 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return _decodeJoinedRow(rows.first);
   }
 
+  /// Inserts or replaces a state row (upsert).
+  ///
+  /// - [tableName]: Repository name to write to.
+  /// - [item]: Record payload including metadata.
+  /// - [idField]: Field used as primary key.
+  ///
+  /// Throws [StateError] if called before [initialize]. Throws [ArgumentError]
+  /// if the payload is missing a valid id.
   @override
   Future<void> insert(String tableName, JsonMap item, String idField) async {
     final db = await _database;
@@ -249,6 +294,14 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     await _notifyWatchers(tableName);
   }
 
+  /// Inserts or replaces an event row (upsert).
+  ///
+  /// - [tableName]: Repository name to write to.
+  /// - [item]: Event payload including metadata.
+  /// - [idField]: Field used as event id.
+  ///
+  /// Throws [StateError] if called before [initialize]. Throws [ArgumentError]
+  /// if the payload is missing a valid id or data reference.
   @override
   Future<void> insertEvent(
     String tableName,
@@ -278,6 +331,13 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     await _notifyWatchers(tableName);
   }
 
+  /// Updates a state row by id (implemented as an upsert).
+  ///
+  /// - [tableName]: Repository name to write to.
+  /// - [id]: Record id.
+  /// - [item]: Updated payload including metadata.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<void> update(String tableName, String id, JsonMap item) async {
     final db = await _database;
@@ -297,6 +357,14 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     await _notifyWatchers(tableName);
   }
 
+  /// Updates an event row by id (implemented as an upsert).
+  ///
+  /// - [tableName]: Repository name to write to.
+  /// - [id]: Event id.
+  /// - [item]: Updated payload including metadata.
+  ///
+  /// Throws [StateError] if called before [initialize]. Throws [ArgumentError]
+  /// if the payload is missing a valid data reference.
   @override
   Future<void> updateEvent(String tableName, String id, JsonMap item) async {
     final db = await _database;
@@ -317,6 +385,12 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     await _notifyWatchers(tableName);
   }
 
+  /// Deletes a state row by id and notifies watchers.
+  ///
+  /// - [repositoryName]: Repository name whose record should be removed.
+  /// - [id]: Record id.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<void> delete(String repositoryName, String id) async {
     final db = await _database;
@@ -327,6 +401,12 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     await _notifyWatchers(repositoryName);
   }
 
+  /// Deletes an event row by id and notifies watchers.
+  ///
+  /// - [repositoryName]: Repository name whose event should be removed.
+  /// - [id]: Event id.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<void> deleteEvent(String repositoryName, String id) async {
     final db = await _database;
@@ -337,6 +417,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     await _notifyWatchers(repositoryName);
   }
 
+  /// Deletes all state rows for the table and notifies watchers.
+  ///
+  /// - [tableName]: Repository name whose records should be dropped.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<void> deleteAll(String tableName) async {
     final db = await _database;
@@ -347,6 +432,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     await _notifyWatchers(tableName);
   }
 
+  /// Deletes all event rows for the table and notifies watchers.
+  ///
+  /// - [tableName]: Repository name whose events should be dropped.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<void> deleteAllEvents(String tableName) async {
     final db = await _database;
@@ -379,7 +469,9 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       final value = decoded['v'];
       switch (type) {
         case 'bool':
-          return value is bool && (T == bool || T == dynamic) ? value as T : null;
+          return value is bool && (T == bool || T == dynamic)
+              ? value as T
+              : null;
         case 'int':
           return value is int && (T == int || T == dynamic) ? value as T : null;
         case 'double':
@@ -406,6 +498,9 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     }
   }
 
+  /// Returns whether the metadata table has the given key.
+  ///
+  /// - [key]: Config key to check.
   @override
   Future<bool> containsConfigKey(String key) async {
     final db = await _database;
@@ -420,6 +515,13 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return rows.isNotEmpty;
   }
 
+  /// Persists a config value in the metadata table.
+  ///
+  /// - [key]: Config key to write.
+  /// - [value]: Allowed types: bool, int, double, String or `List<String>`.
+  ///
+  /// Throws [StateError] if called before [initialize]. Throws [ArgumentError]
+  /// when the value type is unsupported.
   @override
   Future<bool> setConfigValue<T>(String key, T value) async {
     final db = await _database;
@@ -436,6 +538,12 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return true;
   }
 
+  /// Returns whether a record id exists.
+  ///
+  /// - [tableName]: Repository name.
+  /// - [id]: Record id.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<bool> containsId(String tableName, String id) async {
     final db = await _database;
@@ -451,6 +559,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return rows.isNotEmpty;
   }
 
+  /// Reads a config value using the provided generic type.
+  ///
+  /// - [key]: Config key to read.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<T?> getConfigValue<T>(String key) async {
     final db = await _database;
@@ -469,6 +582,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return _decodeConfigValue<T>(value);
   }
 
+  /// Removes a config entry from the metadata table.
+  ///
+  /// - [key]: Config key to remove.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<bool> removeConfig(String key) async {
     final db = await _database;
@@ -477,6 +595,9 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return true;
   }
 
+  /// Clears all config entries.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<bool> clearConfig() async {
     final db = await _database;
@@ -485,6 +606,9 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return true;
   }
 
+  /// Lists all config keys stored in metadata.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<Set<String>> getConfigKeys() async {
     final db = await _database;
@@ -493,6 +617,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return rows.map((row) => row['key']).whereType<String>().toSet();
   }
 
+  /// Watches a query and re-emits fresh results whenever writes happen.
+  ///
+  /// - [query]: Query definition to observe.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query) {
     if (!_initialized) {
@@ -777,6 +906,9 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     }
   }
 
+  /// Executes a SQL query with filter, sort and pagination support.
+  ///
+  /// - [query]: Query definition including filters, sorts and pagination.
   @override
   Future<List<LocalFirstEvent<T>>> query<T>(LocalFirstQuery<T> query) async {
     final db = await _database;

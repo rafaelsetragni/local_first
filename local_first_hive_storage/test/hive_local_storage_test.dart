@@ -63,14 +63,10 @@ void main() {
       required LocalFirstEvent<_TestModel> event,
     }) async {
       if (event is LocalFirstStateEvent<_TestModel>) {
-        await storage.insert(
-          table,
-          {
-            ...event.data.toJson(),
-            '_lasteventId': event.eventId,
-          },
-          'id',
-        );
+        await storage.insert(table, {
+          ...event.data.toJson(),
+          '_lasteventId': event.eventId,
+        }, 'id');
       }
       await storage.insertEvent(table, event.toLocalStorageJson(), 'eventId');
     }
@@ -103,11 +99,7 @@ void main() {
       final all = await storage.getAll('users');
       expect(all.length, 2);
 
-      await storage.update(
-        'users',
-        '1',
-        {'id': '1', 'username': 'Charlie'},
-      );
+      await storage.update('users', '1', {'id': '1', 'username': 'Charlie'});
       final updated = await storage.getById('users', '1');
       expect(updated?['username'], 'Charlie');
 
@@ -120,7 +112,7 @@ void main() {
       expect(afterDeleteAll, isEmpty);
     });
 
-  test('set/get last sync and metadata', () async {
+    test('set/get last sync and metadata', () async {
       await storage.setConfigValue('key', 'value');
       expect(await storage.getConfigValue('key'), 'value');
     });
@@ -185,41 +177,29 @@ void main() {
     });
 
     test('insert/update should persist lastEventId metadata', () async {
-      await storage.insert(
-        'users',
-        {
-          'id': 'meta',
-          'username': 'Meta',
-          LocalFirstEvent.kLastEventId: 'evt-meta',
-        },
-        'id',
-      );
+      await storage.insert('users', {
+        'id': 'meta',
+        'username': 'Meta',
+        LocalFirstEvent.kLastEventId: 'evt-meta',
+      }, 'id');
       var fetched = await storage.getById('users', 'meta');
       expect(fetched?[LocalFirstEvent.kLastEventId], 'evt-meta');
 
-      await storage.update(
-        'users',
-        'meta',
-        {
-          'id': 'meta',
-          'username': 'Meta2',
-          '_lasteventId': 'evt-updated',
-        },
-      );
+      await storage.update('users', 'meta', {
+        'id': 'meta',
+        'username': 'Meta2',
+        '_lasteventId': 'evt-updated',
+      });
       fetched = await storage.getById('users', 'meta');
       expect(fetched?[LocalFirstEvent.kLastEventId], 'evt-updated');
     });
 
     test('updateEvent should backfill dataId when missing', () async {
-      await storage.updateEvent(
-        'users',
-        'evt-up',
-        {
-          'syncStatus': SyncStatus.pending.index,
-          'operation': SyncOperation.insert.index,
-          'createdAt': DateTime.now().millisecondsSinceEpoch,
-        },
-      );
+      await storage.updateEvent('users', 'evt-up', {
+        'syncStatus': SyncStatus.pending.index,
+        'operation': SyncOperation.insert.index,
+        'createdAt': DateTime.now().millisecondsSinceEpoch,
+      });
 
       final fetched = await storage.getEventById('users', 'evt-up');
       expect(fetched?[LocalFirstEvent.kDataId], 'evt-up');
@@ -233,16 +213,14 @@ void main() {
       );
       await lazyStorage.initialize();
 
-      await lazyStorage.insert(
-        'lazy_users',
-        {'id': '1', 'username': 'Lazy'},
-        'id',
-      );
-      await lazyStorage.insert(
-        'eager_users',
-        {'id': '2', 'username': 'Eager'},
-        'id',
-      );
+      await lazyStorage.insert('lazy_users', {
+        'id': '1',
+        'username': 'Lazy',
+      }, 'id');
+      await lazyStorage.insert('eager_users', {
+        'id': '2',
+        'username': 'Eager',
+      }, 'id');
 
       final lazyAll = await lazyStorage.getAll('lazy_users');
       final eagerAll = await lazyStorage.getAll('eager_users');
@@ -278,46 +256,30 @@ void main() {
     );
 
     test('query should sort and paginate results', () async {
-      await storage.insert(
-        'users',
-        {
-          'id': '1',
-          'username': 'B',
-          LocalFirstEvent.kLastEventId: 'evt-a',
-        },
-        'id',
-      );
-      await storage.insert(
-        'users',
-        {
-          'id': '2',
-          'username': 'A',
-          LocalFirstEvent.kLastEventId: 'evt-b',
-        },
-        'id',
-      );
-      await storage.insertEvent(
-        'users',
-        {
-          'eventId': 'evt-a',
-          'dataId': '1',
-          'syncStatus': SyncStatus.pending.index,
-          'operation': SyncOperation.insert.index,
-          'createdAt': 1,
-        },
-        'eventId',
-      );
-      await storage.insertEvent(
-        'users',
-        {
-          'eventId': 'evt-b',
-          'dataId': '2',
-          'syncStatus': SyncStatus.pending.index,
-          'operation': SyncOperation.insert.index,
-          'createdAt': 2,
-        },
-        'eventId',
-      );
+      await storage.insert('users', {
+        'id': '1',
+        'username': 'B',
+        LocalFirstEvent.kLastEventId: 'evt-a',
+      }, 'id');
+      await storage.insert('users', {
+        'id': '2',
+        'username': 'A',
+        LocalFirstEvent.kLastEventId: 'evt-b',
+      }, 'id');
+      await storage.insertEvent('users', {
+        'eventId': 'evt-a',
+        'dataId': '1',
+        'syncStatus': SyncStatus.pending.index,
+        'operation': SyncOperation.insert.index,
+        'createdAt': 1,
+      }, 'eventId');
+      await storage.insertEvent('users', {
+        'eventId': 'evt-b',
+        'dataId': '2',
+        'syncStatus': SyncStatus.pending.index,
+        'operation': SyncOperation.insert.index,
+        'createdAt': 2,
+      }, 'eventId');
 
       final sorted = await storage.query(
         buildQuery(
@@ -405,25 +367,18 @@ void main() {
 
       final stream = storage.watchQuery(query);
       final emitted = await stream.first;
-      expect(
-        emitted.whereType<LocalFirstStateEvent<_TestModel>>(),
-        isNotEmpty,
-      );
+      expect(emitted.whereType<LocalFirstStateEvent<_TestModel>>(), isNotEmpty);
       await storage.close();
     });
 
     test('deleteEvent removes event', () async {
-      await storage.insertEvent(
-        'users',
-        {
-          'eventId': 'evt-del',
-          'dataId': 'del',
-          'syncStatus': SyncStatus.pending.index,
-          'operation': SyncOperation.insert.index,
-          'createdAt': 1,
-        },
-        'eventId',
-      );
+      await storage.insertEvent('users', {
+        'eventId': 'evt-del',
+        'dataId': 'del',
+        'syncStatus': SyncStatus.pending.index,
+        'operation': SyncOperation.insert.index,
+        'createdAt': 1,
+      }, 'eventId');
       await storage.deleteEvent('users', 'evt-del');
 
       final events = await storage.getAllEvents('users');
@@ -431,28 +386,20 @@ void main() {
     });
 
     test('deleteAllEvents clears event boxes', () async {
-      await storage.insertEvent(
-        'users',
-        {
-          'eventId': 'evt-1',
-          'dataId': '1',
-          'syncStatus': SyncStatus.pending.index,
-          'operation': SyncOperation.insert.index,
-          'createdAt': 1,
-        },
-        'eventId',
-      );
-      await storage.insertEvent(
-        'users',
-        {
-          'eventId': 'evt-2',
-          'dataId': '2',
-          'syncStatus': SyncStatus.pending.index,
-          'operation': SyncOperation.delete.index,
-          'createdAt': 2,
-        },
-        'eventId',
-      );
+      await storage.insertEvent('users', {
+        'eventId': 'evt-1',
+        'dataId': '1',
+        'syncStatus': SyncStatus.pending.index,
+        'operation': SyncOperation.insert.index,
+        'createdAt': 1,
+      }, 'eventId');
+      await storage.insertEvent('users', {
+        'eventId': 'evt-2',
+        'dataId': '2',
+        'syncStatus': SyncStatus.pending.index,
+        'operation': SyncOperation.delete.index,
+        'createdAt': 2,
+      }, 'eventId');
 
       await storage.deleteAllEvents('users');
 
@@ -471,10 +418,7 @@ void main() {
       expect(() => fresh.getAll('users'), throwsA(isA<StateError>()));
       expect(() => fresh.setConfigValue('k', 'v'), throwsA(isA<StateError>()));
       expect(() => fresh.getConfigValue('k'), throwsA(isA<StateError>()));
-      expect(
-        () => fresh.containsConfigKey('k'),
-        throwsA(isA<StateError>()),
-      );
+      expect(() => fresh.containsConfigKey('k'), throwsA(isA<StateError>()));
       expect(() => fresh.getConfigKeys(), throwsA(isA<StateError>()));
       expect(() => fresh.removeConfig('k'), throwsA(isA<StateError>()));
       expect(() => fresh.clearConfig(), throwsA(isA<StateError>()));
@@ -531,11 +475,14 @@ void main() {
       final mockHive = _MockHive();
       final metadataBox = _MockDynamicBox();
       when(() => mockHive.init(any())).thenReturn(null);
-      when(() => mockHive.openBox<dynamic>(any()))
-          .thenAnswer((_) async => metadataBox);
+      when(
+        () => mockHive.openBox<dynamic>(any()),
+      ).thenAnswer((_) async => metadataBox);
       when(() => metadataBox.clear()).thenAnswer((_) async => 0);
       when(() => metadataBox.close()).thenAnswer((_) async {});
-      when(() => mockHive.deleteBoxFromDisk(any())).thenThrow(Exception('fail'));
+      when(
+        () => mockHive.deleteBoxFromDisk(any()),
+      ).thenThrow(Exception('fail'));
 
       final customStorage = HiveLocalFirstStorage(
         customPath: tempDir.path,
@@ -550,47 +497,46 @@ void main() {
       when(box.close).thenAnswer((_) async {});
       customStorage.addBoxToCacheForTest('users', box);
 
-      await customStorage.clearAllData(); // should not throw despite delete errors
+      await customStorage
+          .clearAllData(); // should not throw despite delete errors
     });
 
-    test('query skips null/malformed entries and ignores bad delete events',
-        () async {
-      final stateBox = _MockBox();
-      when(() => stateBox.name).thenReturn('users');
-      when(() => stateBox.keys).thenReturn(['s-null']);
-      when(() => stateBox.get(any())).thenReturn(null);
+    test(
+      'query skips null/malformed entries and ignores bad delete events',
+      () async {
+        final stateBox = _MockBox();
+        when(() => stateBox.name).thenReturn('users');
+        when(() => stateBox.keys).thenReturn(['s-null']);
+        when(() => stateBox.get(any())).thenReturn(null);
 
-      final eventBox = _MockBox();
-      when(() => eventBox.name).thenReturn('users__events');
-      when(() => eventBox.keys).thenReturn(['e-null', 'e-bad']);
-      // First event returns null, second is malformed delete without dataId.
-      when(() => eventBox.get('e-null')).thenReturn(null);
-      when(() => eventBox.get('e-bad')).thenReturn({
-        'eventId': 'e-bad',
-        'operation': SyncOperation.delete.index,
-        'syncStatus': SyncStatus.pending.index,
-        'createdAt': DateTime.now().millisecondsSinceEpoch,
-        // Missing dataId to trigger FormatException inside fromLocalStorage.
-      });
+        final eventBox = _MockBox();
+        when(() => eventBox.name).thenReturn('users__events');
+        when(() => eventBox.keys).thenReturn(['e-null', 'e-bad']);
+        // First event returns null, second is malformed delete without dataId.
+        when(() => eventBox.get('e-null')).thenReturn(null);
+        when(() => eventBox.get('e-bad')).thenReturn({
+          'eventId': 'e-bad',
+          'operation': SyncOperation.delete.index,
+          'syncStatus': SyncStatus.pending.index,
+          'createdAt': DateTime.now().millisecondsSinceEpoch,
+          // Missing dataId to trigger FormatException inside fromLocalStorage.
+        });
 
-      storage.addBoxToCacheForTest('users', stateBox);
-      storage.addBoxToCacheForTest('users', eventBox, isEvent: true);
+        storage.addBoxToCacheForTest('users', stateBox);
+        storage.addBoxToCacheForTest('users', eventBox, isEvent: true);
 
-      final repo = buildRepo();
-      final query = buildQuery(includeDeleted: true, repository: repo);
-      final events = await storage.query(query);
+        final repo = buildRepo();
+        final query = buildQuery(includeDeleted: true, repository: repo);
+        final events = await storage.query(query);
 
-      expect(events, isEmpty); // malformed and null entries ignored
-    });
+        expect(events, isEmpty); // malformed and null entries ignored
+      },
+    );
 
     test('ensureSchema is a no-op', () async {
-      await storage.ensureSchema(
-        'users',
-        {
-          'id': LocalFieldType.text,
-        },
-        idFieldName: 'id',
-      );
+      await storage.ensureSchema('users', {
+        'id': LocalFieldType.text,
+      }, idFieldName: 'id');
       await storage.insert('users', {'id': '1', 'username': 'Alice'}, 'id');
       final fetched = await storage.getById('users', '1');
       expect(fetched?['username'], 'Alice');
@@ -621,21 +567,23 @@ void main() {
       await expectLater(stream.first, throwsA(isA<StateError>()));
     });
 
-    test('initialize should invoke initFlutter when customPath is null',
-        () async {
-      var initCalled = false;
-      final storageNoPath = HiveLocalFirstStorage(
-        namespace: 'ns-init',
-        initFlutter: ([String? _]) async {
-          initCalled = true;
-        },
-        hive: Hive,
-      );
-      await storageNoPath.initialize();
-      expect(initCalled, isTrue);
-      expect(storageNoPath.namespace, 'ns-init');
-      await storageNoPath.clearAllData();
-      await storageNoPath.close();
-    });
+    test(
+      'initialize should invoke initFlutter when customPath is null',
+      () async {
+        var initCalled = false;
+        final storageNoPath = HiveLocalFirstStorage(
+          namespace: 'ns-init',
+          initFlutter: ([String? _]) async {
+            initCalled = true;
+          },
+          hive: Hive,
+        );
+        await storageNoPath.initialize();
+        expect(initCalled, isTrue);
+        expect(storageNoPath.namespace, 'ns-init');
+        await storageNoPath.clearAllData();
+        await storageNoPath.close();
+      },
+    );
   });
 }

@@ -102,8 +102,7 @@ abstract class LocalFirstRepository<T> {
     if (_resolveConflictEvent != null) {
       return _resolveConflictEvent(local, remote);
     }
-    return ConflictUtil.lastWriteWins(local, remote)
-        as LocalFirstStateEvent<T>;
+    return ConflictUtil.lastWriteWins(local, remote) as LocalFirstStateEvent<T>;
   }
 
   bool _isInitialized = false;

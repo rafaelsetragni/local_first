@@ -920,8 +920,10 @@ class RepositoryService {
   /// Builds a deterministic-ish session id with random salt for uniqueness.
   String _generateSessionId(String username) {
     final random = Random();
-    final randomBits =
-        random.nextInt(0x7fffffff).toRadixString(16).padLeft(8, '0');
+    final randomBits = random
+        .nextInt(0x7fffffff)
+        .toRadixString(16)
+        .padLeft(8, '0');
     final timestamp = DateTime.now().millisecondsSinceEpoch.toRadixString(16);
     return 'sess_${_sanitizeNamespace(username)}_${timestamp}_$randomBits';
   }
@@ -990,25 +992,25 @@ class RepositoryService {
           .map(_logsFromEvents);
 
   /// Streams the global counter summed across all session counters.
-  Stream<int> watchCounter() =>
-      sessionCounterRepository
-          .query()
-          .watch()
-          .map(_sessionCountersFromEvents)
-          .map((sessions) =>
-              sessions.fold<int>(0, (sum, counter) => sum + counter.count));
+  Stream<int> watchCounter() => sessionCounterRepository
+      .query()
+      .watch()
+      .map(_sessionCountersFromEvents)
+      .map(
+        (sessions) =>
+            sessions.fold<int>(0, (sum, counter) => sum + counter.count),
+      );
 
   /// Streams a limited view of the most recent logs.
   Stream<List<CounterLogModel>> watchRecentLogs({int limit = 5}) =>
       watchLogs(limit: min(limit, 5));
 
   /// Streams all known users ordered by username.
-  Stream<List<UserModel>> watchUsers() =>
-      userRepository
-          .query()
-          .orderBy(CommonFields.username)
-          .watch()
-          .map(_usersFromEvents);
+  Stream<List<UserModel>> watchUsers() => userRepository
+      .query()
+      .orderBy(CommonFields.username)
+      .watch()
+      .map(_usersFromEvents);
 
   /// Returns avatar URLs for the provided usernames (missing ones mapped to null).
   Future<JsonMap<String?>> getAvatarsForUsers(Set<String> usernames) async {
@@ -1049,6 +1051,7 @@ class RepositoryService {
 
   /// Increments the current session counter and logs the change.
   void incrementCounter() => _createLogRegistry(1);
+
   /// Decrements the current session counter and logs the change.
   void decrementCounter() => _createLogRegistry(-1);
 
@@ -1264,8 +1267,8 @@ class SessionCounterModel {
     final updated = json[CommonFields.updatedAt] != null
         ? DateTime.parse(json[CommonFields.updatedAt]).toUtc()
         : created;
-    final sessionId = json[SessionCounterFields.sessionId] ??
-        json[CommonFields.id];
+    final sessionId =
+        json[SessionCounterFields.sessionId] ?? json[CommonFields.id];
     return SessionCounterModel(
       id: json[CommonFields.id] ?? sessionId,
       username: json[CommonFields.username],
@@ -1507,16 +1510,16 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
     }
   }
 
-  Future<void> _pushPending() =>
-      Future.wait([
-        _pushPendingUserEvents(),
-        _pushPendingCounterLogEvents(),
-        _pushPendingSessionCounterEvents(),
-      ]);
+  Future<void> _pushPending() => Future.wait([
+    _pushPendingUserEvents(),
+    _pushPendingCounterLogEvents(),
+    _pushPendingSessionCounterEvents(),
+  ]);
 
   Future<void> _pushPendingUserEvents() async {
-    final pendingEvents =
-        await getPendingEvents(repositoryName: RepositoryNames.user);
+    final pendingEvents = await getPendingEvents(
+      repositoryName: RepositoryNames.user,
+    );
     if (pendingEvents.isEmpty) return;
     await mongoApi.pushUserEvents(pendingEvents.toJson());
     await markEventsAsSynced(pendingEvents);
@@ -1597,10 +1600,7 @@ class MongoPeriodicSyncStrategy extends DataSyncStrategy {
       'Updated last sync for $repo to ${value.toIso8601String()}',
       name: logTag,
     );
-      await client.setConfigValue(
-        _lastSyncKey(repo),
-        value.toIso8601String(),
-      );
+    await client.setConfigValue(_lastSyncKey(repo), value.toIso8601String());
   }
 
   Future<DateTime?> _getLatest(String repo) async {

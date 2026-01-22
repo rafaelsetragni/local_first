@@ -170,7 +170,7 @@ void main() {
       storage = _FakeStorage();
     });
 
-  test('initialize/close toggle flags', () async {
+    test('initialize/close toggle flags', () async {
       await storage.initialize();
       expect(storage.initialized, isTrue);
 
@@ -178,7 +178,7 @@ void main() {
       expect(storage.closed, isTrue);
     });
 
-  test('config helpers (set/get/contains/remove/clear/keys)', () async {
+    test('config helpers (set/get/contains/remove/clear/keys)', () async {
       expect(await storage.containsConfigKey('k'), isFalse);
 
       await storage.setConfigValue('k', 'v');

@@ -9,8 +9,8 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
   final Map<String, JsonMap<Map<String, JsonMap>>> _dataByNamespace = {};
   final Map<String, JsonMap<Map<String, JsonMap>>> _eventsByNamespace = {};
   final Map<String, Map<String, Object>> _metadataByNamespace = {};
-  final Map<String, JsonMap<Set<_InMemoryQueryObserver>>> _observersByNamespace =
-      {};
+  final Map<String, JsonMap<Set<_InMemoryQueryObserver>>>
+  _observersByNamespace = {};
   final Map<String, JsonMap<JsonMap<LocalFieldType>>> _schemasByNamespace = {};
 
   JsonMap<Map<String, JsonMap>> get _data =>
@@ -32,11 +32,13 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     LocalFirstEvent.kSyncCreatedAt,
   };
 
+  /// Marks this in-memory storage as initialized.
   @override
   Future<void> initialize() async {
     _initialized = true;
   }
 
+  /// Tears down the storage, closing watchers and clearing initialization flag.
   @override
   Future<void> close() async {
     if (!_initialized) return;
@@ -49,6 +51,13 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     _initialized = false;
   }
 
+  /// Switches the active namespace, reinitializing internal data so each
+  /// tenant/user gets isolated state.
+  ///
+  /// - [namespace]: Logical bucket name (for example, a user id). Switching
+  ///   resets in-memory watchers to avoid cross-namespace leaks.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<void> useNamespace(String namespace) async {
     if (_namespace == namespace) return;
@@ -58,6 +67,7 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
   }
 
   @visibleForTesting
+  /// Adds a closed watcher to simulate a disposed stream during tests.
   Future<void> addClosedObserverForTest(String repositoryName) async {
     final controller =
         StreamController<List<LocalFirstEvent<dynamic>>>.broadcast();
@@ -73,6 +83,7 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
   }
 
   @visibleForTesting
+  /// Number of active observers for a repository, useful in tests.
   int observerCount(String repositoryName) =>
       _observers[repositoryName]?.length ?? 0;
 
@@ -90,6 +101,8 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
   Map<String, JsonMap> _tableEvents(String tableName) =>
       _events.putIfAbsent(tableName, () => {});
 
+  /// Removes all data, events and metadata for the current namespace to reset
+  /// the in-memory database.
   @override
   Future<void> clearAllData() async {
     _ensureInitialized();
@@ -106,6 +119,11 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     }
   }
 
+  /// Stores schema metadata; helpful when tests emulate SQL-like validation.
+  ///
+  /// - [tableName]: Repository name this schema belongs to.
+  /// - [schema]: Column types keyed by field, used by backends that validate.
+  /// - [idFieldName]: Primary key field name for the repository.
   @override
   Future<void> ensureSchema(
     String tableName,
@@ -115,6 +133,11 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     _schemas[tableName] = Map.unmodifiable(schema);
   }
 
+  /// Returns all non-deleted records for a repository.
+  ///
+  /// - [tableName]: Repository name to query.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<List<JsonMap>> getAll(String tableName) async {
     _ensureInitialized();
@@ -133,6 +156,11 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     return items;
   }
 
+  /// Returns all events for a repository merged with their latest state.
+  ///
+  /// - [tableName]: Repository name to query.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<List<JsonMap>> getAllEvents(String tableName) async {
     _ensureInitialized();
@@ -156,6 +184,12 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     return items;
   }
 
+  /// Returns a record by id if it exists and is not marked as deleted.
+  ///
+  /// - [tableName]: Repository name.
+  /// - [id]: Record id.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<JsonMap?> getById(String tableName, String id) async {
     _ensureInitialized();
@@ -171,12 +205,24 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     return merged;
   }
 
+  /// Returns whether a record id exists in the state table.
+  ///
+  /// - [tableName]: Repository name.
+  /// - [id]: Record id.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<bool> containsId(String tableName, String id) async {
     _ensureInitialized();
     return _data[tableName]?.containsKey(id) ?? false;
   }
 
+  /// Returns an event by id merged with its associated state data.
+  ///
+  /// - [tableName]: Repository name.
+  /// - [id]: Event id.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<JsonMap?> getEventById(String tableName, String id) async {
     _ensureInitialized();
@@ -195,6 +241,14 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     );
   }
 
+  /// Inserts a record into the state table and notifies watchers.
+  ///
+  /// - [tableName]: Repository name.
+  /// - [item]: Record payload including metadata.
+  /// - [idField]: Field name used as primary key.
+  ///
+  /// Throws [StateError] if called before [initialize]. Throws [ArgumentError]
+  /// if the payload is missing a valid id.
   @override
   Future<void> insert(String tableName, JsonMap item, String idField) async {
     _ensureInitialized();
@@ -215,6 +269,14 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     await _notifyWatchers(tableName);
   }
 
+  /// Inserts an event for a record and triggers watcher updates.
+  ///
+  /// - [tableName]: Repository name.
+  /// - [item]: Event payload including metadata.
+  /// - [idField]: Field name used as event id.
+  ///
+  /// Throws [StateError] if called before [initialize]. Throws [ArgumentError]
+  /// if the payload is missing a valid id.
   @override
   Future<void> insertEvent(
     String tableName,
@@ -237,6 +299,13 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     await _notifyWatchers(tableName);
   }
 
+  /// Updates an existing record and notifies watchers.
+  ///
+  /// - [tableName]: Repository name.
+  /// - [id]: Record id.
+  /// - [item]: Updated payload including metadata.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<void> update(String tableName, String id, JsonMap item) async {
     _ensureInitialized();
@@ -251,6 +320,13 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     await _notifyWatchers(tableName);
   }
 
+  /// Updates an existing event entry.
+  ///
+  /// - [tableName]: Repository name.
+  /// - [id]: Event id.
+  /// - [item]: Updated payload including metadata.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<void> updateEvent(String tableName, String id, JsonMap item) async {
     _ensureInitialized();
@@ -264,6 +340,12 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     await _notifyWatchers(tableName);
   }
 
+  /// Deletes a record and notifies watchers.
+  ///
+  /// - [repositoryName]: Repository name.
+  /// - [id]: Record id to delete.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<void> delete(String repositoryName, String id) async {
     _ensureInitialized();
@@ -271,6 +353,12 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     await _notifyWatchers(repositoryName);
   }
 
+  /// Deletes a single event and notifies watchers.
+  ///
+  /// - [repositoryName]: Repository name.
+  /// - [id]: Event id to delete.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<void> deleteEvent(String repositoryName, String id) async {
     _ensureInitialized();
@@ -278,6 +366,11 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     await _notifyWatchers(repositoryName);
   }
 
+  /// Clears all records for the repository.
+  ///
+  /// - [tableName]: Repository name whose records should be dropped.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<void> deleteAll(String tableName) async {
     _ensureInitialized();
@@ -285,6 +378,11 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     await _notifyWatchers(tableName);
   }
 
+  /// Clears all events for the repository.
+  ///
+  /// - [tableName]: Repository name whose events should be dropped.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<void> deleteAllEvents(String tableName) async {
     _ensureInitialized();
@@ -301,12 +399,23 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     return false;
   }
 
+  /// Returns whether a config key exists in the current namespace.
+  ///
+  /// - [key]: Config key to check. Namespacing is handled internally.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<bool> containsConfigKey(String key) async {
     _ensureInitialized();
     return _metadata.containsKey(key);
   }
 
+  /// Stores a config value in memory.
+  ///
+  /// - [key]: Config key to write. Namespacing is handled internally.
+  /// - [value]: Allowed types: bool, int, double, String or `List<String>`.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<bool> setConfigValue<T>(String key, T value) async {
     _ensureInitialized();
@@ -320,6 +429,11 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     return true;
   }
 
+  /// Reads a config value using the provided generic type.
+  ///
+  /// - [key]: Config key to read. Namespacing is handled internally.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<T?> getConfigValue<T>(String key) async {
     _ensureInitialized();
@@ -334,6 +448,11 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     return null;
   }
 
+  /// Removes a config entry from the current namespace.
+  ///
+  /// - [key]: Config key to remove. Namespacing is handled internally.
+  ///
+  /// Throws [StateError] if called before [initialize].
   @override
   Future<bool> removeConfig(String key) async {
     _ensureInitialized();
@@ -341,6 +460,7 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     return true;
   }
 
+  /// Clears all config metadata for the current namespace.
   @override
   Future<bool> clearConfig() async {
     _ensureInitialized();
@@ -348,12 +468,19 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     return true;
   }
 
+  /// Lists config keys stored in the current namespace.
   @override
   Future<Set<String>> getConfigKeys() async {
     _ensureInitialized();
     return _metadata.keys.toSet();
   }
 
+  /// Executes an in-memory query with filtering, sorting and pagination.
+  ///
+  /// Useful for tests and quick demos without a real database. Throws
+  /// [StateError] if called before [initialize].
+  ///
+  /// - [query]: Query definition including filters, sorts and pagination.
   @override
   Future<List<LocalFirstEvent<T>>> query<T>(LocalFirstQuery<T> query) async {
     _ensureInitialized();
@@ -448,6 +575,10 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
         : events.where((e) => !e.isDeleted).toList();
   }
 
+  /// Watches a query and emits updates whenever data changes, mimicking a
+  /// reactive database stream.
+  ///
+  /// - [query]: Query definition to observe.
   @override
   Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query) {
     _ensureInitialized();

@@ -43,7 +43,10 @@ void main() {
       expect(await storage.getConfigValue<List<String>>('list'), ['a', 'b']);
       expect(await storage.getConfigValue<dynamic>('list'), ['a', 'b']);
       expect(await storage.containsConfigKey('string'), isTrue);
-      expect(await storage.getConfigKeys(), containsAll(['bool', 'int', 'double', 'string', 'list']));
+      expect(
+        await storage.getConfigKeys(),
+        containsAll(['bool', 'int', 'double', 'string', 'list']),
+      );
     });
 
     test('rejects unsupported types and null values', () async {
@@ -51,10 +54,7 @@ void main() {
         () => storage.setConfigValue('bad', {'a': 1}),
         throwsArgumentError,
       );
-      expect(
-        () => storage.setConfigValue('null', null),
-        throwsArgumentError,
-      );
+      expect(() => storage.setConfigValue('null', null), throwsArgumentError);
     });
 
     test('removes and clears keys', () async {

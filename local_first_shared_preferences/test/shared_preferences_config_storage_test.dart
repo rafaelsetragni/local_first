@@ -60,10 +60,7 @@ void main() {
         () => storage.setConfigValue('bad', ['a', 1]),
         throwsArgumentError,
       );
-      expect(
-        () => storage.setConfigValue('null', null),
-        throwsArgumentError,
-      );
+      expect(() => storage.setConfigValue('null', null), throwsArgumentError);
     });
 
     test('removes and clears keys', () async {

@@ -289,10 +289,9 @@ void main() {
             'dataId': '99',
           };
 
-          final event = LocalFirstEvent.fromRemoteJson(
-            repository: repo,
-            json: json,
-          ) as LocalFirstDeleteEvent<_DummyModel>;
+          final event =
+              LocalFirstEvent.fromRemoteJson(repository: repo, json: json)
+                  as LocalFirstDeleteEvent<_DummyModel>;
 
           expect(event.dataId, '99');
           expect(event.data, isNull);
@@ -336,11 +335,13 @@ void main() {
 
         test('should serialize delete events to remote/local formats', () {
           final repo = _dummyRepo();
-          final event = LocalFirstEvent.createNewDeleteEvent<_DummyModel>(
-            repository: repo,
-            needSync: false,
-            dataId: 'del-1',
-          ) as LocalFirstDeleteEvent<_DummyModel>;
+          final event =
+              LocalFirstEvent.createNewDeleteEvent<_DummyModel>(
+                    repository: repo,
+                    needSync: false,
+                    dataId: 'del-1',
+                  )
+                  as LocalFirstDeleteEvent<_DummyModel>;
 
           final remote = event.toJson();
           final local = event.toLocalStorageJson();
@@ -491,11 +492,13 @@ void main() {
 
         test('delete events should preserve dataId when updating status', () {
           final repo = _dummyRepo();
-          final delete = LocalFirstEvent.createNewDeleteEvent<_DummyModel>(
-            repository: repo,
-            needSync: true,
-            dataId: 'dead-1',
-          ) as LocalFirstDeleteEvent<_DummyModel>;
+          final delete =
+              LocalFirstEvent.createNewDeleteEvent<_DummyModel>(
+                    repository: repo,
+                    needSync: true,
+                    dataId: 'dead-1',
+                  )
+                  as LocalFirstDeleteEvent<_DummyModel>;
 
           final updated = delete.updateEventState(syncStatus: SyncStatus.ok);
 
@@ -506,11 +509,13 @@ void main() {
 
         test('delete updateEventState should default to existing status', () {
           final repo = _dummyRepo();
-          final delete = LocalFirstEvent.createNewDeleteEvent<_DummyModel>(
-            repository: repo,
-            needSync: true,
-            dataId: 'dead-2',
-          ) as LocalFirstDeleteEvent<_DummyModel>;
+          final delete =
+              LocalFirstEvent.createNewDeleteEvent<_DummyModel>(
+                    repository: repo,
+                    needSync: true,
+                    dataId: 'dead-2',
+                  )
+                  as LocalFirstDeleteEvent<_DummyModel>;
 
           final updated = delete.updateEventState();
 
@@ -538,8 +543,10 @@ void main() {
 
         expect(payload, hasLength(2));
         expect(payload.first[LocalFirstEvent.kData], isNotNull);
-        expect(payload.last[LocalFirstEvent.kOperation],
-            SyncOperation.delete.index);
+        expect(
+          payload.last[LocalFirstEvent.kOperation],
+          SyncOperation.delete.index,
+        );
       });
     });
   });

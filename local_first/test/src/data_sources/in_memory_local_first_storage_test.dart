@@ -76,34 +76,22 @@ void main() {
       required String eventId,
       int age = 0,
     }) async {
-      await storage.insert(
-        repo.name,
-        {
-          'id': id,
-          'username': 'user-$id',
-          'age': age,
-          LocalFirstEvent.kLastEventId: eventId,
-        },
-        'id',
-      );
+      await storage.insert(repo.name, {
+        'id': id,
+        'username': 'user-$id',
+        'age': age,
+        LocalFirstEvent.kLastEventId: eventId,
+      }, 'id');
     }
 
     Future<void> writeEvent(JsonMap event) {
-      return storage.insertEvent(
-        repo.name,
-        event,
-        LocalFirstEvent.kEventId,
-      );
+      return storage.insertEvent(repo.name, event, LocalFirstEvent.kEventId);
     }
 
     test('persists state and attaches event metadata', () async {
       await writeState(id: '1', eventId: 'evt-1', age: 20);
       await writeEvent(
-        _event(
-          eventId: 'evt-1',
-          dataId: '1',
-          operation: SyncOperation.insert,
-        ),
+        _event(eventId: 'evt-1', dataId: '1', operation: SyncOperation.insert),
       );
 
       final all = await storage.getAll(repo.name);
@@ -139,13 +127,15 @@ void main() {
       );
 
       final events = await storage.getAllEvents(repo.name);
-      final merged = events
-          .firstWhere((row) => row[LocalFirstEvent.kEventId] == 'evt-merge');
+      final merged = events.firstWhere(
+        (row) => row[LocalFirstEvent.kEventId] == 'evt-merge',
+      );
       expect(merged['username'], 'user-merge');
       expect(merged[LocalFirstEvent.kSyncStatus], SyncStatus.ok.index);
 
-      final deleteEvent = events
-          .firstWhere((row) => row[LocalFirstEvent.kEventId] == 'evt-delete');
+      final deleteEvent = events.firstWhere(
+        (row) => row[LocalFirstEvent.kEventId] == 'evt-delete',
+      );
       expect(deleteEvent['id'], 'ghost');
       expect(deleteEvent[LocalFirstEvent.kData], isNull);
     });
@@ -155,21 +145,15 @@ void main() {
       await writeState(id: '2', eventId: 'evt-2', age: 25);
       await writeState(id: '3', eventId: 'evt-3', age: 35);
 
-      await writeEvent(_event(
-        eventId: 'evt-1',
-        dataId: '1',
-        operation: SyncOperation.insert,
-      ));
-      await writeEvent(_event(
-        eventId: 'evt-2',
-        dataId: '2',
-        operation: SyncOperation.insert,
-      ));
-      await writeEvent(_event(
-        eventId: 'evt-3',
-        dataId: '3',
-        operation: SyncOperation.insert,
-      ));
+      await writeEvent(
+        _event(eventId: 'evt-1', dataId: '1', operation: SyncOperation.insert),
+      );
+      await writeEvent(
+        _event(eventId: 'evt-2', dataId: '2', operation: SyncOperation.insert),
+      );
+      await writeEvent(
+        _event(eventId: 'evt-3', dataId: '3', operation: SyncOperation.insert),
+      );
 
       final sorted = await storage.query(
         baseQuery
@@ -179,8 +163,7 @@ void main() {
             .limitTo(1),
       );
 
-      final stateEvent =
-          sorted.whereType<LocalFirstStateEvent<_User>>().single;
+      final stateEvent = sorted.whereType<LocalFirstStateEvent<_User>>().single;
       expect(stateEvent.data.id, '2');
 
       await storage.insertEvent(
@@ -211,11 +194,7 @@ void main() {
 
       await writeState(id: '1', eventId: 'evt-1', age: 20);
       await writeEvent(
-        _event(
-          eventId: 'evt-1',
-          dataId: '1',
-          operation: SyncOperation.insert,
-        ),
+        _event(eventId: 'evt-1', dataId: '1', operation: SyncOperation.insert),
       );
       await pumpEventQueue();
       expect(emissions.last.single.dataId, '1');
@@ -272,40 +251,44 @@ void main() {
       expect(await storage.getAllEvents(repo.name), isEmpty);
     });
 
-    test('config storage supports shared_preferences types and rejects others',
-        () async {
-      expect(await storage.containsConfigKey('missing'), isFalse);
+    test(
+      'config storage supports shared_preferences types and rejects others',
+      () async {
+        expect(await storage.containsConfigKey('missing'), isFalse);
 
-      expect(await storage.setConfigValue('bool', true), isTrue);
-      expect(await storage.setConfigValue('int', 1), isTrue);
-      expect(await storage.setConfigValue('double', 1.5), isTrue);
-      expect(await storage.setConfigValue('string', 'ok'), isTrue);
-      expect(
-        await storage.setConfigValue('list', <String>['a', 'b']),
-        isTrue,
-      );
+        expect(await storage.setConfigValue('bool', true), isTrue);
+        expect(await storage.setConfigValue('int', 1), isTrue);
+        expect(await storage.setConfigValue('double', 1.5), isTrue);
+        expect(await storage.setConfigValue('string', 'ok'), isTrue);
+        expect(
+          await storage.setConfigValue('list', <String>['a', 'b']),
+          isTrue,
+        );
 
-      expect(await storage.getConfigValue<bool>('bool'), isTrue);
-      expect(await storage.getConfigValue<int>('int'), 1);
-      expect(await storage.getConfigValue<double>('double'), 1.5);
-      expect(await storage.getConfigValue<String>('string'), 'ok');
-      expect(await storage.getConfigValue<List<String>>('list'), ['a', 'b']);
-      expect(await storage.getConfigValue<dynamic>('list'), ['a', 'b']);
+        expect(await storage.getConfigValue<bool>('bool'), isTrue);
+        expect(await storage.getConfigValue<int>('int'), 1);
+        expect(await storage.getConfigValue<double>('double'), 1.5);
+        expect(await storage.getConfigValue<String>('string'), 'ok');
+        expect(await storage.getConfigValue<List<String>>('list'), ['a', 'b']);
+        expect(await storage.getConfigValue<dynamic>('list'), ['a', 'b']);
 
-      expect(await storage.getConfigKeys(),
-          containsAll(<String>['bool', 'int', 'double', 'string', 'list']));
+        expect(
+          await storage.getConfigKeys(),
+          containsAll(<String>['bool', 'int', 'double', 'string', 'list']),
+        );
 
-      expect(
-        () => storage.setConfigValue('invalid', {'a': 1}),
-        throwsArgumentError,
-      );
+        expect(
+          () => storage.setConfigValue('invalid', {'a': 1}),
+          throwsArgumentError,
+        );
 
-      expect(await storage.removeConfig('string'), isTrue);
-      expect(await storage.containsConfigKey('string'), isFalse);
+        expect(await storage.removeConfig('string'), isTrue);
+        expect(await storage.containsConfigKey('string'), isFalse);
 
-      await storage.clearConfig();
-      expect(await storage.getConfigKeys(), isEmpty);
-    });
+        await storage.clearConfig();
+        expect(await storage.getConfigKeys(), isEmpty);
+      },
+    );
 
     test('useNamespace isolates config values in-memory', () async {
       await storage.setConfigValue('k', 'v1');
@@ -325,27 +308,28 @@ void main() {
     });
 
     test('ensureSchema should cache schema without throwing', () async {
-      await storage.ensureSchema(
-        repo.name,
-        {'id': LocalFieldType.text},
-        idFieldName: 'id',
-      );
+      await storage.ensureSchema(repo.name, {
+        'id': LocalFieldType.text,
+      }, idFieldName: 'id');
     });
 
-    test('getEventById should merge data and metadata when available', () async {
-      await writeState(id: 'merge-id', eventId: 'evt-merge-id', age: 10);
-      await writeEvent(
-        _event(
-          eventId: 'evt-merge-id',
-          dataId: 'merge-id',
-          operation: SyncOperation.insert,
-        ),
-      );
+    test(
+      'getEventById should merge data and metadata when available',
+      () async {
+        await writeState(id: 'merge-id', eventId: 'evt-merge-id', age: 10);
+        await writeEvent(
+          _event(
+            eventId: 'evt-merge-id',
+            dataId: 'merge-id',
+            operation: SyncOperation.insert,
+          ),
+        );
 
-      final merged = await storage.getEventById(repo.name, 'evt-merge-id');
-      expect(merged?[LocalFirstEvent.kDataId], 'merge-id');
-      expect(merged?['username'], isNotNull);
-    });
+        final merged = await storage.getEventById(repo.name, 'evt-merge-id');
+        expect(merged?[LocalFirstEvent.kDataId], 'merge-id');
+        expect(merged?['username'], isNotNull);
+      },
+    );
 
     test('getEventById should return null when event id is missing', () async {
       await writeEvent(
@@ -360,28 +344,35 @@ void main() {
       expect(missing, isNull);
     });
 
-    test('getEventById should still return metadata without data payload',
-        () async {
-      await writeEvent(
-        _event(
-          eventId: 'evt-only-meta',
-          dataId: 'only-meta',
-          operation: SyncOperation.insert,
-        ),
-      );
+    test(
+      'getEventById should still return metadata without data payload',
+      () async {
+        await writeEvent(
+          _event(
+            eventId: 'evt-only-meta',
+            dataId: 'only-meta',
+            operation: SyncOperation.insert,
+          ),
+        );
 
-      final fetched = await storage.getEventById(repo.name, 'evt-only-meta');
+        final fetched = await storage.getEventById(repo.name, 'evt-only-meta');
 
-      expect(fetched?[LocalFirstEvent.kDataId], 'only-meta');
-      expect(fetched?[LocalFirstEvent.kLastEventId], 'evt-only-meta');
-    });
+        expect(fetched?[LocalFirstEvent.kDataId], 'only-meta');
+        expect(fetched?[LocalFirstEvent.kLastEventId], 'evt-only-meta');
+      },
+    );
 
-    test('getEventById should return null when events table is missing',
-        () async {
-      final result = await storage.getEventById('unknown-table', 'evt-missing');
+    test(
+      'getEventById should return null when events table is missing',
+      () async {
+        final result = await storage.getEventById(
+          'unknown-table',
+          'evt-missing',
+        );
 
-      expect(result, isNull);
-    });
+        expect(result, isNull);
+      },
+    );
 
     test('getById should return null when table is missing', () async {
       final result = await storage.getById('ghost-table', 'any-id');
@@ -409,16 +400,12 @@ void main() {
         delegate: storage,
         repository: throwingRepo,
       );
-      await storage.insert(
-        throwingRepo.name,
-        {
-          'id': 'u-throw',
-          'username': 'bad',
-          'age': -1,
-          LocalFirstEvent.kLastEventId: 'evt-throw',
-        },
-        'id',
-      );
+      await storage.insert(throwingRepo.name, {
+        'id': 'u-throw',
+        'username': 'bad',
+        'age': -1,
+        LocalFirstEvent.kLastEventId: 'evt-throw',
+      }, 'id');
       await storage.insertEvent(
         throwingRepo.name,
         _event(
@@ -443,16 +430,15 @@ void main() {
           operation: SyncOperation.insert,
         ),
       );
-      await writeEvent(
-        {
-          LocalFirstEvent.kEventId: 'evt-bad',
-          LocalFirstEvent.kDataId: 'bad',
-          LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
-          LocalFirstEvent.kOperation: SyncOperation.insert.index,
-          LocalFirstEvent.kSyncCreatedAt:
-              DateTime.now().toUtc().millisecondsSinceEpoch,
-        },
-      );
+      await writeEvent({
+        LocalFirstEvent.kEventId: 'evt-bad',
+        LocalFirstEvent.kDataId: 'bad',
+        LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+        LocalFirstEvent.kOperation: SyncOperation.insert.index,
+        LocalFirstEvent.kSyncCreatedAt: DateTime.now()
+            .toUtc()
+            .millisecondsSinceEpoch,
+      });
 
       final events = await storage.query(baseQuery);
 
@@ -468,11 +454,9 @@ void main() {
 
     test('insertEvent should throw when id is missing', () async {
       expect(
-        () => storage.insertEvent(
-          repo.name,
-          {LocalFirstEvent.kDataId: '1'},
-          LocalFirstEvent.kEventId,
-        ),
+        () => storage.insertEvent(repo.name, {
+          LocalFirstEvent.kDataId: '1',
+        }, LocalFirstEvent.kEventId),
         throwsArgumentError,
       );
     });
@@ -480,15 +464,11 @@ void main() {
     test('update should preserve legacy lastEventId values', () async {
       await writeState(id: 'legacy-last', eventId: 'evt-legacy-last');
 
-      await storage.update(
-        repo.name,
-        'legacy-last',
-        {
-          'id': 'legacy-last',
-          '_lasteventId': 'legacy-last-event',
-          'username': 'updated',
-        },
-      );
+      await storage.update(repo.name, 'legacy-last', {
+        'id': 'legacy-last',
+        '_lasteventId': 'legacy-last-event',
+        'username': 'updated',
+      });
 
       final updated = await storage.getById(repo.name, 'legacy-last');
       expect(updated?[LocalFirstEvent.kLastEventId], 'legacy-last-event');
@@ -512,17 +492,14 @@ void main() {
     });
 
     test('insertEvent should backfill dataId when missing', () async {
-      await storage.insertEvent(
-        repo.name,
-        {
-          LocalFirstEvent.kEventId: 'evt-no-data-id',
-          LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
-          LocalFirstEvent.kOperation: SyncOperation.insert.index,
-          LocalFirstEvent.kSyncCreatedAt:
-              DateTime.now().toUtc().millisecondsSinceEpoch,
-        },
-        LocalFirstEvent.kEventId,
-      );
+      await storage.insertEvent(repo.name, {
+        LocalFirstEvent.kEventId: 'evt-no-data-id',
+        LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+        LocalFirstEvent.kOperation: SyncOperation.insert.index,
+        LocalFirstEvent.kSyncCreatedAt: DateTime.now()
+            .toUtc()
+            .millisecondsSinceEpoch,
+      }, LocalFirstEvent.kEventId);
 
       final fetched = await storage.getEventById(repo.name, 'evt-no-data-id');
       expect(fetched?[LocalFirstEvent.kDataId], 'evt-no-data-id');
@@ -544,11 +521,7 @@ void main() {
     test('should prune closed observers when notifying watchers', () async {
       await storage.addClosedObserverForTest(repo.name);
 
-      await storage.insert(
-        repo.name,
-        {'id': 'prune'},
-        'id',
-      );
+      await storage.insert(repo.name, {'id': 'prune'}, 'id');
 
       expect(storage.observerCount(repo.name), 0);
     });
@@ -581,28 +554,20 @@ void main() {
     });
 
     test('should normalize legacy keys for data and events', () async {
-      await storage.insert(
-        repo.name,
-        {
-          'id': 'legacy',
-          '_last_event_id': 'evt-legacy',
-          '_sync_status': SyncStatus.pending.index,
-          '_sync_operation': SyncOperation.insert.index,
-          '_sync_created_at': 1,
-        },
-        'id',
-      );
-      await storage.insertEvent(
-        repo.name,
-        {
-          '_event_id': 'evt-legacy',
-          '_data_id': 'legacy',
-          '_sync_status': SyncStatus.ok.index,
-          '_sync_operation': SyncOperation.insert.index,
-          '_sync_created_at': 2,
-        },
-        LocalFirstEvent.kEventId,
-      );
+      await storage.insert(repo.name, {
+        'id': 'legacy',
+        '_last_event_id': 'evt-legacy',
+        '_sync_status': SyncStatus.pending.index,
+        '_sync_operation': SyncOperation.insert.index,
+        '_sync_created_at': 1,
+      }, 'id');
+      await storage.insertEvent(repo.name, {
+        '_event_id': 'evt-legacy',
+        '_data_id': 'legacy',
+        '_sync_status': SyncStatus.ok.index,
+        '_sync_operation': SyncOperation.insert.index,
+        '_sync_created_at': 2,
+      }, LocalFirstEvent.kEventId);
 
       final fetched = await storage.getById(repo.name, 'legacy');
       expect(fetched?[LocalFirstEvent.kEventId], 'evt-legacy');
@@ -618,21 +583,19 @@ void main() {
       expect(results, isEmpty);
     });
 
-    test('getById should retain lastEventId even when event metadata missing',
-        () async {
-      await storage.insert(
-        repo.name,
-        {
+    test(
+      'getById should retain lastEventId even when event metadata missing',
+      () async {
+        await storage.insert(repo.name, {
           'id': 'missing-meta',
           LocalFirstEvent.kLastEventId: 'ghost',
           'username': 'ghost',
-        },
-        'id',
-      );
+        }, 'id');
 
-      final fetched = await storage.getById(repo.name, 'missing-meta');
-      expect(fetched?[LocalFirstEvent.kLastEventId], 'ghost');
-      expect(fetched?[LocalFirstEvent.kSyncStatus], isNull);
-    });
+        final fetched = await storage.getById(repo.name, 'missing-meta');
+        expect(fetched?[LocalFirstEvent.kLastEventId], 'ghost');
+        expect(fetched?[LocalFirstEvent.kSyncStatus], isNull);
+      },
+    );
   });
 }

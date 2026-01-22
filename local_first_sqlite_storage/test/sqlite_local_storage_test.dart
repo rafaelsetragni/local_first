@@ -157,14 +157,16 @@ void main() {
       await storage.close();
     });
 
-    test('default factory and resolved path are created when no dbFactory provided',
-        () async {
-      databaseFactory = databaseFactoryFfi;
-      final defaultStorage = SqliteLocalFirstStorage(namespace: 'ns_default');
-      expect(defaultStorage.namespace, 'ns_default');
-      await defaultStorage.initialize();
-      await defaultStorage.close();
-    });
+    test(
+      'default factory and resolved path are created when no dbFactory provided',
+      () async {
+        databaseFactory = databaseFactoryFfi;
+        final defaultStorage = SqliteLocalFirstStorage(namespace: 'ns_default');
+        expect(defaultStorage.namespace, 'ns_default');
+        await defaultStorage.initialize();
+        await defaultStorage.close();
+      },
+    );
 
     test('close shuts down active watchers', () async {
       final sub = storage.watchQuery(buildQuery()).listen((_) {});
@@ -187,11 +189,12 @@ void main() {
 
     test('updateEvent throws when dataId is not a string', () async {
       await expectLater(
-        storage.updateEvent(
-          'users',
-          'evt',
-          {'dataId': 123, 'syncStatus': 1, 'operation': 1, 'createdAt': 1},
-        ),
+        storage.updateEvent('users', 'evt', {
+          'dataId': 123,
+          'syncStatus': 1,
+          'operation': 1,
+          'createdAt': 1,
+        }),
         throwsA(isA<ArgumentError>()),
       );
     });
@@ -230,8 +233,10 @@ void main() {
         databasePath: inMemoryDatabasePath,
         dbFactory: databaseFactoryFfi,
       );
-      expect(() => fresh.watchQuery(buildQuery(delegate: fresh)),
-          throwsA(isA<StateError>()));
+      expect(
+        () => fresh.watchQuery(buildQuery(delegate: fresh)),
+        throwsA(isA<StateError>()),
+      );
     });
 
     test('watchQuery emits current results on listen', () async {
@@ -344,21 +349,24 @@ void main() {
       expect(encoded['id'], 'h1');
     });
 
-    test('clearAllData wipes tables and metadata and notifies watchers', () async {
-      await insertRow({'id': '1', 'username': 'alice', 'age': 20});
-      await insertEvent(
-        dataId: '1',
-        op: SyncOperation.insert,
-        status: SyncStatus.ok,
-        eventId: 'evt-1',
-      );
-      await storage.setConfigValue('meta', 'value');
+    test(
+      'clearAllData wipes tables and metadata and notifies watchers',
+      () async {
+        await insertRow({'id': '1', 'username': 'alice', 'age': 20});
+        await insertEvent(
+          dataId: '1',
+          op: SyncOperation.insert,
+          status: SyncStatus.ok,
+          eventId: 'evt-1',
+        );
+        await storage.setConfigValue('meta', 'value');
 
-      await storage.clearAllData();
+        await storage.clearAllData();
 
-      expect(await storage.getAll('users'), isEmpty);
-      expect(await storage.getConfigValue('meta'), isNull);
-    });
+        expect(await storage.getAll('users'), isEmpty);
+        expect(await storage.getConfigValue('meta'), isNull);
+      },
+    );
 
     test('useNamespace switches databases', () async {
       await insertRow({'id': '1', 'username': 'alice', 'age': 1});
@@ -407,7 +415,10 @@ void main() {
         throwsA(isA<ArgumentError>()),
       );
       await expectLater(
-        storage.insertEvent('users', {'eventId': 'evt', 'dataId': 123}, 'eventId'),
+        storage.insertEvent('users', {
+          'eventId': 'evt',
+          'dataId': 123,
+        }, 'eventId'),
         throwsA(isA<ArgumentError>()),
       );
     });
@@ -439,84 +450,88 @@ void main() {
       expect(await storage.getAll('users'), isEmpty);
     });
 
-    test('setConfigValue/getConfigValue roundtrip and null when missing', () async {
-      expect(await storage.getConfigValue('k'), isNull);
-      await storage.setConfigValue('k', 'v');
-      expect(await storage.getConfigValue('k'), 'v');
-    });
+    test(
+      'setConfigValue/getConfigValue roundtrip and null when missing',
+      () async {
+        expect(await storage.getConfigValue('k'), isNull);
+        await storage.setConfigValue('k', 'v');
+        expect(await storage.getConfigValue('k'), 'v');
+      },
+    );
 
-    test('config storage supports shared_preferences types and rejects others',
-        () async {
-      await storage.setConfigValue('bool', true);
-      await storage.setConfigValue('int', 1);
-      await storage.setConfigValue('double', 1.5);
-      await storage.setConfigValue('string', 'ok');
-      await storage.setConfigValue('list', <String>['a', 'b']);
+    test(
+      'config storage supports shared_preferences types and rejects others',
+      () async {
+        await storage.setConfigValue('bool', true);
+        await storage.setConfigValue('int', 1);
+        await storage.setConfigValue('double', 1.5);
+        await storage.setConfigValue('string', 'ok');
+        await storage.setConfigValue('list', <String>['a', 'b']);
 
-      expect(await storage.getConfigValue<bool>('bool'), isTrue);
-      expect(await storage.getConfigValue<int>('int'), 1);
-      expect(await storage.getConfigValue<double>('double'), 1.5);
-      expect(await storage.getConfigValue<String>('string'), 'ok');
-      expect(await storage.getConfigValue<List<String>>('list'), ['a', 'b']);
-      expect(await storage.getConfigValue<dynamic>('list'), ['a', 'b']);
+        expect(await storage.getConfigValue<bool>('bool'), isTrue);
+        expect(await storage.getConfigValue<int>('int'), 1);
+        expect(await storage.getConfigValue<double>('double'), 1.5);
+        expect(await storage.getConfigValue<String>('string'), 'ok');
+        expect(await storage.getConfigValue<List<String>>('list'), ['a', 'b']);
+        expect(await storage.getConfigValue<dynamic>('list'), ['a', 'b']);
 
-      expect(await storage.getConfigKeys(),
-          containsAll(['bool', 'int', 'double', 'string', 'list']));
-      expect(await storage.containsConfigKey('string'), isTrue);
+        expect(
+          await storage.getConfigKeys(),
+          containsAll(['bool', 'int', 'double', 'string', 'list']),
+        );
+        expect(await storage.containsConfigKey('string'), isTrue);
 
-      expect(() => storage.setConfigValue('invalid', {'a': 1}),
-          throwsArgumentError);
+        expect(
+          () => storage.setConfigValue('invalid', {'a': 1}),
+          throwsArgumentError,
+        );
 
-      expect(
-        () => storage.setConfigValue('null', null),
-        throwsArgumentError,
-      );
+        expect(() => storage.setConfigValue('null', null), throwsArgumentError);
 
-      await storage.removeConfig('string');
-      expect(await storage.containsConfigKey('string'), isFalse);
+        await storage.removeConfig('string');
+        expect(await storage.containsConfigKey('string'), isFalse);
 
-      await storage.clearConfig();
-      expect(await storage.getConfigKeys(), isEmpty);
-    });
+        await storage.clearConfig();
+        expect(await storage.getConfigKeys(), isEmpty);
+      },
+    );
 
-    test('getConfigValue returns raw string when decode fails for String',
-        () async {
-      final helper = TestHelperSqliteLocalFirstStorage(storage);
-      final db = await helper.database;
-      await helper.ensureMetadataTable();
-      await db.insert(helper.metadataTable, {
-        'key': 'bad',
-        'value': 'not-json',
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    test(
+      'getConfigValue returns raw string when decode fails for String',
+      () async {
+        final helper = TestHelperSqliteLocalFirstStorage(storage);
+        final db = await helper.database;
+        await helper.ensureMetadataTable();
+        await db.insert(helper.metadataTable, {
+          'key': 'bad',
+          'value': 'not-json',
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
 
-      expect(await storage.getConfigValue<String>('bad'), 'not-json');
-    });
+        expect(await storage.getConfigValue<String>('bad'), 'not-json');
+      },
+    );
 
-    test('getConfigValue returns null for unknown encoded config type',
-        () async {
-      final helper = TestHelperSqliteLocalFirstStorage(storage);
-      final db = await helper.database;
-      await helper.ensureMetadataTable();
-      await db.insert(
-        helper.metadataTable,
-        {
+    test(
+      'getConfigValue returns null for unknown encoded config type',
+      () async {
+        final helper = TestHelperSqliteLocalFirstStorage(storage);
+        final db = await helper.database;
+        await helper.ensureMetadataTable();
+        await db.insert(helper.metadataTable, {
           'key': 'unknown',
           'value': jsonEncode({'t': 'alien', 'v': 'x'}),
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
 
-      expect(await storage.getConfigValue<String>('unknown'), isNull);
-    });
+        expect(await storage.getConfigValue<String>('unknown'), isNull);
+      },
+    );
 
     test('containsId returns false when table empty', () async {
       expect(await storage.containsId('users', 'none'), isFalse);
     });
 
     test('ensureSchema rejects reserved column names', () async {
-      final invalid = {
-        'id': LocalFieldType.text,
-      };
+      final invalid = {'id': LocalFieldType.text};
       expect(
         () => storage.ensureSchema('users', invalid, idFieldName: 'id'),
         throwsA(isA<ArgumentError>()),

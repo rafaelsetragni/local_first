@@ -348,26 +348,17 @@ void main() {
       });
 
       test('should return false when value is not comparable', () {
-        const filter = QueryFilter(
-          field: 'a',
-          isGreaterThanOrEqualTo: 1,
-        );
+        const filter = QueryFilter(field: 'a', isGreaterThanOrEqualTo: 1);
         expect(filter.matches({'a': const Object()}), isFalse);
       });
 
       test('should return false when value is not comparable for <=', () {
-        const filter = QueryFilter(
-          field: 'a',
-          isLessThanOrEqualTo: 10,
-        );
+        const filter = QueryFilter(field: 'a', isLessThanOrEqualTo: 10);
         expect(filter.matches({'a': const Object()}), isFalse);
       });
 
       test('should return false when value is not comparable for >=', () {
-        const filter = QueryFilter(
-          field: 'a',
-          isGreaterThanOrEqualTo: 2,
-        );
+        const filter = QueryFilter(field: 'a', isGreaterThanOrEqualTo: 2);
         expect(filter.matches({'a': const Object()}), isFalse);
       });
 
