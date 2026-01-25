@@ -23,7 +23,7 @@ void main() {
       strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
       );
 
       client = MockLocalFirstClient();
@@ -185,7 +185,7 @@ void main() {
       strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
       );
 
       client = MockLocalFirstClient();
@@ -246,7 +246,7 @@ void main() {
       strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
       );
 
       client = MockLocalFirstClient();
@@ -301,7 +301,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         authToken: 'initial-token',
       );
 
@@ -318,7 +318,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         headers: {'X-Initial': 'value'},
       );
 
@@ -335,7 +335,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
       );
 
       strategy.updateCredentials(
@@ -351,7 +351,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         headers: {'X-Existing': 'value'},
       );
 
@@ -365,7 +365,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         authToken: 'existing-token',
       );
 
@@ -379,7 +379,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         authToken: 'token',
         headers: {'X-Header': 'value'},
       );
@@ -396,7 +396,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
       );
 
       expect(strategy.websocketUrl, 'ws://localhost:8080/test');
@@ -410,7 +410,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         reconnectDelay: Duration(seconds: 10),
       );
 
@@ -421,7 +421,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         heartbeatInterval: Duration(minutes: 1),
       );
 
@@ -432,7 +432,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         authToken: 'custom-token',
       );
 
@@ -443,7 +443,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         headers: {'Authorization': 'Bearer token', 'X-Custom': 'value'},
       );
 
@@ -457,7 +457,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         headers: {'X-Original': 'value'},
       );
 
@@ -475,7 +475,7 @@ void main() {
       strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
       );
 
       client = MockLocalFirstClient();
@@ -516,7 +516,7 @@ void main() {
       strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
       );
 
       client = MockLocalFirstClient();
@@ -553,7 +553,7 @@ void main() {
       strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
       );
 
       client = MockLocalFirstClient();
@@ -654,7 +654,7 @@ void main() {
       strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
       );
 
       client = MockLocalFirstClient();

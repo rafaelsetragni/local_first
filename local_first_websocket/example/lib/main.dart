@@ -4,6 +4,8 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:local_first/local_first.dart';
 import 'package:local_first_websocket/local_first_websocket.dart';
+import 'package:local_first_sqlite_storage/local_first_sqlite_storage.dart';
+import 'package:local_first_shared_preferences/local_first_shared_preferences.dart';
 
 // WebSocket server URL
 // Make sure to start the server first:
@@ -398,7 +400,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
         return StreamBuilder<bool>(
           stream: RepositoryService().connectionState,
-          initialData: false,
+          initialData: RepositoryService().isConnected,
           builder: (context, connectionSnapshot) {
             final isConnected = connectionSnapshot.data ?? false;
             return Column(
@@ -413,26 +415,19 @@ class _MyHomePageState extends State<MyHomePage> {
                       ),
                       margin: const EdgeInsets.only(bottom: 8),
                       decoration: BoxDecoration(
-                        color: isConnected ? Colors.green.shade100 : Colors.red.shade100,
+                        color: isConnected
+                            ? Colors.green.shade100
+                            : Colors.red.shade100,
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            isConnected ? Icons.wifi : Icons.wifi_off,
-                            size: 16,
-                            color: isConnected ? Colors.green.shade800 : Colors.red.shade800,
-                          ),
-                          SizedBox(width: 6),
-                          Text(
-                            isConnected ? 'Connected (WebSocket)' : 'Disconnected',
-                            style: TextStyle(
-                              color: isConnected ? Colors.green.shade800 : Colors.red.shade800,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
+                      child: Text(
+                        isConnected ? 'Connected' : 'Disconnected',
+                        style: TextStyle(
+                          color: isConnected
+                              ? Colors.green.shade800
+                              : Colors.red.shade800,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                     GestureDetector(
@@ -803,6 +798,7 @@ class RepositoryService {
 
   String get namespace => _currentNamespace;
   Stream<bool> get connectionState => syncStrategy.connectionChanges;
+  bool get isConnected => syncStrategy.latestConnectionState ?? false;
 
   /// Builds sync filter using server sequence numbers
   Future<JsonMap<dynamic>?> _buildSyncFilter(String repositoryName) async {
@@ -841,7 +837,10 @@ class RepositoryService {
         counterLogRepository,
         sessionCounterRepository,
       ],
-      localStorage: InMemoryLocalFirstStorage(),
+      localStorage: SqliteLocalFirstStorage(
+        databaseName: 'websocket_example.db',
+      ),
+      keyValueStorage: SharedPreferencesConfigStorage(),
       syncStrategies: [syncStrategy],
     );
 
@@ -1165,10 +1164,23 @@ class UserModel {
   }
 
   static UserModel resolveConflict(UserModel local, UserModel remote) {
+    // Always prefer remote if timestamps are equal
     if (local.updatedAt == remote.updatedAt) return remote;
+
+    // Determine which version is newer based on updatedAt
     final preferred = local.updatedAt.isAfter(remote.updatedAt) ? local : remote;
     final fallback = identical(preferred, local) ? remote : local;
+
+    // Merge avatar: prefer non-null value
     final avatar = preferred.avatarUrl ?? fallback.avatarUrl;
+
+    // If merged avatar equals preferred's avatar, return preferred as-is
+    // This avoids creating unnecessary new objects that trigger sync
+    if (avatar == preferred.avatarUrl) {
+      return preferred;
+    }
+
+    // Only create new object if merge actually changed something
     return UserModel(
       id: preferred.id,
       username: preferred.username,

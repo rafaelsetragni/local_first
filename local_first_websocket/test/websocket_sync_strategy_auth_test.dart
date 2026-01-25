@@ -68,7 +68,7 @@ void main() {
         authToken: 'expired-token',
         channelFactory: (_) => mockChannel,
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         onAuthenticationFailed: () async {
           callbackInvoked = true;
           // Simulate refreshing token
@@ -123,7 +123,7 @@ void main() {
         authToken: 'expired-token',
         channelFactory: (_) => mockChannel,
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         onAuthenticationFailed: () async {
           callbackInvoked = true;
           // Return null = don't retry
@@ -160,7 +160,7 @@ void main() {
         authToken: 'expired-token',
         channelFactory: (_) => mockChannel,
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         onAuthenticationFailed: () async {
           // Simulate callback error
           throw Exception('Failed to refresh token');
@@ -208,7 +208,7 @@ void main() {
         headers: const {'X-Old': 'header'},
         channelFactory: (_) => mockChannel,
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         onAuthenticationFailed: () async {
           return const AuthCredentials(
             authToken: 'new-token',

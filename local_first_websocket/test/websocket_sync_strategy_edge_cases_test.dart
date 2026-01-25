@@ -61,7 +61,7 @@ void main() {
         websocketUrl: 'ws://localhost:8080/test',
         reconnectDelay: Duration(milliseconds: 50),
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         channelFactory: (uri) {
           connectionAttempts++;
           final controller = StreamController<dynamic>.broadcast();
@@ -124,7 +124,7 @@ void main() {
         websocketUrl: 'ws://localhost:8080/test',
         heartbeatInterval: Duration(milliseconds: 50),
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         channelFactory: (_) => mockChannel,
       );
       strategy.attach(client);

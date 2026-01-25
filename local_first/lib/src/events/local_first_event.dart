@@ -262,7 +262,7 @@ final class LocalFirstStateEvent<T> extends LocalFirstEvent<T> {
   JsonMap toJson() => {
     LocalFirstEvent.kEventId: eventId,
     LocalFirstEvent.kOperation: syncOperation.index,
-    LocalFirstEvent.kSyncCreatedAt: syncCreatedAt.toUtc(),
+    LocalFirstEvent.kSyncCreatedAt: syncCreatedAt.toUtc().toIso8601String(),
     LocalFirstEvent.kData: repository.toJson(data),
     LocalFirstEvent.kDataId: dataId,
   };
@@ -309,7 +309,7 @@ final class LocalFirstDeleteEvent<T> extends LocalFirstEvent<T> {
   JsonMap toJson() => {
     LocalFirstEvent.kEventId: eventId,
     LocalFirstEvent.kOperation: syncOperation.index,
-    LocalFirstEvent.kSyncCreatedAt: syncCreatedAt.toUtc(),
+    LocalFirstEvent.kSyncCreatedAt: syncCreatedAt.toUtc().toIso8601String(),
     LocalFirstEvent.kDataId: dataId,
   };
 

@@ -630,30 +630,31 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       );
     }
 
+    final controller = StreamController<List<LocalFirstEvent<T>>>.broadcast();
+
     final observer = _SqliteQueryObserver<T>(
-      query,
-      StreamController<List<LocalFirstEvent<T>>>.broadcast(),
+      query: query,
+      controller: controller,
+      emit: () async {
+        try {
+          final results = await this.query<T>(query);
+          if (!controller.isClosed) {
+            controller.add(results);
+          }
+        } catch (e, st) {
+          if (!controller.isClosed) {
+            controller.addError(e, st);
+          }
+        }
+      },
     );
 
     _observers
         .putIfAbsent(query.repositoryName, () => <_SqliteQueryObserver>{})
         .add(observer);
 
-    Future<void> emit() async {
-      try {
-        final results = await this.query<T>(query);
-        if (!observer.controller.isClosed) {
-          observer.controller.add(results);
-        }
-      } catch (e, st) {
-        if (!observer.controller.isClosed) {
-          observer.controller.addError(e, st);
-        }
-      }
-    }
-
     observer.controller
-      ..onListen = emit
+      ..onListen = observer.emit
       ..onCancel = () {
         final observers = _observers[query.repositoryName];
         observers?.remove(observer);
@@ -897,12 +898,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
         observers.remove(observer);
         continue;
       }
-      try {
-        final results = await query(observer.query);
-        observer.controller.add(results);
-      } catch (e, st) {
-        observer.controller.addError(e, st);
-      }
+      await observer.emit();
     }
   }
 
@@ -1054,10 +1050,15 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 }
 
 class _SqliteQueryObserver<T> {
-  _SqliteQueryObserver(this.query, this.controller);
+  _SqliteQueryObserver({
+    required this.query,
+    required this.controller,
+    required this.emit,
+  });
 
   final LocalFirstQuery<T> query;
   final StreamController<List<LocalFirstEvent<T>>> controller;
+  final Future<void> Function() emit;
 }
 
 /// Test helper exposing internal methods of [SqliteLocalFirstStorage] for unit tests.

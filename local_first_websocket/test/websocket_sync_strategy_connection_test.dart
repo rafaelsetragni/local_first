@@ -70,7 +70,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         channelFactory: (_) => mockChannel,
       );
       strategy.attach(client);
@@ -87,7 +87,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         authToken: 'test-token',
         channelFactory: (_) => mockChannel,
       );
@@ -110,7 +110,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         heartbeatInterval: Duration(milliseconds: 100),
         channelFactory: (_) => mockChannel,
       );
@@ -140,7 +140,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         channelFactory: (_) => mockChannel,
       );
       strategy.attach(client);
@@ -176,7 +176,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         channelFactory: (_) => mockChannel,
       );
       strategy.attach(client);
@@ -223,7 +223,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         channelFactory: (_) => mockChannel,
       );
       strategy.attach(client);
@@ -253,7 +253,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         channelFactory: (_) => mockChannel,
       );
       strategy.attach(client);
@@ -276,7 +276,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         channelFactory: (_) => mockChannel,
       );
       strategy.attach(client);
@@ -313,7 +313,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         channelFactory: (_) => mockChannel,
       );
       strategy.attach(client);
@@ -339,7 +339,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         channelFactory: (_) => mockChannel,
       );
       strategy.attach(client);
@@ -365,7 +365,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         channelFactory: (_) => mockChannel,
       );
       strategy.attach(client);
@@ -397,7 +397,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         channelFactory: (_) => mockChannel,
       );
       strategy.attach(client);
@@ -432,7 +432,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         channelFactory: (_) => mockChannel,
       );
       strategy.attach(client);
@@ -454,7 +454,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         authToken: 'initial-token',
         channelFactory: (_) => mockChannel,
       );
@@ -491,7 +491,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         channelFactory: (_) => mockChannel,
       );
       strategy.attach(client);
@@ -514,7 +514,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         channelFactory: (_) => mockChannel,
       );
       strategy.attach(client);
@@ -543,7 +543,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         channelFactory: (_) => mockChannel,
       );
       strategy.attach(client);
@@ -574,7 +574,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         channelFactory: (_) => mockChannel,
       );
       strategy.attach(client);
@@ -603,7 +603,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         channelFactory: (_) => mockChannel,
       );
       strategy.attach(client);
@@ -629,7 +629,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         channelFactory: (_) => mockChannel,
       );
       strategy.attach(client);

@@ -145,6 +145,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
   bool _isConnected = false;
   Timer? _reconnectTimer;
   Timer? _heartbeatTimer;
+  Completer<void>? _authCompleter;
 
   // Tracks known repositories for sync
   final Set<String> _knownRepositories = {};
@@ -334,6 +335,11 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
       dev.log('Message received: $type', name: logTag);
 
       switch (type) {
+        case 'auth_success':
+          dev.log('Authentication successful', name: logTag);
+          _authCompleter?.complete();
+          break;
+
         case 'events':
           await _handleRemoteEvents(message);
           break;
@@ -367,6 +373,10 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
         case 'error':
           final error = message['message'] ?? 'Unknown error';
           dev.log('Server error: $error', name: logTag);
+          // If authentication fails, complete the auth completer with error
+          if (_authCompleter != null && !_authCompleter!.isCompleted) {
+            _authCompleter!.completeError(error);
+          }
           break;
 
         default:
@@ -530,7 +540,8 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
 
   /// Authenticates with the server.
   Future<void> _authenticate() async {
-    if (_authToken == null && _headers.isEmpty) return;
+    // Always send authentication (server requires it even without credentials)
+    _authCompleter = Completer<void>();
 
     try {
       _sendMessage({
@@ -538,6 +549,15 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
         if (_authToken != null) 'token': _authToken,
         ..._headers,
       });
+
+      // Wait for server response (with timeout)
+      await _authCompleter!.future.timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          dev.log('Authentication timeout', name: logTag);
+          throw TimeoutException('Authentication timeout');
+        },
+      );
     } on StateError catch (e) {
       // Connection lost during auth - will retry on reconnect
       dev.log(
@@ -574,6 +594,8 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
           );
         }
       }
+    } finally {
+      _authCompleter = null;
     }
   }
 

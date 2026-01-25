@@ -64,7 +64,7 @@ void main() {
         websocketUrl: 'ws://localhost:8080/test',
         reconnectDelay: Duration(milliseconds: 50),
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         channelFactory: (uri) {
           final controller = StreamController<dynamic>.broadcast();
           controllers.add(controller);
@@ -163,7 +163,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         channelFactory: (_) => mockChannel,
       );
       strategy.attach(client);
@@ -203,7 +203,7 @@ void main() {
           // Application decides the filter - here we return a custom filter
           return {'customFilter': 'value', 'afterId': '123'};
         },
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         channelFactory: (uri) {
           connectionAttempt++;
           final controller = StreamController<dynamic>.broadcast();
@@ -305,7 +305,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         channelFactory: (_) => mockChannel,
       );
       strategy.attach(client);
@@ -343,7 +343,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         channelFactory: (_) => mockChannel,
       );
       strategy.attach(client);
@@ -390,7 +390,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
       );
       strategy.attach(client);
 

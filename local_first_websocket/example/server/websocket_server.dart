@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:developer' as dev;
 import 'dart:io';
 
-import 'package:mongo_dart/mongo_dart.dart' hide State;
+import 'package:mongo_dart/mongo_dart.dart';
 
 /// WebSocket server for local_first synchronization.
 ///
@@ -33,8 +33,13 @@ void main() async {
 class WebSocketSyncServer {
   static const logTag = 'WebSocketSyncServer';
   static const port = 8080;
-  static const mongoConnectionString =
-      'mongodb://admin:admin@127.0.0.1:27017/remote_counter_db?authSource=admin';
+
+  // Support both Docker (mongodb service name) and local (127.0.0.1)
+  static String get mongoConnectionString {
+    final host = Platform.environment['MONGO_HOST'] ?? '127.0.0.1';
+    final port = Platform.environment['MONGO_PORT'] ?? '27017';
+    return 'mongodb://admin:admin@$host:$port/remote_counter_db?authSource=admin';
+  }
 
   HttpServer? _httpServer;
   Db? _db;
@@ -192,11 +197,10 @@ class WebSocketSyncServer {
       // Get next sequence number
       final serverSequence = await _getNextSequence(repositoryName);
 
-      // Add server sequence to event
-      final eventWithSequence = {
-        ...event,
-        'serverSequence': serverSequence,
-      };
+      // Add server sequence to event and ensure no _id field
+      final eventWithSequence = Map<String, dynamic>.from(event)
+        ..remove('_id') // Remove any _id field from client
+        ..['serverSequence'] = serverSequence;
 
       await collection.insertOne(eventWithSequence);
 

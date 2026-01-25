@@ -20,7 +20,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://non-existent-server.invalid:9999/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         reconnectDelay: Duration(milliseconds: 500),
       );
 
@@ -50,7 +50,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
       );
 
       final client = MockLocalFirstClient();
@@ -72,7 +72,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
       );
 
       final client = MockLocalFirstClient();
@@ -96,7 +96,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
       );
 
       final client = MockLocalFirstClient();
@@ -115,7 +115,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://non-existent.invalid:9999/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         reconnectDelay: Duration(seconds: 10), // Long delay to avoid reconnect
       );
 
@@ -148,7 +148,7 @@ void main() {
       strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         reconnectDelay: Duration(seconds: 10),
       );
 
@@ -226,7 +226,7 @@ void main() {
         () => WebSocketSyncStrategy(
           websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
       ),
         returnsNormally,
       );
@@ -237,7 +237,7 @@ void main() {
         () => WebSocketSyncStrategy(
           websocketUrl: 'wss://example.com/sync',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
       ),
         returnsNormally,
       );
@@ -248,7 +248,7 @@ void main() {
         () => WebSocketSyncStrategy(
           websocketUrl: 'ws://localhost:8080/sync?token=abc123',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
       ),
         returnsNormally,
       );
@@ -259,7 +259,7 @@ void main() {
         () => WebSocketSyncStrategy(
           websocketUrl: 'ws://user:pass@localhost:8080/sync',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
       ),
         returnsNormally,
       );
@@ -269,7 +269,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         reconnectDelay: Duration(milliseconds: 10),
       );
 
@@ -280,7 +280,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         reconnectDelay: Duration(minutes: 5),
       );
 
@@ -291,7 +291,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         heartbeatInterval: Duration(milliseconds: 100),
       );
 
@@ -302,7 +302,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         heartbeatInterval: Duration(minutes: 10),
       );
 
@@ -318,7 +318,7 @@ void main() {
       strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
       );
 
       client = MockLocalFirstClient();

@@ -14,31 +14,39 @@ This example demonstrates real-time synchronization using `local_first_websocket
 
 ## Prerequisites
 
-1. **Docker Desktop** - To run MongoDB and optionally the WebSocket server
-2. **Dart SDK** - To run the WebSocket server locally (optional if using Docker)
-3. **Flutter** - To run the mobile/desktop app
-4. **Melos** - To use the melos commands (optional, install with `dart pub global activate melos`)
+1. **Docker Desktop** - Required for running MongoDB and WebSocket server
+2. **Flutter** - To run the mobile/desktop app
+3. **Melos** - Optional, for convenience commands (`dart pub global activate melos`)
 
 ## Setup Instructions
 
-### Quick Start with Melos (Easiest)
+### Quick Start with Melos (Recommended)
 
-The simplest way to run the WebSocket server in Docker:
+The simplest way to run the full stack (MongoDB + WebSocket Server):
 
 ```bash
 # From the monorepo root
 melos websocket:server
 ```
 
-This command will:
-- Start MongoDB automatically if not running
-- Build and run the WebSocket server in a Docker container
-- Mount your local code for easy updates
-- Show server logs in real-time
+This single command will:
+- ✅ Start MongoDB with persistent storage
+- ✅ Start WebSocket server with automatic dependency installation
+- ✅ Configure networking between services
+- ✅ Mount your local code for instant updates (no rebuild needed)
+- ✅ Show real-time server logs
+- ✅ Auto-restart on crashes
 
-To stop the server:
+To stop all services:
 ```bash
-docker stop local_first_websocket_server
+cd local_first_websocket/example/server
+docker compose down
+```
+
+To stop and remove all data (clean slate):
+```bash
+cd local_first_websocket/example/server
+docker compose down -v
 ```
 
 ### Quick Start with VS Code (Recommended for Development)
@@ -65,56 +73,39 @@ The monorepo includes VS Code launch configurations for easy development.
    - `local_first_websocket: Server` - Runs only the WebSocket server
    - `local_first_websocket: Example App` - Runs only the Flutter app (IDE will prompt for device selection)
 
-### Manual Setup (Alternative)
+### Alternative: Using Docker Compose Directly
 
-#### 1. Start MongoDB
-
-Run MongoDB in a Docker container:
+If you prefer not to use melos:
 
 ```bash
-docker run -d --name mongo_local -p 27017:27017 \
-  -e MONGO_INITDB_ROOT_USERNAME=admin \
-  -e MONGO_INITDB_ROOT_PASSWORD=admin mongo:7
+cd local_first_websocket/example/server
+docker compose up
 ```
 
-Verify MongoDB is running:
+This starts both MongoDB and the WebSocket server with live logs.
 
-```bash
-docker stats mongo_local
-```
+### Alternative: Direct Dart Execution (Development Only)
 
-#### 2. Start the WebSocket Server
+For quick iteration without Docker, you can run the server directly:
 
-**Option A: Using Docker (Recommended for Production-like Environment)**
+1. **Start MongoDB** (must be running on localhost:27017):
+   ```bash
+   docker run -d --name mongo_local -p 27017:27017 \
+     -e MONGO_INITDB_ROOT_USERNAME=admin \
+     -e MONGO_INITDB_ROOT_PASSWORD=admin mongo:7
+   ```
 
-From the monorepo root:
+2. **Run the server**:
+   ```bash
+   cd local_first_websocket
+   dart run example/server/websocket_server.dart
+   ```
 
-```bash
-./local_first_websocket/example/server/run_server.sh
-```
-
-Or using melos:
-
-```bash
-melos websocket:server
-```
-
-The server will run in a Docker container with your code mounted as a volume.
-
-**Option B: Direct Dart Execution (Faster for Quick Testing)**
-
-From the `local_first_websocket` directory:
-
-```bash
-dart run example/server/websocket_server.dart
-```
-
-You should see:
-
-```
-WebSocket server listening on ws://0.0.0.0:8080
-Connected to MongoDB at mongodb://admin:admin@127.0.0.1:27017/remote_counter_db?authSource=admin
-```
+3. You should see:
+   ```
+   WebSocket server listening on ws://0.0.0.0:8080
+   Connected to MongoDB at mongodb://admin:admin@127.0.0.1:27017/remote_counter_db?authSource=admin
+   ```
 
 #### 3. Run the Flutter App
 
@@ -341,85 +332,142 @@ The server maintains a sequence counter per repository:
 }
 ```
 
-## Docker Server Management
+## Docker Compose Management
 
-When running the WebSocket server in Docker, use these commands:
+All commands should be run from `local_first_websocket/example/server/`:
 
-### View Server Logs
-
-```bash
-docker logs -f local_first_websocket_server
-```
-
-### Stop the Server
+### View Logs
 
 ```bash
-docker stop local_first_websocket_server
+# WebSocket server logs only
+docker compose logs -f websocket_server
+
+# All services (MongoDB + WebSocket)
+docker compose logs -f
+
+# Last 100 lines
+docker compose logs --tail=100 websocket_server
 ```
 
-### Restart the Server
+### Control Services
 
 ```bash
-docker restart local_first_websocket_server
+# Stop services (keeps containers and data)
+docker compose stop
+
+# Start stopped services
+docker compose start
+
+# Restart services (useful after code changes to dependencies)
+docker compose restart websocket_server
+
+# Stop and remove containers (keeps data volumes)
+docker compose down
+
+# Stop, remove containers AND delete all data
+docker compose down -v
 ```
 
-### Remove the Server Container
+### Check Status
 
 ```bash
-docker stop local_first_websocket_server
-docker rm local_first_websocket_server
+# See running services
+docker compose ps
+
+# Monitor resource usage
+docker compose stats
 ```
 
-### Rebuild After Code Changes
+### Code Changes
 
-The Docker container mounts your local code as a volume. However, dependency changes or major updates may require rebuilding:
-
-```bash
-# Stop and remove the old container
-docker stop local_first_websocket_server
-docker rm local_first_websocket_server
-
-# Run the server again (will rebuild automatically)
-melos websocket:server
-```
-
-### Check Running Containers
-
-```bash
-docker ps
-```
+Your code is mounted as a volume, so most changes are reflected immediately:
+- **Server code changes**: Just save the file and restart: `docker compose restart websocket_server`
+- **Dependency changes** (pubspec.yaml): Restart the service: `docker compose restart websocket_server`
+- **Major updates**: Full restart: `docker compose down && docker compose up -d`
 
 ## Troubleshooting
 
+### Services Won't Start
+
+```bash
+# Check service status
+cd local_first_websocket/example/server
+docker compose ps
+
+# View logs for errors
+docker compose logs
+
+# Clean start
+docker compose down -v
+docker compose up
+```
+
 ### MongoDB Connection Failed
 
-- Check if Docker container is running: `docker ps`
-- Check MongoDB logs: `docker logs mongo_local`
-- Restart container: `docker restart mongo_local`
+```bash
+# Check MongoDB health
+docker compose ps mongodb
 
-### WebSocket Connection Failed
+# View MongoDB logs
+docker compose logs mongodb
 
-**If running server in Docker:**
-- Check if container is running: `docker ps | grep local_first_websocket_server`
-- Check server logs: `docker logs local_first_websocket_server`
-- Verify MongoDB is accessible from container: `docker exec -it local_first_websocket_server ping mongo_local`
+# Restart MongoDB
+docker compose restart mongodb
+```
 
-**If running server directly:**
-- Check if server is running on port 8080
-- Check firewall settings
-- Try localhost instead of 0.0.0.0: Update `websocketUrl` to `ws://localhost:8080/sync`
+### WebSocket Server Issues
 
-### Changes Not Syncing
+```bash
+# Check if server is running
+docker compose ps websocket_server
 
-- Check server logs for errors
-- Verify both client and server are connected
-- Check MongoDB for stored events:
-  ```bash
-  docker exec -it mongo_local mongosh -u admin -p admin --authenticationDatabase admin
-  use remote_counter_db
-  db.user.find()
-  db.counter_log.find()
-  ```
+# View server logs
+docker compose logs -f websocket_server
+
+# Restart server
+docker compose restart websocket_server
+
+# Check if server can reach MongoDB
+docker compose exec websocket_server ping mongodb
+```
+
+### Port Already in Use
+
+If ports 8080 or 27017 are already in use:
+
+```bash
+# Find what's using the ports
+lsof -i :8080
+lsof -i :27017
+
+# Stop conflicting services or change ports in docker-compose.yml
+```
+
+### Inspect Database Contents
+
+```bash
+# Access MongoDB shell
+docker compose exec mongodb mongosh -u admin -p admin --authenticationDatabase admin
+
+# Then in mongosh:
+use remote_counter_db
+db.user.find()
+db.counter_log.find()
+db.session_counter.find()
+exit
+```
+
+### Clean Slate (Reset Everything)
+
+```bash
+cd local_first_websocket/example/server
+
+# Stop and remove everything including data
+docker compose down -v
+
+# Start fresh
+docker compose up
+```
 
 ## Next Steps
 

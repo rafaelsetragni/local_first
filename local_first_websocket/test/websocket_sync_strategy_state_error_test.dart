@@ -80,7 +80,7 @@ void main() {
         websocketUrl: 'ws://localhost:8080/test',
         channelFactory: (_) => mockChannel,
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
       );
       strategy.attach(client);
 
@@ -125,7 +125,7 @@ void main() {
         websocketUrl: 'ws://localhost:8080/test',
         channelFactory: (_) => mockChannel,
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
       );
       strategy.attach(client);
 
@@ -190,7 +190,7 @@ void main() {
         authToken: 'old-token',
         channelFactory: (_) => mockChannel,
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
         onAuthenticationFailed: () async {
           callbackInvoked = true;
           // Return new credentials - this should trigger the retry (line 416)
@@ -259,7 +259,7 @@ void main() {
         heartbeatInterval: Duration(milliseconds: 50),
         channelFactory: (_) => mockChannel,
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
       );
       strategy.attach(client);
 
@@ -291,7 +291,7 @@ void main() {
         websocketUrl: 'ws://localhost:8080/test',
         channelFactory: (_) => mockChannel,
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
       );
       strategy.attach(client);
 
@@ -340,7 +340,7 @@ void main() {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, __) async {},
+        onSyncCompleted: (_, _) async {},
       );
       strategy.attach(client);
 
