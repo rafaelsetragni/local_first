@@ -1,0 +1,35 @@
+# Dart/Flutter build artifacts
+**/.dart_tool/
+**/build/
+**/.packages
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+
+# IDE
+**/.idea/
+**/.vscode/
+**/*.iml
+
+# OS
+**/.DS_Store
+**/Thumbs.db
+
+# Git
+**/.git/
+**/.gitignore
+
+# Tests and coverage
+**/coverage/
+**/.test_coverage.dart
+
+# Documentation
+**/doc/api/
+**/*.md
+!README.md
+
+# Examples (we only need the server)
+**/example/*
+!**/example/server/
+
+# Node modules (if any)
+**/node_modules/
