@@ -816,5 +816,1485 @@ void main() {
         ['2', '3'],
       );
     });
+
+    group('SQL query construction and argument ordering', () {
+      test('sorts with !includeDeleted - args in correct order', () async {
+        // Setup data
+        await insertRow({'id': '1', 'username': 'alice', 'age': 30});
+        await insertRow({'id': '2', 'username': 'bob', 'age': 20});
+        await insertRow({'id': '3', 'username': 'carol', 'age': 25});
+        await insertEvent(
+          dataId: '1',
+          op: SyncOperation.insert,
+          status: SyncStatus.ok,
+          eventId: 'evt-1',
+        );
+        await insertEvent(
+          dataId: '2',
+          op: SyncOperation.insert,
+          status: SyncStatus.ok,
+          eventId: 'evt-2',
+        );
+        await insertEvent(
+          dataId: '3',
+          op: SyncOperation.insert,
+          status: SyncStatus.ok,
+          eventId: 'evt-3',
+        );
+
+        // Query with sort by schema column (age) - should work correctly
+        final results = await storage.query(
+          buildQuery(
+            sorts: [const QuerySort(field: 'age', descending: true)],
+          ),
+        );
+
+        expect(results, hasLength(3));
+        final ids = results
+            .whereType<LocalFirstStateEvent<DummyModel>>()
+            .map((e) => e.data.id)
+            .toList();
+        expect(ids, ['1', '3', '2']); // Descending by age: 30, 25, 20
+      });
+
+      test('json_extract sort with !includeDeleted - args in correct order',
+          () async {
+        // Setup data with non-schema field
+        await insertRow({
+          'id': '1',
+          'username': 'alice',
+          'age': 20,
+          'custom_score': 100,
+        });
+        await insertRow({
+          'id': '2',
+          'username': 'bob',
+          'age': 25,
+          'custom_score': 50,
+        });
+        await insertRow({
+          'id': '3',
+          'username': 'carol',
+          'age': 30,
+          'custom_score': 75,
+        });
+        await insertEvent(
+          dataId: '1',
+          op: SyncOperation.insert,
+          status: SyncStatus.ok,
+          eventId: 'evt-1',
+        );
+        await insertEvent(
+          dataId: '2',
+          op: SyncOperation.insert,
+          status: SyncStatus.ok,
+          eventId: 'evt-2',
+        );
+        await insertEvent(
+          dataId: '3',
+          op: SyncOperation.insert,
+          status: SyncStatus.ok,
+          eventId: 'evt-3',
+        );
+
+        // Query with sort by non-schema field (uses json_extract)
+        final results = await storage.query(
+          buildQuery(
+            sorts: [const QuerySort(field: 'custom_score', descending: true)],
+          ),
+        );
+
+        expect(results, hasLength(3));
+        final ids = results
+            .whereType<LocalFirstStateEvent<DummyModel>>()
+            .map((e) => e.data.id)
+            .toList();
+        expect(ids, ['1', '3', '2']); // Descending: 100, 75, 50
+      });
+
+      test('filter + json_extract sort + limit - complex arg ordering',
+          () async {
+        await insertRow({
+          'id': '1',
+          'username': 'alice',
+          'age': 20,
+          'score': 1.5,
+        });
+        await insertRow({
+          'id': '2',
+          'username': 'bob',
+          'age': 30,
+          'score': 2.5,
+        });
+        await insertRow({
+          'id': '3',
+          'username': 'carol',
+          'age': 25,
+          'score': 1.0,
+        });
+        await insertEvent(
+          dataId: '1',
+          op: SyncOperation.insert,
+          status: SyncStatus.ok,
+          eventId: 'evt-1',
+        );
+        await insertEvent(
+          dataId: '2',
+          op: SyncOperation.insert,
+          status: SyncStatus.ok,
+          eventId: 'evt-2',
+        );
+        await insertEvent(
+          dataId: '3',
+          op: SyncOperation.insert,
+          status: SyncStatus.ok,
+          eventId: 'evt-3',
+        );
+
+        // Complex query: filter + non-schema sort + limit
+        final results = await storage.query(
+          buildQuery(
+            filters: [const QueryFilter(field: 'age', isGreaterThan: 20)],
+            sorts: [const QuerySort(field: 'custom_field', descending: false)],
+            limit: 5,
+          ),
+        );
+
+        // Should return rows where age > 20
+        expect(results, hasLength(2));
+        final ids = results
+            .whereType<LocalFirstStateEvent<DummyModel>>()
+            .map((e) => e.data.id)
+            .toSet();
+        expect(ids, containsAll(['2', '3']));
+      });
+
+      test('multiple json_extract filters with sorts', () async {
+        await insertRow({
+          'id': '1',
+          'username': 'alice',
+          'age': 20,
+          'rating': 4.5,
+          'level': 10,
+        });
+        await insertRow({
+          'id': '2',
+          'username': 'bob',
+          'age': 25,
+          'rating': 3.5,
+          'level': 15,
+        });
+        await insertRow({
+          'id': '3',
+          'username': 'carol',
+          'age': 30,
+          'rating': 4.8,
+          'level': 12,
+        });
+        await insertEvent(
+          dataId: '1',
+          op: SyncOperation.insert,
+          status: SyncStatus.ok,
+          eventId: 'evt-1',
+        );
+        await insertEvent(
+          dataId: '2',
+          op: SyncOperation.insert,
+          status: SyncStatus.ok,
+          eventId: 'evt-2',
+        );
+        await insertEvent(
+          dataId: '3',
+          op: SyncOperation.insert,
+          status: SyncStatus.ok,
+          eventId: 'evt-3',
+        );
+
+        // Multiple non-schema filters + sort
+        final results = await storage.query(
+          buildQuery(
+            filters: [
+              const QueryFilter(field: 'rating', isGreaterThan: 4.0),
+              const QueryFilter(field: 'level', isLessThan: 15),
+            ],
+            sorts: [const QuerySort(field: 'rating', descending: true)],
+          ),
+        );
+
+        expect(results, hasLength(2));
+        final ids = results
+            .whereType<LocalFirstStateEvent<DummyModel>>()
+            .map((e) => e.data.id)
+            .toList();
+        expect(ids, ['3', '1']); // Ordered by rating desc: 4.8, 4.5
+      });
+
+      test('whereIn with json_extract sort and offset', () async {
+        await insertRow({
+          'id': '1',
+          'username': 'alice',
+          'age': 20,
+          'priority': 1,
+        });
+        await insertRow({
+          'id': '2',
+          'username': 'bob',
+          'age': 25,
+          'priority': 2,
+        });
+        await insertRow({
+          'id': '3',
+          'username': 'carol',
+          'age': 30,
+          'priority': 3,
+        });
+        await insertRow({
+          'id': '4',
+          'username': 'dave',
+          'age': 35,
+          'priority': 4,
+        });
+        for (var i = 1; i <= 4; i++) {
+          await insertEvent(
+            dataId: '$i',
+            op: SyncOperation.insert,
+            status: SyncStatus.ok,
+            eventId: 'evt-$i',
+          );
+        }
+
+        final results = await storage.query(
+          buildQuery(
+            filters: [
+              const QueryFilter(
+                field: 'username',
+                whereIn: ['alice', 'bob', 'carol', 'dave'],
+              ),
+            ],
+            sorts: [const QuerySort(field: 'priority', descending: false)],
+            limit: 2,
+            offset: 1,
+          ),
+        );
+
+        expect(results, hasLength(2));
+        final ids = results
+            .whereType<LocalFirstStateEvent<DummyModel>>()
+            .map((e) => e.data.id)
+            .toList();
+        expect(ids, ['2', '3']); // Skip 1st, take 2: priorities 2, 3
+      });
+
+      test('schema and non-schema filters mixed with sorts', () async {
+        await insertRow({
+          'id': '1',
+          'username': 'alice',
+          'age': 20,
+          'score': 95.5,
+        });
+        await insertRow({
+          'id': '2',
+          'username': 'bob',
+          'age': 30,
+          'score': 88.0,
+        });
+        await insertRow({
+          'id': '3',
+          'username': 'carol',
+          'age': 25,
+          'score': 92.0,
+        });
+        for (var i = 1; i <= 3; i++) {
+          await insertEvent(
+            dataId: '$i',
+            op: SyncOperation.insert,
+            status: SyncStatus.ok,
+            eventId: 'evt-$i',
+          );
+        }
+
+        // Mix schema (age) and non-schema (score) fields
+        final results = await storage.query(
+          buildQuery(
+            filters: [
+              const QueryFilter(field: 'age', isGreaterThanOrEqualTo: 25),
+              const QueryFilter(field: 'score', isGreaterThan: 90.0),
+            ],
+            sorts: [
+              const QuerySort(field: 'age', descending: false),
+            ],
+          ),
+        );
+
+        // Only carol meets both criteria: age >= 25 AND score > 90
+        expect(results, hasLength(1));
+        final ids = results
+            .whereType<LocalFirstStateEvent<DummyModel>>()
+            .map((e) => e.data.id)
+            .toList();
+        expect(ids, ['3']); // Only carol: age 25, score 92
+      });
+
+      test('empty whereIn returns empty results', () async {
+        await insertRow({'id': '1', 'username': 'alice', 'age': 20});
+        await insertEvent(
+          dataId: '1',
+          op: SyncOperation.insert,
+          status: SyncStatus.ok,
+          eventId: 'evt-1',
+        );
+
+        final results = await storage.query(
+          buildQuery(
+            filters: [const QueryFilter(field: 'username', whereIn: [])],
+          ),
+        );
+
+        expect(results, isEmpty);
+      });
+
+      test('missing event fields are handled gracefully', () async {
+        // Insert row without event (or with invalid event reference)
+        final helper = TestHelperSqliteLocalFirstStorage(storage);
+        final db = await helper.database;
+        await db.insert('users', {
+          'id': 'orphan',
+          'username': 'ghost',
+          'age': 99,
+          'data': jsonEncode({'id': 'orphan', 'username': 'ghost', 'age': 99}),
+          '_lasteventId': 'nonexistent-event',
+        });
+
+        // Query should not crash - should skip rows without valid events
+        final results = await storage.query(buildQuery());
+
+        // Should either skip the row or handle it gracefully
+        expect(results, isA<List<LocalFirstEvent<DummyModel>>>());
+      });
+
+      test('complex multi-condition query validates arg order', () async {
+        // Create diverse dataset
+        for (var i = 1; i <= 10; i++) {
+          await insertRow({
+            'id': '$i',
+            'username': 'user$i',
+            'age': 20 + i,
+            'score': i * 10.0,
+            'level': i,
+          });
+          await insertEvent(
+            dataId: '$i',
+            op: i == 5 ? SyncOperation.delete : SyncOperation.insert,
+            status: SyncStatus.ok,
+            eventId: 'evt-$i',
+          );
+        }
+
+        // Complex query with all features
+        final results = await storage.query(
+          buildQuery(
+            filters: [
+              const QueryFilter(field: 'age', isGreaterThan: 22),
+              const QueryFilter(field: 'age', isLessThan: 29),
+              const QueryFilter(
+                field: 'username',
+                whereNotIn: ['user1', 'user10'],
+              ),
+              const QueryFilter(field: 'level', isGreaterThanOrEqualTo: 3),
+            ],
+            sorts: [
+              const QuerySort(field: 'score', descending: true),
+            ],
+            limit: 3,
+            offset: 0,
+            includeDeleted: false,
+          ),
+        );
+
+        // Should return user 4, 6, 7, 8 (user5 is deleted)
+        // Filtered: age in (23-28), level >= 3, not in [user1, user10]
+        // Sorted by score desc, limited to 3
+        expect(results, hasLength(3));
+        final ids = results
+            .whereType<LocalFirstStateEvent<DummyModel>>()
+            .map((e) => e.data.id)
+            .toList();
+        expect(ids, ['8', '7', '6']); // Highest scores first
+      });
+    });
+
+    group('Insert and update flow with query validation', () {
+      test('insert row and event, then query returns data', () async {
+        // Simulate LocalFirstClient flow: insert data and event
+        final userId = 'test-user-1';
+        final eventId = 'evt-$userId';
+
+        // Insert data row
+        await storage.insert(
+          'users',
+          {
+            'id': userId,
+            'username': 'testuser',
+            'age': 25,
+            '_lasteventId': eventId,
+          },
+          'id',
+        );
+
+        // Insert event row
+        await storage.insertEvent(
+          'users',
+          {
+            'eventId': eventId,
+            'dataId': userId,
+            'syncStatus': SyncStatus.pending.index,
+            'operation': SyncOperation.insert.index,
+            'createdAt': DateTime.now().millisecondsSinceEpoch,
+          },
+          'eventId',
+        );
+
+        // Query should return the inserted data
+        final results = await storage.query(buildQuery());
+
+        expect(results, hasLength(1));
+        final event = results.first as LocalFirstStateEvent<DummyModel>;
+        expect(event.data.id, userId);
+        expect(event.data.username, 'testuser');
+        expect(event.data.age, 25);
+      });
+
+      test('update row and event, then query returns updated data', () async {
+        final userId = 'test-user-2';
+        final insertEventId = 'evt-insert-$userId';
+        final updateEventId = 'evt-update-$userId';
+
+        // Initial insert
+        await storage.insert(
+          'users',
+          {
+            'id': userId,
+            'username': 'oldname',
+            'age': 20,
+            '_lasteventId': insertEventId,
+          },
+          'id',
+        );
+        await storage.insertEvent(
+          'users',
+          {
+            'eventId': insertEventId,
+            'dataId': userId,
+            'syncStatus': SyncStatus.ok.index,
+            'operation': SyncOperation.insert.index,
+            'createdAt': DateTime.now().millisecondsSinceEpoch,
+          },
+          'eventId',
+        );
+
+        // Update
+        await storage.update(
+          'users',
+          userId,
+          {
+            'id': userId,
+            'username': 'newname',
+            'age': 21,
+            '_lasteventId': updateEventId,
+          },
+        );
+        await storage.insertEvent(
+          'users',
+          {
+            'eventId': updateEventId,
+            'dataId': userId,
+            'syncStatus': SyncStatus.pending.index,
+            'operation': SyncOperation.update.index,
+            'createdAt': DateTime.now().millisecondsSinceEpoch,
+          },
+          'eventId',
+        );
+
+        // Query should return updated data
+        final results = await storage.query(buildQuery());
+
+        expect(results, hasLength(1));
+        final event = results.first as LocalFirstStateEvent<DummyModel>;
+        expect(event.data.username, 'newname');
+        expect(event.data.age, 21);
+      });
+
+      test('multiple inserts with proper events return all data', () async {
+        // Insert multiple users
+        for (var i = 1; i <= 5; i++) {
+          final userId = 'user-$i';
+          final eventId = 'evt-$userId';
+
+          await storage.insert(
+            'users',
+            {
+              'id': userId,
+              'username': 'user$i',
+              'age': 20 + i,
+              '_lasteventId': eventId,
+            },
+            'id',
+          );
+
+          await storage.insertEvent(
+            'users',
+            {
+              'eventId': eventId,
+              'dataId': userId,
+              'syncStatus': SyncStatus.ok.index,
+              'operation': SyncOperation.insert.index,
+              'createdAt': DateTime.now().millisecondsSinceEpoch,
+            },
+            'eventId',
+          );
+        }
+
+        // Query should return all 5 users
+        final results = await storage.query(buildQuery());
+
+        expect(results, hasLength(5));
+        final usernames = results
+            .whereType<LocalFirstStateEvent<DummyModel>>()
+            .map((e) => e.data.username)
+            .toSet();
+        expect(
+          usernames,
+          containsAll(['user1', 'user2', 'user3', 'user4', 'user5']),
+        );
+      });
+
+      test('insert without proper event reference returns empty', () async {
+        // Insert data but with non-existent event reference
+        await storage.insert(
+          'users',
+          {
+            'id': 'orphan',
+            'username': 'orphanuser',
+            'age': 99,
+            '_lasteventId': 'nonexistent-event-id',
+          },
+          'id',
+        );
+
+        // Query should skip this row (no valid event)
+        final results = await storage.query(buildQuery());
+
+        expect(results, isEmpty);
+      });
+
+      test('event with null syncStatus fields returns empty', () async {
+        final userId = 'bad-event-user';
+        final helper = TestHelperSqliteLocalFirstStorage(storage);
+        final db = await helper.database;
+
+        // Insert data row
+        await storage.insert(
+          'users',
+          {
+            'id': userId,
+            'username': 'baduser',
+            'age': 30,
+            '_lasteventId': 'bad-evt',
+          },
+          'id',
+        );
+
+        // Insert malformed event (missing required fields)
+        await db.insert('users__events', {
+          'eventId': 'bad-evt',
+          'dataId': userId,
+          // Missing syncStatus, operation, createdAt
+        });
+
+        // Query should skip this row (event missing required fields)
+        final results = await storage.query(buildQuery());
+
+        expect(results, isEmpty);
+      });
+
+      test('watchQuery emits on initial listen with existing data', () async {
+        // Insert data BEFORE starting watch
+        final userId = 'watch-user';
+        final eventId = 'evt-$userId';
+
+        await storage.insert(
+          'users',
+          {
+            'id': userId,
+            'username': 'watchuser',
+            'age': 27,
+            '_lasteventId': eventId,
+          },
+          'id',
+        );
+        await storage.insertEvent(
+          'users',
+          {
+            'eventId': eventId,
+            'dataId': userId,
+            'syncStatus': SyncStatus.ok.index,
+            'operation': SyncOperation.insert.index,
+            'createdAt': DateTime.now().millisecondsSinceEpoch,
+          },
+          'eventId',
+        );
+
+        // Now start watching - should emit existing data on onListen
+        final stream = storage.watchQuery(buildQuery());
+        final results = await stream.first.timeout(Duration(seconds: 5));
+
+        expect(results, hasLength(1));
+        final event = results.first as LocalFirstStateEvent<DummyModel>;
+        expect(event.data.username, 'watchuser');
+      });
+
+      test('query filters work after insert', () async {
+        // Insert users with different ages
+        for (var i = 1; i <= 3; i++) {
+          final userId = 'filter-user-$i';
+          final eventId = 'evt-$userId';
+          final age = i * 10; // 10, 20, 30
+
+          await storage.insert(
+            'users',
+            {
+              'id': userId,
+              'username': 'filteruser$i',
+              'age': age,
+              '_lasteventId': eventId,
+            },
+            'id',
+          );
+
+          await storage.insertEvent(
+            'users',
+            {
+              'eventId': eventId,
+              'dataId': userId,
+              'syncStatus': SyncStatus.ok.index,
+              'operation': SyncOperation.insert.index,
+              'createdAt': DateTime.now().millisecondsSinceEpoch,
+            },
+            'eventId',
+          );
+        }
+
+        // Query with filter: age > 15
+        final results = await storage.query(
+          buildQuery(
+            filters: [const QueryFilter(field: 'age', isGreaterThan: 15)],
+          ),
+        );
+
+        expect(results, hasLength(2)); // age 20 and 30
+        final ages = results
+            .whereType<LocalFirstStateEvent<DummyModel>>()
+            .map((e) => e.data.age)
+            .toList();
+        expect(ages, containsAll([20, 30]));
+      });
+
+      test('sort works correctly after insert', () async {
+        // Insert users in random order
+        final users = [
+          ('sort-c', 'charlie', 30),
+          ('sort-a', 'alice', 20),
+          ('sort-b', 'bob', 25),
+        ];
+
+        for (final (id, username, age) in users) {
+          final eventId = 'evt-$id';
+
+          await storage.insert(
+            'users',
+            {
+              'id': id,
+              'username': username,
+              'age': age,
+              '_lasteventId': eventId,
+            },
+            'id',
+          );
+
+          await storage.insertEvent(
+            'users',
+            {
+              'eventId': eventId,
+              'dataId': id,
+              'syncStatus': SyncStatus.ok.index,
+              'operation': SyncOperation.insert.index,
+              'createdAt': DateTime.now().millisecondsSinceEpoch,
+            },
+            'eventId',
+          );
+        }
+
+        // Query with age ascending
+        final results = await storage.query(
+          buildQuery(
+            sorts: [const QuerySort(field: 'age', descending: false)],
+          ),
+        );
+
+        expect(results, hasLength(3));
+        final usernames = results
+            .whereType<LocalFirstStateEvent<DummyModel>>()
+            .map((e) => e.data.username)
+            .toList();
+        expect(usernames, ['alice', 'bob', 'charlie']);
+      });
+
+      test('limit and offset work after insert', () async {
+        // Insert 5 users
+        for (var i = 1; i <= 5; i++) {
+          final userId = 'page-user-$i';
+          final eventId = 'evt-$userId';
+
+          await storage.insert(
+            'users',
+            {
+              'id': userId,
+              'username': 'pageuser$i',
+              'age': i,
+              '_lasteventId': eventId,
+            },
+            'id',
+          );
+
+          await storage.insertEvent(
+            'users',
+            {
+              'eventId': eventId,
+              'dataId': userId,
+              'syncStatus': SyncStatus.ok.index,
+              'operation': SyncOperation.insert.index,
+              'createdAt': DateTime.now().millisecondsSinceEpoch,
+            },
+            'eventId',
+          );
+        }
+
+        // Query with limit 2, offset 1, sorted by age
+        final results = await storage.query(
+          buildQuery(
+            sorts: [const QuerySort(field: 'age', descending: false)],
+            limit: 2,
+            offset: 1,
+          ),
+        );
+
+        expect(results, hasLength(2));
+        final ages = results
+            .whereType<LocalFirstStateEvent<DummyModel>>()
+            .map((e) => e.data.age)
+            .toList();
+        expect(ages, [2, 3]); // Skip age 1, take ages 2 and 3
+      });
+    });
+
+    group('Generic type preservation in observers', () {
+      test('notifyWatchers preserves generic type T', () async {
+        // Insert initial data
+        final userId = 'type-test-user';
+        final eventId = 'evt-$userId';
+
+        await storage.insert(
+          'users',
+          {
+            'id': userId,
+            'username': 'typeuser',
+            'age': 28,
+            '_lasteventId': eventId,
+          },
+          'id',
+        );
+        await storage.insertEvent(
+          'users',
+          {
+            'eventId': eventId,
+            'dataId': userId,
+            'syncStatus': SyncStatus.ok.index,
+            'operation': SyncOperation.insert.index,
+            'createdAt': DateTime.now().millisecondsSinceEpoch,
+          },
+          'eventId',
+        );
+
+        // Create stream with explicit type
+        final stream = storage.watchQuery<DummyModel>(buildQuery());
+
+        // Collect emitted values
+        final values = <List<LocalFirstEvent<DummyModel>>>[];
+        final subscription = stream.listen((data) {
+          // This should not throw a type error
+          values.add(data);
+        });
+
+        // Wait for initial emission
+        await Future.delayed(Duration(milliseconds: 100));
+
+        // Trigger notifyWatchers which should preserve the generic type
+        final helper = TestHelperSqliteLocalFirstStorage(storage);
+        await helper.notifyWatchers('users');
+
+        // Wait for notification to propagate
+        await Future.delayed(Duration(milliseconds: 100));
+
+        await subscription.cancel();
+
+        // Should have received at least one emission with correct type
+        expect(values, isNotEmpty);
+        expect(values.first, isA<List<LocalFirstEvent<DummyModel>>>());
+
+        // Verify the actual data type
+        for (final list in values) {
+          for (final event in list) {
+            expect(event, isA<LocalFirstEvent<DummyModel>>());
+            if (event is LocalFirstStateEvent<DummyModel>) {
+              expect(event.data, isA<DummyModel>());
+            }
+          }
+        }
+      });
+
+      test('multiple observers with different types work correctly', () async {
+        // Setup for users repository
+        await storage.insert(
+          'users',
+          {
+            'id': 'u1',
+            'username': 'user1',
+            'age': 25,
+            '_lasteventId': 'evt-u1',
+          },
+          'id',
+        );
+        await storage.insertEvent(
+          'users',
+          {
+            'eventId': 'evt-u1',
+            'dataId': 'u1',
+            'syncStatus': SyncStatus.ok.index,
+            'operation': SyncOperation.insert.index,
+            'createdAt': DateTime.now().millisecondsSinceEpoch,
+          },
+          'eventId',
+        );
+
+        // Create two streams with same query
+        final stream1 = storage.watchQuery<DummyModel>(buildQuery());
+        final stream2 = storage.watchQuery<DummyModel>(buildQuery());
+
+        final values1 = <List<LocalFirstEvent<DummyModel>>>[];
+        final values2 = <List<LocalFirstEvent<DummyModel>>>[];
+
+        final sub1 = stream1.listen((data) => values1.add(data));
+        final sub2 = stream2.listen((data) => values2.add(data));
+
+        await Future.delayed(Duration(milliseconds: 100));
+
+        // Notify should update both observers
+        final helper = TestHelperSqliteLocalFirstStorage(storage);
+        await helper.notifyWatchers('users');
+
+        await Future.delayed(Duration(milliseconds: 100));
+
+        await sub1.cancel();
+        await sub2.cancel();
+
+        // Both should have received data with correct types
+        expect(values1, isNotEmpty);
+        expect(values2, isNotEmpty);
+
+        for (final list in values1) {
+          expect(list, isA<List<LocalFirstEvent<DummyModel>>>());
+        }
+
+        for (final list in values2) {
+          expect(list, isA<List<LocalFirstEvent<DummyModel>>>());
+        }
+      });
+
+      test('insert triggers notifyWatchers with correct type', () async {
+        // Start watching before insert
+        final stream = storage.watchQuery<DummyModel>(buildQuery());
+
+        List<LocalFirstEvent<DummyModel>>? receivedData;
+        Object? receivedError;
+
+        final subscription = stream.listen(
+          (data) {
+            receivedData = data;
+          },
+          onError: (error) {
+            receivedError = error;
+          },
+        );
+
+        await Future.delayed(Duration(milliseconds: 50));
+
+        // Insert new data (this calls notifyWatchers internally)
+        await storage.insert(
+          'users',
+          {
+            'id': 'notify-user',
+            'username': 'notifyuser',
+            'age': 30,
+            '_lasteventId': 'evt-notify',
+          },
+          'id',
+        );
+        await storage.insertEvent(
+          'users',
+          {
+            'eventId': 'evt-notify',
+            'dataId': 'notify-user',
+            'syncStatus': SyncStatus.ok.index,
+            'operation': SyncOperation.insert.index,
+            'createdAt': DateTime.now().millisecondsSinceEpoch,
+          },
+          'eventId',
+        );
+
+        // Wait for notification
+        await Future.delayed(Duration(milliseconds: 100));
+
+        await subscription.cancel();
+
+        // Should not have type error
+        expect(receivedError, isNull,
+          reason: 'Should not receive type error: $receivedError');
+        expect(receivedData, isNotNull);
+        expect(receivedData, isA<List<LocalFirstEvent<DummyModel>>>());
+      });
+
+      test('update triggers notifyWatchers with correct type', () async {
+        // Insert initial data
+        await storage.insert(
+          'users',
+          {
+            'id': 'update-user',
+            'username': 'before',
+            'age': 20,
+            '_lasteventId': 'evt-insert',
+          },
+          'id',
+        );
+        await storage.insertEvent(
+          'users',
+          {
+            'eventId': 'evt-insert',
+            'dataId': 'update-user',
+            'syncStatus': SyncStatus.ok.index,
+            'operation': SyncOperation.insert.index,
+            'createdAt': DateTime.now().millisecondsSinceEpoch,
+          },
+          'eventId',
+        );
+
+        // Start watching
+        final stream = storage.watchQuery<DummyModel>(buildQuery());
+
+        Object? receivedError;
+        final receivedData = <List<LocalFirstEvent<DummyModel>>>[];
+
+        final subscription = stream.listen(
+          (data) {
+            receivedData.add(data);
+          },
+          onError: (error) {
+            receivedError = error;
+          },
+        );
+
+        await Future.delayed(Duration(milliseconds: 50));
+
+        // Update (this calls notifyWatchers)
+        await storage.update(
+          'users',
+          'update-user',
+          {
+            'id': 'update-user',
+            'username': 'after',
+            'age': 21,
+            '_lasteventId': 'evt-update',
+          },
+        );
+        await storage.insertEvent(
+          'users',
+          {
+            'eventId': 'evt-update',
+            'dataId': 'update-user',
+            'syncStatus': SyncStatus.ok.index,
+            'operation': SyncOperation.update.index,
+            'createdAt': DateTime.now().millisecondsSinceEpoch,
+          },
+          'eventId',
+        );
+
+        await Future.delayed(Duration(milliseconds: 100));
+
+        await subscription.cancel();
+
+        // Should not have type error
+        expect(receivedError, isNull,
+          reason: 'Should not receive type error: $receivedError');
+        expect(receivedData, isNotEmpty);
+
+        for (final list in receivedData) {
+          expect(list, isA<List<LocalFirstEvent<DummyModel>>>());
+        }
+      });
+    });
+
+    group('Upsert integration with query validation', () {
+      test('insert (upsert when not exists) returns data in query', () async {
+        final userId = 'upsert-new-user';
+        final eventId = 'evt-$userId';
+
+        // Insert data (upsert behavior - inserts new record)
+        await storage.insert(
+          'users',
+          {
+            'id': userId,
+            'username': 'newuser',
+            'age': 25,
+            '_lasteventId': eventId,
+          },
+          'id',
+        );
+
+        // Insert corresponding event
+        await storage.insertEvent(
+          'users',
+          {
+            'eventId': eventId,
+            'dataId': userId,
+            'syncStatus': SyncStatus.ok.index,
+            'operation': SyncOperation.insert.index,
+            'createdAt': DateTime.now().millisecondsSinceEpoch,
+          },
+          'eventId',
+        );
+
+        // Query should return the upserted data
+        final results = await storage.query(buildQuery());
+
+        expect(results, hasLength(1));
+        final event = results.first as LocalFirstStateEvent<DummyModel>;
+        expect(event.data.id, userId);
+        expect(event.data.username, 'newuser');
+        expect(event.data.age, 25);
+      });
+
+      test('update (upsert when exists) returns updated data in query',
+          () async {
+        final userId = 'upsert-existing-user';
+        final insertEventId = 'evt-insert-$userId';
+        final updateEventId = 'evt-update-$userId';
+
+        // Initial insert
+        await storage.insert(
+          'users',
+          {
+            'id': userId,
+            'username': 'original',
+            'age': 20,
+            '_lasteventId': insertEventId,
+          },
+          'id',
+        );
+        await storage.insertEvent(
+          'users',
+          {
+            'eventId': insertEventId,
+            'dataId': userId,
+            'syncStatus': SyncStatus.ok.index,
+            'operation': SyncOperation.insert.index,
+            'createdAt': DateTime.now().millisecondsSinceEpoch,
+          },
+          'eventId',
+        );
+
+        // Verify initial state
+        var results = await storage.query(buildQuery());
+        expect(results, hasLength(1));
+        var event = results.first as LocalFirstStateEvent<DummyModel>;
+        expect(event.data.username, 'original');
+        expect(event.data.age, 20);
+
+        // Update (upsert behavior - replaces existing record)
+        await storage.update(
+          'users',
+          userId,
+          {
+            'id': userId,
+            'username': 'updated',
+            'age': 30,
+            '_lasteventId': updateEventId,
+          },
+        );
+        await storage.insertEvent(
+          'users',
+          {
+            'eventId': updateEventId,
+            'dataId': userId,
+            'syncStatus': SyncStatus.ok.index,
+            'operation': SyncOperation.update.index,
+            'createdAt': DateTime.now().millisecondsSinceEpoch,
+          },
+          'eventId',
+        );
+
+        // Query should return the updated data
+        results = await storage.query(buildQuery());
+        expect(results, hasLength(1));
+        event = results.first as LocalFirstStateEvent<DummyModel>;
+        expect(event.data.id, userId);
+        expect(event.data.username, 'updated');
+        expect(event.data.age, 30);
+      });
+
+      test('multiple upserts return all data in query', () async {
+        // Upsert 3 users
+        for (var i = 1; i <= 3; i++) {
+          final userId = 'multi-upsert-$i';
+          final eventId = 'evt-$userId';
+
+          await storage.insert(
+            'users',
+            {
+              'id': userId,
+              'username': 'user$i',
+              'age': 20 + i,
+              '_lasteventId': eventId,
+            },
+            'id',
+          );
+
+          await storage.insertEvent(
+            'users',
+            {
+              'eventId': eventId,
+              'dataId': userId,
+              'syncStatus': SyncStatus.ok.index,
+              'operation': SyncOperation.insert.index,
+              'createdAt': DateTime.now().millisecondsSinceEpoch,
+            },
+            'eventId',
+          );
+        }
+
+        // Query should return all 3 users
+        final results = await storage.query(buildQuery());
+
+        expect(results, hasLength(3));
+        final usernames = results
+            .whereType<LocalFirstStateEvent<DummyModel>>()
+            .map((e) => e.data.username)
+            .toSet();
+        expect(usernames, containsAll(['user1', 'user2', 'user3']));
+      });
+
+      test('upsert via insert triggers watchQuery emission', () async {
+        final userId = 'watch-upsert-user';
+        final eventId = 'evt-$userId';
+
+        // Start watching
+        final stream = storage.watchQuery<DummyModel>(buildQuery());
+
+        List<LocalFirstEvent<DummyModel>>? receivedData;
+        final subscription = stream.listen((data) {
+          receivedData = data;
+        });
+
+        await Future.delayed(Duration(milliseconds: 50));
+
+        // Upsert (insert)
+        await storage.insert(
+          'users',
+          {
+            'id': userId,
+            'username': 'watchuser',
+            'age': 35,
+            '_lasteventId': eventId,
+          },
+          'id',
+        );
+        await storage.insertEvent(
+          'users',
+          {
+            'eventId': eventId,
+            'dataId': userId,
+            'syncStatus': SyncStatus.ok.index,
+            'operation': SyncOperation.insert.index,
+            'createdAt': DateTime.now().millisecondsSinceEpoch,
+          },
+          'eventId',
+        );
+
+        // Wait for notification
+        await Future.delayed(Duration(milliseconds: 100));
+
+        await subscription.cancel();
+
+        // Should have received the upserted data
+        expect(receivedData, isNotNull);
+        expect(receivedData, hasLength(1));
+        final event = receivedData!.first as LocalFirstStateEvent<DummyModel>;
+        expect(event.data.username, 'watchuser');
+        expect(event.data.age, 35);
+      });
+
+      test('upsert via update triggers watchQuery emission', () async {
+        final userId = 'watch-update-user';
+        final insertEventId = 'evt-insert-$userId';
+        final updateEventId = 'evt-update-$userId';
+
+        // Initial insert
+        await storage.insert(
+          'users',
+          {
+            'id': userId,
+            'username': 'before',
+            'age': 40,
+            '_lasteventId': insertEventId,
+          },
+          'id',
+        );
+        await storage.insertEvent(
+          'users',
+          {
+            'eventId': insertEventId,
+            'dataId': userId,
+            'syncStatus': SyncStatus.ok.index,
+            'operation': SyncOperation.insert.index,
+            'createdAt': DateTime.now().millisecondsSinceEpoch,
+          },
+          'eventId',
+        );
+
+        // Start watching
+        final stream = storage.watchQuery<DummyModel>(buildQuery());
+
+        final receivedData = <List<LocalFirstEvent<DummyModel>>>[];
+        final subscription = stream.listen((data) {
+          receivedData.add(data);
+        });
+
+        await Future.delayed(Duration(milliseconds: 50));
+
+        // Upsert (update)
+        await storage.update(
+          'users',
+          userId,
+          {
+            'id': userId,
+            'username': 'after',
+            'age': 45,
+            '_lasteventId': updateEventId,
+          },
+        );
+        await storage.insertEvent(
+          'users',
+          {
+            'eventId': updateEventId,
+            'dataId': userId,
+            'syncStatus': SyncStatus.ok.index,
+            'operation': SyncOperation.update.index,
+            'createdAt': DateTime.now().millisecondsSinceEpoch,
+          },
+          'eventId',
+        );
+
+        // Wait for notification
+        await Future.delayed(Duration(milliseconds: 100));
+
+        await subscription.cancel();
+
+        // Should have received at least 2 emissions: initial + update
+        expect(receivedData, isNotEmpty);
+
+        // Last emission should have the updated data
+        final lastEmission = receivedData.last;
+        expect(lastEmission, hasLength(1));
+        final event = lastEmission.first as LocalFirstStateEvent<DummyModel>;
+        expect(event.data.username, 'after');
+        expect(event.data.age, 45);
+      });
+
+      test('query after upsert with filters returns correct results',
+          () async {
+        // Upsert users with different ages
+        for (var i = 1; i <= 5; i++) {
+          final userId = 'filter-upsert-$i';
+          final eventId = 'evt-$userId';
+
+          await storage.insert(
+            'users',
+            {
+              'id': userId,
+              'username': 'filteruser$i',
+              'age': i * 10, // 10, 20, 30, 40, 50
+              '_lasteventId': eventId,
+            },
+            'id',
+          );
+
+          await storage.insertEvent(
+            'users',
+            {
+              'eventId': eventId,
+              'dataId': userId,
+              'syncStatus': SyncStatus.ok.index,
+              'operation': SyncOperation.insert.index,
+              'createdAt': DateTime.now().millisecondsSinceEpoch,
+            },
+            'eventId',
+          );
+        }
+
+        // Query with filter: age >= 30
+        final results = await storage.query(
+          buildQuery(
+            filters: [
+              const QueryFilter(field: 'age', isGreaterThanOrEqualTo: 30),
+            ],
+          ),
+        );
+
+        expect(results, hasLength(3)); // ages 30, 40, 50
+        final ages = results
+            .whereType<LocalFirstStateEvent<DummyModel>>()
+            .map((e) => e.data.age)
+            .toList();
+        expect(ages, containsAll([30, 40, 50]));
+      });
+
+      test('query after upsert with sorts returns correct order', () async {
+        // Upsert users in random order
+        final users = [
+          ('sort-upsert-c', 'charlie', 30),
+          ('sort-upsert-a', 'alice', 10),
+          ('sort-upsert-b', 'bob', 20),
+        ];
+
+        for (final (id, username, age) in users) {
+          final eventId = 'evt-$id';
+
+          await storage.insert(
+            'users',
+            {
+              'id': id,
+              'username': username,
+              'age': age,
+              '_lasteventId': eventId,
+            },
+            'id',
+          );
+
+          await storage.insertEvent(
+            'users',
+            {
+              'eventId': eventId,
+              'dataId': id,
+              'syncStatus': SyncStatus.ok.index,
+              'operation': SyncOperation.insert.index,
+              'createdAt': DateTime.now().millisecondsSinceEpoch,
+            },
+            'eventId',
+          );
+        }
+
+        // Query with sort by age ascending
+        final results = await storage.query(
+          buildQuery(
+            sorts: [const QuerySort(field: 'age', descending: false)],
+          ),
+        );
+
+        expect(results, hasLength(3));
+        final usernames = results
+            .whereType<LocalFirstStateEvent<DummyModel>>()
+            .map((e) => e.data.username)
+            .toList();
+        expect(usernames, ['alice', 'bob', 'charlie']); // sorted by age
+      });
+
+      test('query handles data row with _lasteventId but no matching event',
+          () async {
+        final userId = 'orphan-data';
+        final eventId = 'orphan-evt';
+
+        // Insert data with _lasteventId pointing to non-existent event
+        // This can happen if event insert fails or is delayed
+        await storage.insert(
+          'users',
+          {
+            'id': userId,
+            'username': 'orphanuser',
+            'age': 50,
+            '_lasteventId': eventId, // Event doesn't exist yet
+          },
+          'id',
+        );
+
+        // Query without the missing event should return empty
+        // (not crash, but also not return invalid data)
+        final results = await storage.query(buildQuery());
+
+        // Should not find the data because there's no valid event
+        expect(results, isEmpty);
+      });
+
+      test('inserting event after data makes query return results', () async {
+        final userId = 'delayed-event-user';
+        final eventId = 'delayed-evt';
+
+        // Step 1: Insert data first (without event)
+        await storage.insert(
+          'users',
+          {
+            'id': userId,
+            'username': 'delayeduser',
+            'age': 60,
+            '_lasteventId': eventId,
+          },
+          'id',
+        );
+
+        // Query should be empty (no event yet)
+        var results = await storage.query(buildQuery());
+        expect(results, isEmpty,
+            reason: 'Should be empty when event is missing');
+
+        // Step 2: Now insert the event
+        await storage.insertEvent(
+          'users',
+          {
+            'eventId': eventId,
+            'dataId': userId,
+            'syncStatus': SyncStatus.ok.index,
+            'operation': SyncOperation.insert.index,
+            'createdAt': DateTime.now().millisecondsSinceEpoch,
+          },
+          'eventId',
+        );
+
+        // Query should now return the data
+        results = await storage.query(buildQuery());
+        expect(results, hasLength(1),
+            reason: 'Should return data after event is inserted');
+
+        final event = results.first as LocalFirstStateEvent<DummyModel>;
+        expect(event.data.username, 'delayeduser');
+        expect(event.data.age, 60);
+      });
+    });
   });
 }
