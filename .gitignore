@@ -12,3 +12,5 @@ build/
 coverage/lcov.info
 
 local_first/coverage/lcov.info
+
+local_first_websocket/coverage/html/
