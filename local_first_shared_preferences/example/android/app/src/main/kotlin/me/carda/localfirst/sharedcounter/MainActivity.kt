@@ -1,4 +1,4 @@
-package com.example.example
+package me.carda.localfirst.sharedcounter
 
 import io.flutter.embedding.android.FlutterActivity
 

@@ -24,6 +24,8 @@ import 'package:mongo_dart/mongo_dart.dart' hide State, Center;
 const mongoConnectionString =
     'mongodb://admin:admin@127.0.0.1:27017/remote_counter_db?authSource=admin';
 
+const appName = 'LocalFirst Counter';
+
 /// Centralized string keys to avoid magic field names.
 class RepositoryNames {
   static const user = 'user';
@@ -72,7 +74,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Offline Counter',
+      title: appName,
       navigatorKey: NavigatorService().navigatorKey,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
@@ -141,7 +143,7 @@ class _SignInPageState extends State<SignInPage> {
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     Text(
-                      'Offline Counter',
+                      appName,
                       style: TextTheme.of(context).headlineMedium,
                     ),
                     SizedBox(height: 4),

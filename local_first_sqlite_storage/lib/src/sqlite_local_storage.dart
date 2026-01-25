@@ -108,9 +108,19 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   Future<void> useNamespace(String namespace) async {
     if (_namespace == namespace) return;
     _validateIdentifier(namespace, 'namespace');
-    await close();
+    await _closeDatabaseConnection();
     _namespace = namespace;
     await initialize();
+    for (final repositoryName in _observers.keys) {
+      await _notifyWatchers(repositoryName);
+    }
+  }
+
+  Future<void> _closeDatabaseConnection() async {
+    if (!_initialized) return;
+    await _db?.close();
+    _db = null;
+    _initialized = false;
   }
 
   /// Deletes every table (including metadata) for the current namespace and

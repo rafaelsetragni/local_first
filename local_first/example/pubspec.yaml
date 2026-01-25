@@ -1,5 +1,5 @@
-name: example
-description: "A new Flutter project."
+name: local_first_counter_example
+description: "LocalFirst counter example."
 publish_to: "none" #
 version: 1.0.0+1
 
