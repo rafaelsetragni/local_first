@@ -108,19 +108,9 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   Future<void> useNamespace(String namespace) async {
     if (_namespace == namespace) return;
     _validateIdentifier(namespace, 'namespace');
-    await _closeDatabaseConnection();
+    await close();
     _namespace = namespace;
     await initialize();
-    for (final repositoryName in _observers.keys) {
-      await _notifyWatchers(repositoryName);
-    }
-  }
-
-  Future<void> _closeDatabaseConnection() async {
-    if (!_initialized) return;
-    await _db?.close();
-    _db = null;
-    _initialized = false;
   }
 
   /// Deletes every table (including metadata) for the current namespace and
@@ -292,8 +282,8 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     }
 
     final schema = _schemaFor(tableName);
-    final lastEventId = item['_lasteventId'] as String?;
-    final row = _encodeDataRow(schema, item, id, lastEventId);
+    final lastEventId = item[LocalFirstEvent.kLastEventId] ?? item['_lasteventId'];
+    final row = _encodeDataRow(schema, item, id, lastEventId as String?);
 
     await db.insert(
       resolvedTable,
@@ -355,8 +345,8 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     final resolvedTable = _tableName(tableName);
 
     final schema = _schemaFor(tableName);
-    final eventId = item['_lasteventId'] as String?;
-    final row = _encodeDataRow(schema, item, id, eventId);
+    final eventId = item[LocalFirstEvent.kLastEventId] ?? item['_lasteventId'];
+    final row = _encodeDataRow(schema, item, id, eventId as String?);
 
     await db.insert(
       resolvedTable,
@@ -664,7 +654,9 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
         .add(observer);
 
     observer.controller
-      ..onListen = observer.emit
+      ..onListen = () async {
+        await observer.emit();
+      }
       ..onCancel = () {
         final observers = _observers[query.repositoryName];
         observers?.remove(observer);
@@ -908,6 +900,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
         observers.remove(observer);
         continue;
       }
+      // Use the emit closure to preserve generic type <T>
       await observer.emit();
     }
   }
@@ -1008,6 +1001,13 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       }
     }
 
+    // Add !includeDeleted filter arg BEFORE processing sorts
+    // This ensures args are in the correct order for the SQL placeholders
+    if (!query.includeDeleted) {
+      whereClauses.add('e.operation != ?');
+      args.add(SyncOperation.delete.index);
+    }
+
     for (final sort in query.sorts) {
       final column = columnExpr(sort.field);
       orderClauses.add('$column ${sort.descending ? 'DESC' : 'ASC'}');
@@ -1021,11 +1021,6 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     );
     if (whereClauses.isNotEmpty) {
       sql.write(' WHERE ${whereClauses.join(' AND ')}');
-    }
-    if (!query.includeDeleted) {
-      sql.write(whereClauses.isEmpty ? ' WHERE ' : ' AND ');
-      sql.write('e.operation != ?');
-      args.add(SyncOperation.delete.index);
     }
     if (orderClauses.isNotEmpty) {
       sql.write(' ORDER BY ${orderClauses.join(', ')}');
@@ -1050,12 +1045,28 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     final repo = query.repository;
     final mapped = rows.map(_decodeJoinedRow);
-    return mapped
-        .map(
-          (json) =>
-              LocalFirstEvent<T>.fromLocalStorage(repository: repo, json: json),
-        )
-        .toList();
+    final events = <LocalFirstEvent<T>>[];
+
+    for (final json in mapped) {
+      if (!_hasRequiredEventFields(json)) continue;
+      try {
+        events.add(
+          LocalFirstEvent<T>.fromLocalStorage(repository: repo, json: json),
+        );
+      } catch (_) {
+        // ignore malformed legacy entries
+      }
+    }
+
+    return events;
+  }
+
+  bool _hasRequiredEventFields(JsonMap json) {
+    return (json.containsKey(LocalFirstEvent.kEventId) ||
+            json.containsKey(LocalFirstEvent.kLastEventId)) &&
+        json.containsKey(LocalFirstEvent.kSyncStatus) &&
+        json.containsKey(LocalFirstEvent.kOperation) &&
+        json.containsKey(LocalFirstEvent.kSyncCreatedAt);
   }
 }
 
