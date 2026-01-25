@@ -139,7 +139,7 @@ class LocalFirstQuery<T> {
   ///
   /// The stream will emit new values whenever the underlying data changes.
   Stream<List<LocalFirstEvent<T>>> watch() {
-    return _delegate.watchQuery<T>(this).asBroadcastStream();
+    return _delegate.watchQuery<T>(this);
   }
 }
 
