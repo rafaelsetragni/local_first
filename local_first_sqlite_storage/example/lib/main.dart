@@ -958,11 +958,16 @@ class RepositoryService {
     required String username,
     required String sessionId,
   }) async {
+    dev.log('_ensureSessionCounterForSession: sessionId=$sessionId', name: tag);
+
     final results = await sessionCounterRepository
         .query()
         .where(sessionCounterRepository.idFieldName, isEqualTo: sessionId)
         .limitTo(1)
         .getAll();
+
+    dev.log('_ensureSessionCounterForSession: found ${results.length} results', name: tag);
+
     if (results.isNotEmpty) {
       return (results.first as LocalFirstStateEvent<SessionCounterModel>).data;
     }
@@ -971,7 +976,18 @@ class RepositoryService {
       username: username,
       count: 0,
     );
+
+    dev.log('_ensureSessionCounterForSession: upserting new counter with id=${counter.id}', name: tag);
     await sessionCounterRepository.upsert(counter, needSync: true);
+
+    // Verify the upsert worked by querying again
+    final verifyResults = await sessionCounterRepository
+        .query()
+        .where(sessionCounterRepository.idFieldName, isEqualTo: sessionId)
+        .limitTo(1)
+        .getAll();
+    dev.log('_ensureSessionCounterForSession: after upsert, found ${verifyResults.length} results', name: tag);
+
     return counter;
   }
 
@@ -1073,14 +1089,21 @@ class RepositoryService {
       throw Exception('Session not initialized');
     }
 
+    dev.log('_createLogRegistry: sessionId=$sessionId, amount=$amount', name: tag);
+
     final sessionCounter = await _ensureSessionCounterForSession(
       username: username,
       sessionId: sessionId,
     );
+
+    dev.log('_createLogRegistry: current count=${sessionCounter.count}', name: tag);
+
     final updatedCounter = sessionCounter.copyWith(
       count: sessionCounter.count + amount,
       updatedAt: DateTime.now().toUtc(),
     );
+
+    dev.log('_createLogRegistry: upserting updated counter with count=${updatedCounter.count}', name: tag);
 
     final log = CounterLogModel(
       username: username,
@@ -1092,6 +1115,20 @@ class RepositoryService {
       counterLogRepository.upsert(log, needSync: true),
       sessionCounterRepository.upsert(updatedCounter, needSync: true),
     ]);
+
+    dev.log('_createLogRegistry: upsert completed', name: tag);
+
+    // Verify the counter was updated
+    final verifyResults = await sessionCounterRepository
+        .query()
+        .where(sessionCounterRepository.idFieldName, isEqualTo: sessionId)
+        .limitTo(1)
+        .getAll();
+    dev.log('_createLogRegistry: after update, found ${verifyResults.length} results', name: tag);
+    if (verifyResults.isNotEmpty) {
+      final data = (verifyResults.first as LocalFirstStateEvent<SessionCounterModel>).data;
+      dev.log('_createLogRegistry: verified count=${data.count}', name: tag);
+    }
   }
 
   Future<void> _switchUserDatabase(String username) async {
