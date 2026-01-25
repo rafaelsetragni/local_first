@@ -57,6 +57,6 @@ melos:
         ignore: "*example*"
     websocket:server:
       description: Run WebSocket example server in Docker with hot reload.
-      run: ./local_first_websocket/example/server/run_server.sh
+      run: ./server/run_server.sh
 
 dependency_overrides:
