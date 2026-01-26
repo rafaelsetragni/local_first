@@ -795,7 +795,12 @@ class WebSocketSyncServer {
     // Apply sorting based on repository configuration
     selector = selector.sortBy('serverSequence', descending: config.sortDescending);
 
-    // Don't apply limit in query - we need all events to properly group by dataId
+    // For repositories without deduplication (like counter_log), apply limit in query
+    // For others, we need all events to properly group by dataId
+    if (!config.shouldDeduplicate && limit != null && limit > 0) {
+      selector = selector.limit(limit);
+    }
+
     final cursor = collection.find(selector);
     final allEvents = <Map<String, dynamic>>[];
 
