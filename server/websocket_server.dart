@@ -629,6 +629,9 @@ class WebSocketSyncServer {
   /// Events are grouped by dataId and only the event with the highest serverSequence
   /// is returned for each group. This prevents syncing intermediate states that have
   /// been superseded by newer events.
+  ///
+  /// Note: The counter_log repository is excluded from deduplication. All log events
+  /// are returned as-is since logs are sequential and all entries must be preserved.
   Future<List<Map<String, dynamic>>> fetchEvents(
     String repositoryName, {
     int? afterSequence,
@@ -656,6 +659,15 @@ class WebSocketSyncServer {
         ..putIfAbsent('repository', () => repositoryName);
       allEvents.add(map);
     });
+
+    // Skip deduplication for counter_log - all log events must be preserved
+    if (repositoryName == 'counter_log') {
+      // Return all events sorted by serverSequence with optional limit
+      if (limit != null && limit > 0) {
+        return allEvents.take(limit).toList();
+      }
+      return allEvents;
+    }
 
     // Group events by dataId and keep only the latest event for each dataId
     final latestEventsByDataId = <String, Map<String, dynamic>>{};

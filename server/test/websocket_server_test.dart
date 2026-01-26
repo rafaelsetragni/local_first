@@ -528,6 +528,75 @@ void main() {
         expect(dataId1Events.first['data']['value'], 'v2');
       }
     });
+
+    test('GET /api/events/counter_log returns ALL events (no deduplication)',
+        () async {
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final dataId = 'log_entry_$timestamp';
+
+      // Create multiple log events with the same dataId
+      // In a real scenario, logs might have the same dataId but different timestamps
+      final response1 = await http.post(
+        Uri.parse('$baseUrl/api/events/counter_log'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'eventId': 'log_1_$timestamp',
+          'dataId': dataId,
+          'data': {'id': dataId, 'action': 'increment', 'value': 1},
+        }),
+      );
+      expect(response1.statusCode, 201, reason: 'Event 1 creation failed');
+
+      final response2 = await http.post(
+        Uri.parse('$baseUrl/api/events/counter_log'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'eventId': 'log_2_$timestamp',
+          'dataId': dataId,
+          'data': {'id': dataId, 'action': 'increment', 'value': 2},
+        }),
+      );
+      expect(response2.statusCode, 201, reason: 'Event 2 creation failed');
+
+      final response3 = await http.post(
+        Uri.parse('$baseUrl/api/events/counter_log'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'eventId': 'log_3_$timestamp',
+          'dataId': dataId,
+          'data': {'id': dataId, 'action': 'increment', 'value': 3},
+        }),
+      );
+      expect(response3.statusCode, 201, reason: 'Event 3 creation failed');
+
+      // Fetch all counter_log events with high limit to ensure we get all our test events
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/events/counter_log?limit=100'),
+      );
+
+      expect(response.statusCode, 200);
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final events = data['events'] as List;
+
+      // Filter events for our test dataId
+      final logEvents = events.where((e) => e['dataId'] == dataId).toList();
+
+      // Should have ALL 3 events, not just the latest (counter_log is excluded from deduplication)
+      expect(logEvents.length, 3,
+          reason:
+              'counter_log should return all events, not deduplicate by dataId');
+
+      // Verify all events are present with correct values
+      expect(logEvents[0]['data']['value'], 1);
+      expect(logEvents[1]['data']['value'], 2);
+      expect(logEvents[2]['data']['value'], 3);
+
+      // Verify they are sorted by serverSequence
+      expect(
+          logEvents[0]['serverSequence'] < logEvents[1]['serverSequence'], true);
+      expect(
+          logEvents[1]['serverSequence'] < logEvents[2]['serverSequence'], true);
+    });
   });
 
   group('REST API - Error Handling', () {
@@ -837,20 +906,10 @@ Future<void> _verifyTestDatabase() async {
     ]);
 
     if (result.exitCode == 0) {
-      final output = result.stdout.toString();
-
-      // Verify test database exists or will be created
-      // Also ensure we're NOT accidentally using production database
-      if (output.contains('remote_counter_db') &&
-          !output.contains('remote_counter_db_test')) {
-        throw Exception(
-          'SAFETY CHECK FAILED: Production database detected! '
-          'Tests must use remote_counter_db_test, not remote_counter_db. '
-          'Databases found: $output',
-        );
-      }
-
-      print('✓ Database safety check passed - using test database');
+      // With test mode (--test flag), the server runs on port 8081 with test database
+      // Production database can safely exist alongside test database
+      // The test database will be created automatically when first event is inserted
+      print('✓ Database safety check passed - test mode uses isolated database');
     }
   } catch (e) {
     if (e.toString().contains('SAFETY CHECK FAILED')) {

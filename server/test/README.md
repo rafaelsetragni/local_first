@@ -214,11 +214,17 @@ The `fetchEvents` endpoint returns only the latest event for each `dataId` to mi
 - This prevents syncing intermediate states that have been superseded by newer events
 - Example: If a user updates their profile 3 times, only the final state is synced
 
+**Important Exception:**
+- The `counter_log` repository is **excluded** from deduplication
+- All log events are returned as-is since logs are sequential and all entries must be preserved
+- This ensures complete audit trails and historical data integrity
+
 **How It Works:**
 1. Fetch all events matching the criteria (afterSequence, repository)
-2. Group events by `dataId`
-3. For each group, keep only the event with the highest `serverSequence`
-4. Return deduplicated events sorted by `serverSequence`
+2. If repository is `counter_log`, return all events (no deduplication)
+3. Otherwise, group events by `dataId`
+4. For each group, keep only the event with the highest `serverSequence`
+5. Return deduplicated events sorted by `serverSequence`
 
 **Backwards Compatibility:**
 - Events without a `dataId` field are included as-is
@@ -231,6 +237,10 @@ The `fetchEvents` endpoint returns only the latest event for each `dataId` to mi
 - "GET /api/events/{repository}?afterSequence={n} returns only latest event per dataId"
   - Tests deduplication with sequence filtering
   - Verifies each dataId appears at most once
+- "GET /api/events/counter_log returns ALL events (no deduplication)"
+  - Creates 3 log events with same dataId
+  - Verifies all 3 events are returned (no deduplication)
+  - Ensures logs preserve complete sequential history
 
 ## Troubleshooting
 
