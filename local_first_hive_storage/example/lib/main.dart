@@ -22,7 +22,8 @@ import 'rest_api_client.dart';
 //   -e MONGO_INITDB_ROOT_PASSWORD=admin mongo:7
 const serverBaseUrl = 'http://127.0.0.1:8080';
 
-const appName = 'LocalFirst Hive+HTTP Counter';
+const appName = 'LF Periodic';
+const appNameFull = 'Local First\nPeriodic';
 
 /// Centralized string keys to avoid magic field names.
 class RepositoryNames {
@@ -141,7 +142,8 @@ class _SignInPageState extends State<SignInPage> {
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     Text(
-                      appName,
+                      appNameFull,
+                      textAlign: TextAlign.center,
                       style: TextTheme.of(context).headlineMedium,
                     ),
                     SizedBox(height: 4),

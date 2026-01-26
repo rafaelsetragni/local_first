@@ -22,7 +22,8 @@ import 'package:http/http.dart' as http;
 const websocketServerUrl = 'ws://127.0.0.1:8080/ws';
 const httpServerUrl = 'http://127.0.0.1:8080';
 
-const appName = 'LocalFirst Counter';
+const appName = 'LF InMemory';
+const appNameFull = 'Local First\nInMemory';
 
 /// Centralized string keys to avoid magic field names.
 class RepositoryNames {
@@ -141,7 +142,8 @@ class _SignInPageState extends State<SignInPage> {
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     Text(
-                      appName,
+                      appNameFull,
+                      textAlign: TextAlign.center,
                       style: TextTheme.of(context).headlineMedium,
                     ),
                     SizedBox(height: 4),
