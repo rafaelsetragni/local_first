@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../pages/home_page.dart';
+import '../pages/sign_in_page.dart';
 
 /// Centralized navigation helper
 class NavigatorService {
@@ -25,4 +27,7 @@ class NavigatorService {
 
   Future<bool> maybePop<T extends Object?>([T? result]) =>
       navigatorKey.currentState?.maybePop<T>(result) ?? Future.value(false);
+
+  void navigateToHome() => pushReplacement(const MyHomePage());
+  void navigateToSignIn() => pushReplacement(const SignInPage());
 }
