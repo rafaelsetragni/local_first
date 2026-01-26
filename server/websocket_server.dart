@@ -31,26 +31,45 @@ import 'package:mongo_dart/mongo_dart.dart';
 ///
 /// # Or directly:
 /// cd server && dart run websocket_server.dart
+///
+/// # Test mode (uses port 8081 and test database):
+/// dart run websocket_server.dart --test
 /// ```
 ///
 /// The recommended `melos websocket:server` command automatically:
 /// - Starts MongoDB with Docker Compose
 /// - Configures networking between services
 /// - Shows real-time logs
-void main() async {
-  final server = WebSocketSyncServer();
+void main(List<String> args) async {
+  // Check if running in test mode
+  final isTestMode = args.contains('--test');
+
+  final server = WebSocketSyncServer(isTestMode: isTestMode);
   await server.start();
 }
 
 class WebSocketSyncServer {
   static const logTag = 'WebSocketSyncServer';
-  static const port = 8080;
+  static const _productionPort = 8080;
+  static const _testPort = 8081;
+  static const _productionDb = 'remote_counter_db';
+  static const _testDb = 'remote_counter_db_test';
+
+  final bool isTestMode;
+
+  WebSocketSyncServer({this.isTestMode = false});
+
+  /// Gets the port to use based on test mode
+  int get port => isTestMode ? _testPort : _productionPort;
+
+  /// Gets the database name based on test mode
+  String get databaseName => isTestMode ? _testDb : _productionDb;
 
   // Support both Docker (mongodb service name) and local (127.0.0.1)
-  static String get mongoConnectionString {
+  String get mongoConnectionString {
     final host = Platform.environment['MONGO_HOST'] ?? '127.0.0.1';
     final port = Platform.environment['MONGO_PORT'] ?? '27017';
-    final db = Platform.environment['MONGO_DB'] ?? 'remote_counter_db';
+    final db = Platform.environment['MONGO_DB'] ?? databaseName;
     return 'mongodb://admin:admin@$host:$port/$db?authSource=admin';
   }
 
@@ -61,6 +80,17 @@ class WebSocketSyncServer {
   /// Starts the WebSocket server.
   Future<void> start() async {
     try {
+      // Log server mode
+      if (isTestMode) {
+        dev.log('Starting server in TEST MODE', name: logTag);
+        dev.log('Port: $port (test)', name: logTag);
+        dev.log('Database: $databaseName (test)', name: logTag);
+      } else {
+        dev.log('Starting server in PRODUCTION MODE', name: logTag);
+        dev.log('Port: $port', name: logTag);
+        dev.log('Database: $databaseName', name: logTag);
+      }
+
       // Connect to MongoDB
       await _connectToMongo();
 

@@ -22,8 +22,9 @@ void main() {
 
   // Setup: Start server before all tests
   setUpAll(() async {
-    baseUrl = 'http://localhost:8080';
-    wsUrl = 'ws://localhost:8080';
+    // Use test port (8081) to avoid conflicts with production server (8080)
+    baseUrl = 'http://localhost:8081';
+    wsUrl = 'ws://localhost:8081';
 
     // CRITICAL: Verify test database name to prevent production data corruption
     const testDbName = 'remote_counter_db_test';
@@ -43,17 +44,15 @@ void main() {
       );
     }
 
-    // CRITICAL: Verify port 8080 is not already in use
-    // If Docker server is running, tests will connect to it instead of starting a new one
+    // CRITICAL: Verify test port 8081 is not already in use
     try {
-      final serverSocket = await ServerSocket.bind('127.0.0.1', 8080);
+      final serverSocket = await ServerSocket.bind('127.0.0.1', 8081);
       await serverSocket.close();
     } catch (e) {
       throw Exception(
-        'SAFETY CHECK FAILED: Port 8080 is already in use!\n'
-        'This usually means the Docker WebSocket server is running.\n'
-        'Stop it with: docker stop local_first_websocket_server\n'
-        'Tests must start their own server with test database configuration.',
+        'SAFETY CHECK FAILED: Port 8081 is already in use!\n'
+        'This usually means another test server is running.\n'
+        'Kill any process using port 8081 before running tests.',
       );
     }
 
@@ -81,14 +80,15 @@ void main() {
       );
     }
 
-    // Start the server with test database
-    print('Starting WebSocket server with test database: $testDbName');
+    // Start the server in test mode (uses port 8081 and test database)
+    print('Starting WebSocket server in test mode...');
+    print('  Port: 8081');
+    print('  Database: $testDbName');
     serverProcess = await Process.start(
       'dart',
-      ['run', 'websocket_server.dart'],
+      ['run', 'websocket_server.dart', '--test'],
       workingDirectory: Directory.current.path,
       environment: {
-        'MONGO_DB': testDbName, // Use separate test database
         'MONGO_HOST': '127.0.0.1',
         'MONGO_PORT': '27017',
       },

@@ -2,13 +2,16 @@
 
 Integration tests for the hybrid WebSocket + REST API server.
 
+**✨ NEW:** Tests now run in isolated test mode on port 8081, allowing them to run in parallel with the production server (port 8080)!
+
 ## Prerequisites
 
 The tests require a running MongoDB instance. The easiest way is to use Docker Compose:
 
 ```bash
-# Start MongoDB + WebSocket server (from monorepo root)
+# Start MongoDB + WebSocket production server (from monorepo root)
 melos websocket:server
+# Production server runs on port 8080
 ```
 
 Or start just MongoDB:
@@ -19,13 +22,19 @@ docker run -d --name local_first_mongodb -p 27017:27017 \
   -e MONGO_INITDB_ROOT_PASSWORD=admin mongo:7
 ```
 
+**Note:** Tests automatically start their own test server on port 8081 using the `remote_counter_db_test` database. The production server can remain running during tests.
+
 ## Running Tests
+
+Tests automatically run in test mode, using port 8081 and the test database. **No need to stop the production server!**
 
 ### Run all tests
 
 ```bash
 cd server
 dart test
+# Tests will start their own server on port 8081 with test database
+# Production server (if running) continues on port 8080
 ```
 
 ### Run with coverage
@@ -137,27 +146,39 @@ This approach ensures:
 
 **Never disable or bypass these safety checks!**
 
-### CRITICAL: Stop Docker Server Before Running Tests
+### Test Mode - Isolated Testing Environment
 
-**IMPORTANT**: If the Docker WebSocket server is running on port 8080, tests may connect to it instead of starting their own test server. This causes tests to use the **PRODUCTION** database!
+**NEW**: Tests now run on a separate port (8081) and use a separate test database, allowing tests to run in parallel with the production server!
 
-Before running tests, **ALWAYS**:
+The test suite automatically:
+- Starts server in test mode with `--test` flag
+- Uses port 8081 (production uses 8080)
+- Uses database `remote_counter_db_test` (production uses `remote_counter_db`)
+- Complete isolation from production environment
+
+**No need to stop the production server!** Tests and production can run simultaneously.
 
 ```bash
-# Stop the Docker server
-docker stop local_first_websocket_server
-
-# Then run tests
+# Run tests (automatically uses test mode)
+cd server
 dart test
+
+# Production server can keep running on port 8080
+# Test server will use port 8081
 ```
 
-**Symptoms of this issue:**
-- Test collections appear in production database (`remote_counter_db`)
-- Collections named `test_*` in production
-- Safety check fails with "Production database detected"
+**Manual Test Server:**
+You can also start a test server manually:
+
+```bash
+dart run websocket_server.dart --test
+# Server will start on port 8081 with test database
+```
 
 **Protection**:
-The test suite now includes a port check that will fail if port 8080 is already in use, preventing accidental connection to the production server.
+- Port 8081 availability is checked before starting test server
+- Database name validation ensures test DB name contains "test"
+- Runtime verification ensures correct database is being used
 
 ## Regression Tests
 
