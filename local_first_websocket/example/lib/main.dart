@@ -728,22 +728,33 @@ class NavigatorService {
 }
 
 /// Manages sync state using server sequences per repository
+///
+/// IMPORTANT: Sequences are stored per namespace to ensure proper isolation
+/// between different users. Each user has their own set of lastSequence values.
 class SyncStateManager {
   final LocalFirstClient client;
+  final String Function() getNamespace;
   final _sequenceKeyPrefix = '__last_sequence__';
 
-  SyncStateManager(this.client);
+  SyncStateManager(this.client, this.getNamespace);
 
-  /// Gets the last synced sequence for a repository
+  /// Builds a namespace-aware key for storing sequence numbers
+  /// Format: `{namespace}__last_sequence__{repositoryName}`
+  String _buildSequenceKey(String repositoryName) {
+    final namespace = getNamespace();
+    return '${namespace}_$_sequenceKeyPrefix$repositoryName';
+  }
+
+  /// Gets the last synced sequence for a repository in the current namespace
   Future<int?> getLastSequence(String repositoryName) async {
-    final key = '$_sequenceKeyPrefix$repositoryName';
+    final key = _buildSequenceKey(repositoryName);
     final value = await client.getConfigValue(key);
     return value != null ? int.tryParse(value) : null;
   }
 
-  /// Saves the last synced sequence for a repository
+  /// Saves the last synced sequence for a repository in the current namespace
   Future<void> saveLastSequence(String repositoryName, int sequence) async {
-    final key = '$_sequenceKeyPrefix$repositoryName';
+    final key = _buildSequenceKey(repositoryName);
     await client.setConfigValue(key, sequence.toString());
   }
 
@@ -847,7 +858,8 @@ class RepositoryService {
     await localFirst.initialize();
 
     // Initialize sync state manager after client is ready
-    _syncStateManager = SyncStateManager(localFirst);
+    // Pass namespace getter to ensure sequences are isolated per user
+    _syncStateManager = SyncStateManager(localFirst, () => _currentNamespace);
 
     return await restoreLastUser();
   }
