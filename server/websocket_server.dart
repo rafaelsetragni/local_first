@@ -48,6 +48,19 @@ void main(List<String> args) async {
   await server.start();
 }
 
+/// Configuration for repository-specific behavior
+class RepositoryConfig {
+  final bool shouldDeduplicate;
+  final bool sortDescending;
+  final int? defaultLimit;
+
+  const RepositoryConfig({
+    required this.shouldDeduplicate,
+    required this.sortDescending,
+    this.defaultLimit,
+  });
+}
+
 class WebSocketSyncServer {
   static const logTag = 'WebSocketSyncServer';
   static const _productionPort = 8080;
@@ -55,9 +68,30 @@ class WebSocketSyncServer {
   static const _productionDb = 'remote_counter_db';
   static const _testDb = 'remote_counter_db_test';
 
+  /// Repository-specific configurations
+  /// Defines behavior for deduplication, sorting, and limits per repository
+  static const Map<String, RepositoryConfig> _repositoryConfigs = {
+    'counter_log': RepositoryConfig(
+      shouldDeduplicate: false,
+      sortDescending: true,
+      defaultLimit: 5,
+    ),
+    // Default config for other repositories
+    '_default': RepositoryConfig(
+      shouldDeduplicate: true,
+      sortDescending: false,
+      defaultLimit: 100,
+    ),
+  };
+
   final bool isTestMode;
 
   WebSocketSyncServer({this.isTestMode = false});
+
+  /// Gets configuration for a specific repository
+  static RepositoryConfig _getRepositoryConfig(String repositoryName) {
+    return _repositoryConfigs[repositoryName] ?? _repositoryConfigs['_default']!;
+  }
 
   /// Gets the port to use based on test mode
   int get port => isTestMode ? _testPort : _productionPort;
@@ -108,8 +142,12 @@ class WebSocketSyncServer {
         }
       }
     } catch (e, s) {
-      dev.log('Error starting server: $e',
-          name: logTag, error: e, stackTrace: s);
+      dev.log(
+        'Error starting server: $e',
+        name: logTag,
+        error: e,
+        stackTrace: s,
+      );
       rethrow;
     }
   }
@@ -148,10 +186,7 @@ class WebSocketSyncServer {
       try {
         // Index for server sequence-based sync
         await collection.createIndex(keys: {'serverSequence': 1});
-        await collection.createIndex(
-          keys: {'eventId': 1},
-          unique: true,
-        );
+        await collection.createIndex(keys: {'eventId': 1}, unique: true);
         // Index for dataId queries (used to fetch entities by their ID)
         await collection.createIndex(keys: {'dataId': 1});
       } catch (e) {
@@ -167,7 +202,10 @@ class WebSocketSyncServer {
         unique: true,
       );
     } catch (e) {
-      dev.log('Failed to create sequence counters collection: $e', name: logTag);
+      dev.log(
+        'Failed to create sequence counters collection: $e',
+        name: logTag,
+      );
     }
   }
 
@@ -175,25 +213,30 @@ class WebSocketSyncServer {
   Future<void> _handleWebSocketConnection(HttpRequest request) async {
     try {
       final webSocket = await WebSocketTransformer.upgrade(request);
-      final client = ConnectedClient(
-        webSocket: webSocket,
-        server: this,
-      );
+      final client = ConnectedClient(webSocket: webSocket, server: this);
 
       _clients.add(client);
-      dev.log('Client connected. Total clients: ${_clients.length}',
-          name: logTag);
+      dev.log(
+        'Client connected. Total clients: ${_clients.length}',
+        name: logTag,
+      );
 
       client.listen(
         onDone: () {
           _clients.remove(client);
-          dev.log('Client disconnected. Total clients: ${_clients.length}',
-              name: logTag);
+          dev.log(
+            'Client disconnected. Total clients: ${_clients.length}',
+            name: logTag,
+          );
         },
       );
     } catch (e, s) {
-      dev.log('Error handling WebSocket connection: $e',
-          name: logTag, error: e, stackTrace: s);
+      dev.log(
+        'Error handling WebSocket connection: $e',
+        name: logTag,
+        error: e,
+        stackTrace: s,
+      );
     }
   }
 
@@ -204,7 +247,10 @@ class WebSocketSyncServer {
     // Set CORS headers
     response.headers.set('Access-Control-Allow-Origin', '*');
     response.headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    response.headers.set(
+      'Access-Control-Allow-Headers',
+      'Content-Type, Authorization',
+    );
     response.headers.set('Content-Type', 'application/json');
 
     try {
@@ -226,13 +272,21 @@ class WebSocketSyncServer {
         if (method == 'GET') {
           await _handleHealthCheck(request);
         } else {
-          _sendError(response, HttpStatus.methodNotAllowed, 'Method not allowed');
+          _sendError(
+            response,
+            HttpStatus.methodNotAllowed,
+            'Method not allowed',
+          );
         }
       } else if (path == '/api/repositories') {
         if (method == 'GET') {
           await _handleListRepositories(request);
         } else {
-          _sendError(response, HttpStatus.methodNotAllowed, 'Method not allowed');
+          _sendError(
+            response,
+            HttpStatus.methodNotAllowed,
+            'Method not allowed',
+          );
         }
       } else if (path.startsWith('/api/events/')) {
         final pathSegments = uri.pathSegments;
@@ -244,7 +298,11 @@ class WebSocketSyncServer {
           } else if (method == 'POST') {
             await _handlePostEvent(request, repository);
           } else {
-            _sendError(response, HttpStatus.methodNotAllowed, 'Method not allowed');
+            _sendError(
+              response,
+              HttpStatus.methodNotAllowed,
+              'Method not allowed',
+            );
           }
         } else if (pathSegments.length == 4) {
           // /api/events/{repository}/{eventId} or /api/events/{repository}/batch
@@ -256,7 +314,11 @@ class WebSocketSyncServer {
           } else if (method == 'GET') {
             await _handleGetEventById(request, repository, identifier);
           } else {
-            _sendError(response, HttpStatus.methodNotAllowed, 'Method not allowed');
+            _sendError(
+              response,
+              HttpStatus.methodNotAllowed,
+              'Method not allowed',
+            );
           }
         } else if (pathSegments.length == 5) {
           // /api/events/{repository}/byDataId/{dataId}
@@ -276,9 +338,17 @@ class WebSocketSyncServer {
         _sendError(response, HttpStatus.notFound, 'Endpoint not found');
       }
     } catch (e, s) {
-      dev.log('Error handling HTTP request: $e',
-          name: logTag, error: e, stackTrace: s);
-      _sendError(response, HttpStatus.internalServerError, 'Internal server error: $e');
+      dev.log(
+        'Error handling HTTP request: $e',
+        name: logTag,
+        error: e,
+        stackTrace: s,
+      );
+      _sendError(
+        response,
+        HttpStatus.internalServerError,
+        'Internal server error: $e',
+      );
     }
   }
 
@@ -286,10 +356,7 @@ class WebSocketSyncServer {
   void _sendError(HttpResponse response, int statusCode, String message) {
     try {
       response.statusCode = statusCode;
-      response.write(jsonEncode({
-        'error': message,
-        'statusCode': statusCode,
-      }));
+      response.write(jsonEncode({'error': message, 'statusCode': statusCode}));
       response.close();
     } catch (e) {
       dev.log('Error sending error response: $e', name: logTag);
@@ -302,12 +369,14 @@ class WebSocketSyncServer {
     final isDbConnected = _db?.isConnected ?? false;
 
     response.statusCode = HttpStatus.ok;
-    response.write(jsonEncode({
-      'status': 'ok',
-      'timestamp': DateTime.now().toIso8601String(),
-      'mongodb': isDbConnected ? 'connected' : 'disconnected',
-      'activeConnections': _clients.length,
-    }));
+    response.write(
+      jsonEncode({
+        'status': 'ok',
+        'timestamp': DateTime.now().toIso8601String(),
+        'mongodb': isDbConnected ? 'connected' : 'disconnected',
+        'activeConnections': _clients.length,
+      }),
+    );
     await response.close();
   }
 
@@ -317,7 +386,11 @@ class WebSocketSyncServer {
     final db = _db;
 
     if (db == null) {
-      _sendError(response, HttpStatus.serviceUnavailable, 'Database not connected');
+      _sendError(
+        response,
+        HttpStatus.serviceUnavailable,
+        'Database not connected',
+      );
       return;
     }
 
@@ -326,11 +399,13 @@ class WebSocketSyncServer {
 
       // Filter out system collections and internal collections
       final repositories = collections
-          .where((name) =>
-              name != null &&
-              !name.startsWith('_') &&
-              !name.endsWith('__events') &&
-              !name.startsWith('system.'))
+          .where(
+            (name) =>
+                name != null &&
+                !name.startsWith('_') &&
+                !name.endsWith('__events') &&
+                !name.startsWith('system.'),
+          )
           .cast<String>()
           .toList();
 
@@ -354,13 +429,16 @@ class WebSocketSyncServer {
       }
 
       response.statusCode = HttpStatus.ok;
-      response.write(jsonEncode({
-        'repositories': stats,
-        'count': repositories.length,
-      }));
+      response.write(
+        jsonEncode({'repositories': stats, 'count': repositories.length}),
+      );
       await response.close();
     } catch (e) {
-      _sendError(response, HttpStatus.internalServerError, 'Failed to list repositories: $e');
+      _sendError(
+        response,
+        HttpStatus.internalServerError,
+        'Failed to list repositories: $e',
+      );
     }
   }
 
@@ -370,7 +448,11 @@ class WebSocketSyncServer {
     final db = _db;
 
     if (db == null) {
-      _sendError(response, HttpStatus.serviceUnavailable, 'Database not connected');
+      _sendError(
+        response,
+        HttpStatus.serviceUnavailable,
+        'Database not connected',
+      );
       return;
     }
 
@@ -378,26 +460,37 @@ class WebSocketSyncServer {
       final afterSequence = request.uri.queryParameters['afterSequence'];
       final limitParam = request.uri.queryParameters['limit'];
 
-      // Apply default limit of 5 for counter_log, 100 for others
-      final defaultLimit = repository == 'counter_log' ? 5 : 100;
-      final limit = limitParam != null ? (int.tryParse(limitParam) ?? defaultLimit) : defaultLimit;
+      // Get default limit from repository configuration
+      final config = _getRepositoryConfig(repository);
+      final defaultLimit = config.defaultLimit ?? 100;
+      final limit = limitParam != null
+          ? (int.tryParse(limitParam) ?? defaultLimit)
+          : defaultLimit;
 
       final events = await fetchEvents(
         repository,
-        afterSequence: afterSequence != null ? int.tryParse(afterSequence) : null,
+        afterSequence: afterSequence != null
+            ? int.tryParse(afterSequence)
+            : null,
         limit: limit,
       );
 
       response.statusCode = HttpStatus.ok;
-      response.write(jsonEncode({
-        'repository': repository,
-        'events': events,
-        'count': events.length,
-        'hasMore': events.length >= limit,
-      }));
+      response.write(
+        jsonEncode({
+          'repository': repository,
+          'events': events,
+          'count': events.length,
+          'hasMore': events.length >= limit,
+        }),
+      );
       await response.close();
     } catch (e) {
-      _sendError(response, HttpStatus.internalServerError, 'Failed to fetch events: $e');
+      _sendError(
+        response,
+        HttpStatus.internalServerError,
+        'Failed to fetch events: $e',
+      );
     }
   }
 
@@ -411,7 +504,11 @@ class WebSocketSyncServer {
     final db = _db;
 
     if (db == null) {
-      _sendError(response, HttpStatus.serviceUnavailable, 'Database not connected');
+      _sendError(
+        response,
+        HttpStatus.serviceUnavailable,
+        'Database not connected',
+      );
       return;
     }
 
@@ -428,13 +525,14 @@ class WebSocketSyncServer {
       event.remove('_id');
 
       response.statusCode = HttpStatus.ok;
-      response.write(jsonEncode({
-        'repository': repository,
-        'event': event,
-      }));
+      response.write(jsonEncode({'repository': repository, 'event': event}));
       await response.close();
     } catch (e) {
-      _sendError(response, HttpStatus.internalServerError, 'Failed to fetch event: $e');
+      _sendError(
+        response,
+        HttpStatus.internalServerError,
+        'Failed to fetch event: $e',
+      );
     }
   }
 
@@ -448,7 +546,11 @@ class WebSocketSyncServer {
     final db = _db;
 
     if (db == null) {
-      _sendError(response, HttpStatus.serviceUnavailable, 'Database not connected');
+      _sendError(
+        response,
+        HttpStatus.serviceUnavailable,
+        'Database not connected',
+      );
       return;
     }
 
@@ -465,13 +567,14 @@ class WebSocketSyncServer {
       event.remove('_id');
 
       response.statusCode = HttpStatus.ok;
-      response.write(jsonEncode({
-        'repository': repository,
-        'event': event,
-      }));
+      response.write(jsonEncode({'repository': repository, 'event': event}));
       await response.close();
     } catch (e) {
-      _sendError(response, HttpStatus.internalServerError, 'Failed to fetch event: $e');
+      _sendError(
+        response,
+        HttpStatus.internalServerError,
+        'Failed to fetch event: $e',
+      );
     }
   }
 
@@ -486,7 +589,11 @@ class WebSocketSyncServer {
 
       // Validate event has required fields
       if (!body.containsKey('eventId')) {
-        _sendError(response, HttpStatus.badRequest, 'Missing required field: eventId');
+        _sendError(
+          response,
+          HttpStatus.badRequest,
+          'Missing required field: eventId',
+        );
         return;
       }
 
@@ -494,19 +601,28 @@ class WebSocketSyncServer {
       await pushEvent(repository, body);
 
       response.statusCode = HttpStatus.created;
-      response.write(jsonEncode({
-        'status': 'success',
-        'repository': repository,
-        'eventId': body['eventId'],
-      }));
+      response.write(
+        jsonEncode({
+          'status': 'success',
+          'repository': repository,
+          'eventId': body['eventId'],
+        }),
+      );
       await response.close();
     } catch (e) {
-      _sendError(response, HttpStatus.internalServerError, 'Failed to create event: $e');
+      _sendError(
+        response,
+        HttpStatus.internalServerError,
+        'Failed to create event: $e',
+      );
     }
   }
 
   /// Handles POST /api/events/{repository}/batch - Create multiple events.
-  Future<void> _handlePostEventsBatch(HttpRequest request, String repository) async {
+  Future<void> _handlePostEventsBatch(
+    HttpRequest request,
+    String repository,
+  ) async {
     final response = request.response;
 
     try {
@@ -516,7 +632,11 @@ class WebSocketSyncServer {
 
       // Validate events array exists
       if (!body.containsKey('events') || body['events'] is! List) {
-        _sendError(response, HttpStatus.badRequest, 'Missing or invalid events array');
+        _sendError(
+          response,
+          HttpStatus.badRequest,
+          'Missing or invalid events array',
+        );
         return;
       }
 
@@ -525,7 +645,11 @@ class WebSocketSyncServer {
       // Validate all events have eventId
       for (final event in events) {
         if (!event.containsKey('eventId')) {
-          _sendError(response, HttpStatus.badRequest, 'All events must have eventId field');
+          _sendError(
+            response,
+            HttpStatus.badRequest,
+            'All events must have eventId field',
+          );
           return;
         }
       }
@@ -536,15 +660,21 @@ class WebSocketSyncServer {
       final eventIds = events.map((e) => e['eventId'] as String).toList();
 
       response.statusCode = HttpStatus.created;
-      response.write(jsonEncode({
-        'status': 'success',
-        'repository': repository,
-        'eventIds': eventIds,
-        'count': eventIds.length,
-      }));
+      response.write(
+        jsonEncode({
+          'status': 'success',
+          'repository': repository,
+          'eventIds': eventIds,
+          'count': eventIds.length,
+        }),
+      );
       await response.close();
     } catch (e) {
-      _sendError(response, HttpStatus.internalServerError, 'Failed to create events: $e');
+      _sendError(
+        response,
+        HttpStatus.internalServerError,
+        'Failed to create events: $e',
+      );
     }
   }
 
@@ -561,7 +691,9 @@ class WebSocketSyncServer {
     // MongoDB automatically treats '_id' fields as ObjectIds, causing type cast errors
     final result = await countersCollection.findAndModify(
       query: where.eq('repository', repositoryName),
-      update: {r'$inc': {'sequence': 1}},
+      update: {
+        r'$inc': {'sequence': 1},
+      },
       returnNew: true,
       upsert: true,
     );
@@ -570,7 +702,10 @@ class WebSocketSyncServer {
   }
 
   /// Pushes an event to MongoDB.
-  Future<void> pushEvent(String repositoryName, Map<String, dynamic> event) async {
+  Future<void> pushEvent(
+    String repositoryName,
+    Map<String, dynamic> event,
+  ) async {
     final db = _db;
     if (db == null) {
       throw StateError('MongoDB not connected');
@@ -585,7 +720,10 @@ class WebSocketSyncServer {
 
       if (existing != null) {
         // Event already exists, just return (idempotency)
-        dev.log('Event $eventId already exists in $repositoryName', name: logTag);
+        dev.log(
+          'Event $eventId already exists in $repositoryName',
+          name: logTag,
+        );
         await _broadcastEvent(repositoryName, existing);
         return;
       }
@@ -603,7 +741,10 @@ class WebSocketSyncServer {
 
       await collection.insertOne(cleanedEvent);
 
-      dev.log('Event $eventId pushed to $repositoryName with sequence $serverSequence', name: logTag);
+      dev.log(
+        'Event $eventId pushed to $repositoryName with sequence $serverSequence',
+        name: logTag,
+      );
 
       // Broadcast to other clients
       await _broadcastEvent(repositoryName, eventWithSequence);
@@ -643,19 +784,16 @@ class WebSocketSyncServer {
       throw StateError('MongoDB not connected');
     }
 
+    // Get repository-specific configuration
+    final config = _getRepositoryConfig(repositoryName);
+
     final collection = db.collection(repositoryName);
     var selector = afterSequence != null
         ? where.gt('serverSequence', afterSequence)
         : where;
 
-    // For counter_log: ALWAYS sort descending to get most recent logs first
-    // Old logs are historical only and have no practical value
-    // For other repositories: sort ascending for deduplication logic
-    if (repositoryName == 'counter_log') {
-      selector = selector.sortBy('serverSequence', descending: true);
-    } else {
-      selector = selector.sortBy('serverSequence');
-    }
+    // Apply sorting based on repository configuration
+    selector = selector.sortBy('serverSequence', descending: config.sortDescending);
 
     // Don't apply limit in query - we need all events to properly group by dataId
     final cursor = collection.find(selector);
@@ -668,9 +806,9 @@ class WebSocketSyncServer {
       allEvents.add(map);
     });
 
-    // Skip deduplication for counter_log - all log events preserved in descending order
-    if (repositoryName == 'counter_log') {
-      // Return all events in descending order (newest first) with optional limit
+    // Skip deduplication if repository config specifies no deduplication
+    if (!config.shouldDeduplicate) {
+      // Return all events with optional limit
       if (limit != null && limit > 0) {
         return allEvents.take(limit).toList();
       }
@@ -706,7 +844,10 @@ class WebSocketSyncServer {
 
     // Convert back to list and sort by serverSequence
     final results = latestEventsByDataId.values.toList()
-      ..sort((a, b) => (a['serverSequence'] as int).compareTo(b['serverSequence'] as int));
+      ..sort(
+        (a, b) =>
+            (a['serverSequence'] as int).compareTo(b['serverSequence'] as int),
+      );
 
     // Apply limit after grouping
     if (limit != null && limit > 0) {
@@ -722,9 +863,11 @@ class WebSocketSyncServer {
     final result = <String, List<Map<String, dynamic>>>{};
 
     for (final repo in repos) {
-      // Limit counter_log to 5 most recent events to avoid overwhelming clients
-      final limit = repo == 'counter_log' ? 5 : null;
-      result[repo] = await fetchEvents(repo, limit: limit);
+      // Get limit from repository configuration
+      final config = _getRepositoryConfig(repo);
+      final events = await fetchEvents(repo, limit: config.defaultLimit);
+      // Note: fetchEvents() already handles sorting based on config, no need to sort again
+      result[repo] = events;
     }
 
     return result;
@@ -779,6 +922,9 @@ class WebSocketSyncServer {
 
     return cleaned;
   }
+
+  /// Sorts event lists by their serverSequence value.
+  /// Defaults to descending order unless `descending` is false.
 }
 
 /// Represents a connected WebSocket client.
@@ -790,18 +936,19 @@ class ConnectedClient {
   bool isAuthenticated = false;
   StreamSubscription? _subscription;
 
-  ConnectedClient({
-    required this.webSocket,
-    required this.server,
-  });
+  ConnectedClient({required this.webSocket, required this.server});
 
   /// Starts listening for messages from the client.
   void listen({required VoidCallback onDone}) {
     _subscription = webSocket.listen(
       _onMessage,
       onError: (error, stackTrace) {
-        dev.log('Client error: $error',
-            name: logTag, error: error, stackTrace: stackTrace);
+        dev.log(
+          'Client error: $error',
+          name: logTag,
+          error: error,
+          stackTrace: stackTrace,
+        );
         close();
         onDone();
       },
@@ -859,12 +1006,13 @@ class ConnectedClient {
           });
       }
     } catch (e, s) {
-      dev.log('Error processing message: $e',
-          name: logTag, error: e, stackTrace: s);
-      sendMessage({
-        'type': 'error',
-        'message': 'Error processing message: $e',
-      });
+      dev.log(
+        'Error processing message: $e',
+        name: logTag,
+        error: e,
+        stackTrace: s,
+      );
+      sendMessage({'type': 'error', 'message': 'Error processing message: $e'});
     }
   }
 
@@ -874,9 +1022,7 @@ class ConnectedClient {
     isAuthenticated = true;
     dev.log('Client authenticated', name: logTag);
 
-    sendMessage({
-      'type': 'auth_success',
-    });
+    sendMessage({'type': 'auth_success'});
   }
 
   /// Handles ping (heartbeat).
@@ -887,10 +1033,7 @@ class ConnectedClient {
   /// Handles push event request.
   Future<void> _handlePushEvent(Map<String, dynamic> message) async {
     if (!isAuthenticated) {
-      sendMessage({
-        'type': 'error',
-        'message': 'Not authenticated',
-      });
+      sendMessage({'type': 'error', 'message': 'Not authenticated'});
       return;
     }
 
@@ -898,10 +1041,7 @@ class ConnectedClient {
     final event = message['event'] as Map<String, dynamic>?;
 
     if (repositoryName == null || event == null) {
-      sendMessage({
-        'type': 'error',
-        'message': 'Missing repository or event',
-      });
+      sendMessage({'type': 'error', 'message': 'Missing repository or event'});
       return;
     }
 
@@ -917,20 +1057,14 @@ class ConnectedClient {
         },
       });
     } catch (e) {
-      sendMessage({
-        'type': 'error',
-        'message': 'Failed to push event: $e',
-      });
+      sendMessage({'type': 'error', 'message': 'Failed to push event: $e'});
     }
   }
 
   /// Handles push events batch request.
   Future<void> _handlePushEventsBatch(Map<String, dynamic> message) async {
     if (!isAuthenticated) {
-      sendMessage({
-        'type': 'error',
-        'message': 'Not authenticated',
-      });
+      sendMessage({'type': 'error', 'message': 'Not authenticated'});
       return;
     }
 
@@ -938,15 +1072,15 @@ class ConnectedClient {
     final events = message['events'] as List<dynamic>?;
 
     if (repositoryName == null || events == null) {
-      sendMessage({
-        'type': 'error',
-        'message': 'Missing repository or events',
-      });
+      sendMessage({'type': 'error', 'message': 'Missing repository or events'});
       return;
     }
 
     try {
-      dev.log('Received batch of ${events.length} events for $repositoryName', name: logTag);
+      dev.log(
+        'Received batch of ${events.length} events for $repositoryName',
+        name: logTag,
+      );
       final eventList = events.cast<Map<String, dynamic>>();
       for (var i = 0; i < eventList.length; i++) {
         dev.log('Event $i keys: ${eventList[i].keys.toList()}', name: logTag);
@@ -958,9 +1092,7 @@ class ConnectedClient {
       sendMessage({
         'type': 'ack',
         'eventIds': eventIds,
-        'repositories': {
-          repositoryName: eventIds,
-        },
+        'repositories': {repositoryName: eventIds},
       });
     } catch (e) {
       sendMessage({
@@ -973,10 +1105,7 @@ class ConnectedClient {
   /// Handles request for events after a given sequence number.
   Future<void> _handleRequestEvents(Map<String, dynamic> message) async {
     if (!isAuthenticated) {
-      sendMessage({
-        'type': 'error',
-        'message': 'Not authenticated',
-      });
+      sendMessage({'type': 'error', 'message': 'Not authenticated'});
       return;
     }
 
@@ -985,16 +1114,14 @@ class ConnectedClient {
     final limit = message['limit'] as int?;
 
     if (repositoryName == null) {
-      sendMessage({
-        'type': 'error',
-        'message': 'Missing repository',
-      });
+      sendMessage({'type': 'error', 'message': 'Missing repository'});
       return;
     }
 
     try {
-      // Apply default limit of 5 for counter_log if not specified
-      final effectiveLimit = limit ?? (repositoryName == 'counter_log' ? 5 : null);
+      // Get default limit from repository configuration
+      final config = WebSocketSyncServer._getRepositoryConfig(repositoryName);
+      final effectiveLimit = limit ?? config.defaultLimit;
 
       final events = await server.fetchEvents(
         repositoryName,
@@ -1010,25 +1137,16 @@ class ConnectedClient {
         });
       }
 
-      sendMessage({
-        'type': 'sync_complete',
-        'repository': repositoryName,
-      });
+      sendMessage({'type': 'sync_complete', 'repository': repositoryName});
     } catch (e) {
-      sendMessage({
-        'type': 'error',
-        'message': 'Failed to fetch events: $e',
-      });
+      sendMessage({'type': 'error', 'message': 'Failed to fetch events: $e'});
     }
   }
 
   /// Handles request for all events from all repositories.
   Future<void> _handleRequestAllEvents() async {
     if (!isAuthenticated) {
-      sendMessage({
-        'type': 'error',
-        'message': 'Not authenticated',
-      });
+      sendMessage({'type': 'error', 'message': 'Not authenticated'});
       return;
     }
 
@@ -1045,9 +1163,7 @@ class ConnectedClient {
         }
       }
 
-      sendMessage({
-        'type': 'sync_complete',
-      });
+      sendMessage({'type': 'sync_complete'});
     } catch (e) {
       sendMessage({
         'type': 'error',
@@ -1060,8 +1176,10 @@ class ConnectedClient {
   void _handleEventsReceived(Map<String, dynamic> message) {
     final repository = message['repository'];
     final count = message['count'];
-    dev.log('Client confirmed receipt of $count events from $repository',
-        name: logTag);
+    dev.log(
+      'Client confirmed receipt of $count events from $repository',
+      name: logTag,
+    );
   }
 
   /// Sends a message to the client.
