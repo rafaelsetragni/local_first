@@ -844,7 +844,7 @@ class RepositoryService {
 
     // Initialize PeriodicSyncStrategy with callbacks
     syncStrategy = PeriodicSyncStrategy(
-      syncInterval: Duration(seconds: 5),
+      syncInterval: Duration(seconds: 2),
       repositoryNames: [
         RepositoryNames.user,
         RepositoryNames.counterLog,
@@ -899,7 +899,6 @@ class RepositoryService {
     String repositoryName,
     List<JsonMap<dynamic>> events,
   ) async {
-    print('[CLIENT] _saveSyncState called: repo=$repositoryName, events=${events.length}');
     dev.log(
       '[_saveSyncState] Called for $repositoryName with ${events.length} events',
       name: tag,
@@ -907,30 +906,16 @@ class RepositoryService {
 
     final manager = _syncStateManager;
     if (manager == null) {
-      print('[CLIENT] ERROR: Manager is null!');
       dev.log('[_saveSyncState] Manager is null!', name: tag);
       return;
     }
 
     if (events.isEmpty) {
-      print('[CLIENT] Events list is empty');
       dev.log('[_saveSyncState] Events list is empty', name: tag);
       return;
     }
 
-    // Debug: Log first event structure to see what fields are available
-    print('[CLIENT] First event: ${events.first}');
-    dev.log(
-      '[_saveSyncState] First event keys: ${events.first.keys.toList()}',
-      name: tag,
-    );
-    dev.log(
-      '[_saveSyncState] First event data: ${events.first}',
-      name: tag,
-    );
-
     final maxSequence = manager.extractMaxSequence(events);
-    print('[CLIENT] Extracted maxSequence: $maxSequence');
     dev.log(
       '[_saveSyncState] Extracted maxSequence: $maxSequence',
       name: tag,
@@ -939,19 +924,16 @@ class RepositoryService {
     if (maxSequence != null) {
       // Save the last sequence we processed
       // The server is responsible for returning only events > seq using where.gt()
-      print('[CLIENT] Saving sequence $maxSequence for $repositoryName');
       dev.log(
         '[_saveSyncState] Saving sequence $maxSequence for $repositoryName',
         name: tag,
       );
       await manager.saveLastSequence(repositoryName, maxSequence);
-      print('[CLIENT] Sequence saved successfully');
       dev.log(
         '[_saveSyncState] Sequence saved successfully',
         name: tag,
       );
     } else {
-      print('[CLIENT] ERROR: maxSequence is null - not saving');
       dev.log(
         '[_saveSyncState] maxSequence is null - not saving',
         name: tag,

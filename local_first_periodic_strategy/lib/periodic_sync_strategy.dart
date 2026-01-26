@@ -290,14 +290,10 @@ class PeriodicSyncStrategy extends DataSyncStrategy {
           remoteChanges: remoteEvents,
         );
 
-        print('[STRATEGY] About to call onSaveSyncState for $repositoryName with ${remoteEvents.length} events');
-
         // Save sync state via callback
         try {
           await onSaveSyncState(repositoryName, remoteEvents);
-          print('[STRATEGY] onSaveSyncState completed successfully');
         } catch (e, s) {
-          print('[STRATEGY] ERROR in onSaveSyncState: $e');
           dev.log(
             'Error in onSaveSyncState callback for $repositoryName: $e',
             name: logTag,
