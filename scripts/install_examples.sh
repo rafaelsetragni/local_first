@@ -97,6 +97,7 @@ EXAMPLES=(
   "local_first_sqlite_storage/example"
   "local_first_shared_preferences/example"
   "local_first_websocket/example"
+  "local_first_periodic_strategy/example"
 )
 
 FAILED=0

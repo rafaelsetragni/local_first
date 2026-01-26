@@ -1,0 +1,26 @@
+name: local_first_periodic_strategy_example
+description: Example app demonstrating periodic synchronization strategy.
+publish_to: none
+
+resolution: workspace
+
+environment:
+  sdk: ^3.10.0
+  flutter: ">=1.17.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  local_first:
+  local_first_periodic_strategy:
+  local_first_hive_storage:
+  hive_flutter: ^1.1.0
+  http: ^1.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
