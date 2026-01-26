@@ -495,6 +495,7 @@ class WebSocketSyncServer {
     final eventId = event['eventId'];
 
     try {
+      dev.log('Checking if event exists: $eventId in $repositoryName', name: logTag);
       // Check if event already exists
       final existing = await collection.findOne(where.eq('eventId', eventId));
 
@@ -505,15 +506,21 @@ class WebSocketSyncServer {
         return;
       }
 
+      dev.log('Getting next sequence for $repositoryName', name: logTag);
       // Get next sequence number
       final serverSequence = await _getNextSequence(repositoryName);
 
+      dev.log('Preparing event with sequence $serverSequence', name: logTag);
       // Add server sequence to event and ensure no _id field
       final eventWithSequence = Map<String, dynamic>.from(event)
         ..remove('_id') // Remove any _id field from client
         ..['serverSequence'] = serverSequence;
 
-      await collection.insertOne(eventWithSequence);
+      // Ensure all nested maps and values are properly serialized
+      final cleanedEvent = _cleanEventForMongo(eventWithSequence);
+
+      dev.log('Inserting event into MongoDB: ${cleanedEvent.keys.toList()}', name: logTag);
+      await collection.insertOne(cleanedEvent);
 
       dev.log('Event $eventId pushed to $repositoryName with sequence $serverSequence', name: logTag);
 
@@ -594,6 +601,35 @@ class WebSocketSyncServer {
         }
       }
     }
+  }
+
+  /// Cleans event data for MongoDB insertion by ensuring proper types.
+  /// This handles any legacy data or edge cases where types might not match.
+  Map<String, dynamic> _cleanEventForMongo(Map<String, dynamic> event) {
+    final cleaned = <String, dynamic>{};
+
+    for (final entry in event.entries) {
+      final key = entry.key;
+      final value = entry.value;
+
+      if (value == null) {
+        cleaned[key] = null;
+      } else if (value is Map) {
+        cleaned[key] = _cleanEventForMongo(value.cast<String, dynamic>());
+      } else if (value is List) {
+        cleaned[key] = value.map((item) {
+          if (item is Map) {
+            return _cleanEventForMongo(item.cast<String, dynamic>());
+          }
+          return item;
+        }).toList();
+      } else {
+        // Keep primitive types as-is
+        cleaned[key] = value;
+      }
+    }
+
+    return cleaned;
   }
 }
 
@@ -762,7 +798,11 @@ class ConnectedClient {
     }
 
     try {
+      dev.log('Received batch of ${events.length} events for $repositoryName', name: logTag);
       final eventList = events.cast<Map<String, dynamic>>();
+      for (var i = 0; i < eventList.length; i++) {
+        dev.log('Event $i keys: ${eventList[i].keys.toList()}', name: logTag);
+      }
       await server.pushEventsBatch(repositoryName, eventList);
 
       // Send acknowledgment

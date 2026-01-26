@@ -535,7 +535,24 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
       throw StateError('WebSocket not connected');
     }
 
-    channel.sink.add(jsonEncode(message));
+    // Convert DateTime objects to ISO 8601 strings
+    final jsonSafeMessage = _convertToJsonSafe(message);
+    channel.sink.add(jsonEncode(jsonSafeMessage));
+  }
+
+  /// Converts a map to JSON-safe format by converting DateTime to ISO 8601 strings.
+  dynamic _convertToJsonSafe(dynamic value) {
+    if (value == null) {
+      return null;
+    } else if (value is DateTime) {
+      return value.toIso8601String();
+    } else if (value is Map) {
+      return value.map((key, val) => MapEntry(key, _convertToJsonSafe(val)));
+    } else if (value is List) {
+      return value.map(_convertToJsonSafe).toList();
+    } else {
+      return value;
+    }
   }
 
   /// Authenticates with the server.
