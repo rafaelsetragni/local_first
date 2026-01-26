@@ -70,7 +70,7 @@ void main() {
       if (result.exitCode != 0) {
         throw Exception(
           'MongoDB container not found or not running. '
-          'Start it with: melos websocket:server',
+          'Start it with: melos server:start',
         );
       }
     } catch (e) {
@@ -954,6 +954,79 @@ void main() {
       expect(response['type'], 'pong');
 
       await ws.close();
+    });
+
+    test('Server sends ping and client responds with pong', () async {
+      final ws = await WebSocket.connect(wsUrl);
+      final authCompleter = Completer<void>();
+      final pingCompleter = Completer<Map<String, dynamic>>();
+
+      ws.listen((message) {
+        final data = jsonDecode(message as String) as Map<String, dynamic>;
+        if (data['type'] == 'auth_success') {
+          authCompleter.complete();
+        } else if (data['type'] == 'ping') {
+          // Server sent ping, respond with pong
+          ws.add(jsonEncode({'type': 'pong'}));
+          pingCompleter.complete(data);
+        }
+      });
+
+      // Authenticate first
+      ws.add(jsonEncode({'type': 'auth', 'token': 'test_token'}));
+
+      await authCompleter.future.timeout(
+        Duration(seconds: 5),
+        onTimeout: () => fail('Auth timeout'),
+      );
+
+      // Wait for server to send ping (should happen within 3 seconds)
+      final pingMessage = await pingCompleter.future.timeout(
+        Duration(seconds: 5),
+        onTimeout: () => fail('Server did not send ping within 5 seconds'),
+      );
+
+      expect(pingMessage['type'], 'ping');
+
+      await ws.close();
+    });
+
+    test('Server disconnects client after pong timeout', () async {
+      final ws = await WebSocket.connect(wsUrl);
+      final authCompleter = Completer<void>();
+      final disconnectCompleter = Completer<void>();
+
+      ws.listen(
+        (message) {
+          final data = jsonDecode(message as String) as Map<String, dynamic>;
+          if (data['type'] == 'auth_success') {
+            authCompleter.complete();
+          }
+          // Ignore ping messages - don't respond with pong
+        },
+        onDone: () {
+          // Connection closed by server
+          disconnectCompleter.complete();
+        },
+      );
+
+      // Authenticate first
+      ws.add(jsonEncode({'type': 'auth', 'token': 'test_token'}));
+
+      await authCompleter.future.timeout(
+        Duration(seconds: 5),
+        onTimeout: () => fail('Auth timeout'),
+      );
+
+      // Wait for server to disconnect (should happen after 10s timeout + a few pings)
+      // Server pings every 3s, timeout is 10s, so disconnect should happen within ~13s
+      await disconnectCompleter.future.timeout(
+        Duration(seconds: 15),
+        onTimeout: () => fail('Server did not disconnect inactive client'),
+      );
+
+      // If we got here, server correctly disconnected the client
+      expect(disconnectCompleter.isCompleted, true);
     });
   });
 

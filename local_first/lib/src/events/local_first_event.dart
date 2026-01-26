@@ -98,7 +98,7 @@ abstract class LocalFirstEvent<T> {
     final baseMeta = (
       id: eventId ?? lastEventId!,
       status: SyncStatus.values[statusIndex],
-      createdAt: createdAt!,
+      createdAt: createdAt,
     );
 
     if (operation == SyncOperation.delete) {

@@ -1,0 +1,16 @@
+name: local_first_periodic_strategy
+description: A reusable periodic synchronization strategy plugin for LocalFirst framework
+version: 1.0.0
+publish_to: 'none'
+resolution: workspace
+
+environment:
+  sdk: ^3.10.0
+
+dependencies:
+  local_first:
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  lints: ^6.0.0

@@ -18,7 +18,7 @@ import 'package:mongo_dart/mongo_dart.dart';
 /// REST API Endpoints:
 /// - GET /api/health - Health check
 /// - GET /api/repositories - List available repositories
-/// - GET /api/events/{repository}?afterSequence={n} - Get events after sequence
+/// - GET /api/events/{repository}?seq={n} - Get events after sequence
 /// - GET /api/events/{repository}/{eventId} - Get specific event
 /// - GET /api/events/{repository}/byDataId/{dataId} - Get event by dataId
 /// - POST /api/events/{repository} - Create single event
@@ -27,7 +27,7 @@ import 'package:mongo_dart/mongo_dart.dart';
 /// To run this server:
 /// ```bash
 /// # From the monorepo root (recommended):
-/// melos websocket:server
+/// melos server:start
 ///
 /// # Or directly:
 /// cd server && dart run websocket_server.dart
@@ -36,7 +36,7 @@ import 'package:mongo_dart/mongo_dart.dart';
 /// dart run websocket_server.dart --test
 /// ```
 ///
-/// The recommended `melos websocket:server` command automatically:
+/// The recommended `melos server:start` command automatically:
 /// - Starts MongoDB with Docker Compose
 /// - Configures networking between services
 /// - Shows real-time logs
@@ -442,7 +442,7 @@ class WebSocketSyncServer {
     }
   }
 
-  /// Handles GET /api/events/{repository}?afterSequence={n} - Get events after sequence.
+  /// Handles GET /api/events/{repository}?seq={n} - Get events after sequence.
   Future<void> _handleGetEvents(HttpRequest request, String repository) async {
     final response = request.response;
     final db = _db;
@@ -457,7 +457,7 @@ class WebSocketSyncServer {
     }
 
     try {
-      final afterSequence = request.uri.queryParameters['afterSequence'];
+      final seqParam = request.uri.queryParameters['seq'];
       final limitParam = request.uri.queryParameters['limit'];
 
       // Get default limit from repository configuration
@@ -467,13 +467,23 @@ class WebSocketSyncServer {
           ? (int.tryParse(limitParam) ?? defaultLimit)
           : defaultLimit;
 
+      // Log incoming fetch request
+      final afterSeq = seqParam != null ? int.tryParse(seqParam) : null;
+      print('[REST GET] Repository: $repository, afterSeq: ${afterSeq ?? "none"}, limit: $limit');
+
       final events = await fetchEvents(
         repository,
-        afterSequence: afterSequence != null
-            ? int.tryParse(afterSequence)
-            : null,
+        afterSequence: afterSeq,
         limit: limit,
       );
+
+      // Log fetch result
+      if (events.isNotEmpty) {
+        final sequences = events.map((e) => e['serverSequence']).toList();
+        print('[REST GET] ✓ Returned ${events.length} events with sequences: $sequences');
+      } else {
+        print('[REST GET] ✓ No events found (all up to date)');
+      }
 
       response.statusCode = HttpStatus.ok;
       response.write(
@@ -642,6 +652,9 @@ class WebSocketSyncServer {
 
       final events = (body['events'] as List).cast<Map<String, dynamic>>();
 
+      // Log incoming push request
+      print('[REST POST] Repository: $repository, events: ${events.length}');
+
       // Validate all events have eventId
       for (final event in events) {
         if (!event.containsKey('eventId')) {
@@ -658,6 +671,7 @@ class WebSocketSyncServer {
       await pushEventsBatch(repository, events);
 
       final eventIds = events.map((e) => e['eventId'] as String).toList();
+      print('[REST POST] ✓ Saved ${eventIds.length} events: ${eventIds.take(5).join(", ")}${eventIds.length > 5 ? "..." : ""}');
 
       response.statusCode = HttpStatus.created;
       response.write(
@@ -806,8 +820,7 @@ class WebSocketSyncServer {
 
     await cursor.forEach((doc) {
       final map = Map<String, dynamic>.from(doc)
-        ..remove('_id')
-        ..putIfAbsent('repository', () => repositoryName);
+        ..remove('_id'); // Remove MongoDB internal _id field only
       allEvents.add(map);
     });
 
@@ -935,11 +948,16 @@ class WebSocketSyncServer {
 /// Represents a connected WebSocket client.
 class ConnectedClient {
   static const logTag = 'ConnectedClient';
+  static const _pingInterval = Duration(seconds: 3);
+  static const _pongTimeout = Duration(seconds: 10);
 
   final WebSocket webSocket;
   final WebSocketSyncServer server;
   bool isAuthenticated = false;
   StreamSubscription? _subscription;
+  Timer? _pingTimer;
+  DateTime? _lastPongTime;
+  bool _waitingForPong = false;
 
   ConnectedClient({required this.webSocket, required this.server});
 
@@ -966,6 +984,47 @@ class ConnectedClient {
     );
   }
 
+  /// Starts the ping timer to check client liveness.
+  void _startPingTimer() {
+    _pingTimer?.cancel();
+    _lastPongTime = DateTime.now();
+    print(
+      '[PING] 🔄 Starting ping timer (interval: ${_pingInterval.inSeconds}s, timeout: ${_pongTimeout.inSeconds}s)',
+    );
+    _pingTimer = Timer.periodic(_pingInterval, (_) {
+      _checkClientLiveness();
+    });
+  }
+
+  /// Checks if the client is still alive by sending ping and checking for timeout.
+  void _checkClientLiveness() {
+    final now = DateTime.now();
+
+    // If we're waiting for a pong and timeout has passed, disconnect
+    if (_waitingForPong && _lastPongTime != null) {
+      final timeSinceLastPong = now.difference(_lastPongTime!);
+      if (timeSinceLastPong > _pongTimeout) {
+        print(
+          '[PING] ⏱️  TIMEOUT: Client failed to respond within ${_pongTimeout.inSeconds}s - disconnecting',
+        );
+        close();
+        return;
+      }
+    }
+
+    // Send ping to client
+    _waitingForPong = true;
+    print('[PING] 📡 Sending PING to client');
+    sendMessage({'type': 'ping'});
+  }
+
+  /// Handles pong response from client.
+  void _handlePong() {
+    _lastPongTime = DateTime.now();
+    _waitingForPong = false;
+    print('[PING] ✅ Received PONG from client');
+  }
+
   /// Processes a message from the client.
   Future<void> _onMessage(dynamic rawMessage) async {
     try {
@@ -981,6 +1040,10 @@ class ConnectedClient {
 
         case 'ping':
           _handlePing();
+          break;
+
+        case 'pong':
+          _handlePong();
           break;
 
         case 'push_event':
@@ -1028,10 +1091,14 @@ class ConnectedClient {
     dev.log('Client authenticated', name: logTag);
 
     sendMessage({'type': 'auth_success'});
+
+    // Start ping timer to monitor client liveness
+    _startPingTimer();
   }
 
-  /// Handles ping (heartbeat).
+  /// Handles ping (heartbeat) from client.
   void _handlePing() {
+    print('[PING] 📡 Received PING from client, sending PONG');
     sendMessage({'type': 'pong'});
   }
 
@@ -1051,7 +1118,9 @@ class ConnectedClient {
     }
 
     try {
+      print('[WS PUSH] Repository: $repositoryName, event: ${event['eventId']}');
       await server.pushEvent(repositoryName, event);
+      print('[WS PUSH] ✓ Saved event: ${event['eventId']}');
 
       // Send acknowledgment
       sendMessage({
@@ -1082,18 +1151,15 @@ class ConnectedClient {
     }
 
     try {
-      dev.log(
-        'Received batch of ${events.length} events for $repositoryName',
-        name: logTag,
-      );
       final eventList = events.cast<Map<String, dynamic>>();
-      for (var i = 0; i < eventList.length; i++) {
-        dev.log('Event $i keys: ${eventList[i].keys.toList()}', name: logTag);
-      }
+      print('[WS PUSH] Repository: $repositoryName, events: ${eventList.length}');
+
       await server.pushEventsBatch(repositoryName, eventList);
 
-      // Send acknowledgment
       final eventIds = eventList.map((e) => e['eventId'] as String).toList();
+      print('[WS PUSH] ✓ Saved ${eventIds.length} events: ${eventIds.take(5).join(", ")}${eventIds.length > 5 ? "..." : ""}');
+
+      // Send acknowledgment
       sendMessage({
         'type': 'ack',
         'eventIds': eventIds,
@@ -1128,6 +1194,8 @@ class ConnectedClient {
       final config = WebSocketSyncServer._getRepositoryConfig(repositoryName);
       final effectiveLimit = limit ?? config.defaultLimit;
 
+      print('[WS GET] Repository: $repositoryName, afterSeq: ${afterSequence ?? "none"}, limit: $effectiveLimit');
+
       final events = await server.fetchEvents(
         repositoryName,
         afterSequence: afterSequence,
@@ -1135,11 +1203,15 @@ class ConnectedClient {
       );
 
       if (events.isNotEmpty) {
+        final sequences = events.map((e) => e['serverSequence']).toList();
+        print('[WS GET] ✓ Returned ${events.length} events with sequences: $sequences');
         sendMessage({
           'type': 'events',
           'repository': repositoryName,
           'events': events,
         });
+      } else {
+        print('[WS GET] ✓ No events found (all up to date)');
       }
 
       sendMessage({'type': 'sync_complete', 'repository': repositoryName});
@@ -1198,6 +1270,8 @@ class ConnectedClient {
 
   /// Closes the client connection.
   Future<void> close() async {
+    _pingTimer?.cancel();
+    _pingTimer = null;
     await _subscription?.cancel();
     await webSocket.close();
   }

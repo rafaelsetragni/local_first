@@ -26,7 +26,7 @@ The simplest way to run the full stack (MongoDB + WebSocket Server):
 
 ```bash
 # From the monorepo root
-melos websocket:server
+melos server:start
 ```
 
 This single command will:
@@ -39,8 +39,12 @@ This single command will:
 
 To stop all services:
 ```bash
-cd server
-docker compose down
+melos server:stop
+```
+
+To restart the server:
+```bash
+melos server:restart
 ```
 
 To stop and remove all data (clean slate):

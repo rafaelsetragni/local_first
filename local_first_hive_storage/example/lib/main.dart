@@ -5,27 +5,25 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:local_first/local_first.dart';
 import 'package:local_first_hive_storage/local_first_hive_storage.dart';
-import 'package:mongo_dart/mongo_dart.dart' hide State, Center;
+import 'package:local_first_periodic_strategy/local_first_periodic_strategy.dart';
 
-// To use this example, first you need to start a MongoDB service, and
-// you can do it easily creating an container instance using Docker.
-// First, install docker desktop on your machine, then copy and
-// paste the command below at your terminal:
+import 'rest_api_client.dart';
+
+// To use this example, you need to start the WebSocket server.
+// From the monorepo root, run:
 //
-// docker run -d --name mongo_local -p 27017:27017 \
+// melos server:start
+//
+// The server will start on port 8080 with MongoDB backend.
+// Make sure MongoDB is running using Docker:
+//
+// docker run -d --name local_first_mongodb -p 27017:27017 \
 //   -e MONGO_INITDB_ROOT_USERNAME=admin \
 //   -e MONGO_INITDB_ROOT_PASSWORD=admin mongo:7
-//
-// You can check the service status using the command below:
-//
-// docker stats mongo_local
-//
-// The URI below authenticates against the admin database and targets
-// the "remote_counter_db" database for reads/writes.
-const mongoConnectionString =
-    'mongodb://admin:admin@127.0.0.1:27017/remote_counter_db?authSource=admin';
+const serverBaseUrl = 'http://127.0.0.1:8080';
 
-const appName = 'LocalFirst Hive Counter';
+const appName = 'LF Periodic';
+const appNameFull = 'Local First\nPeriodic';
 
 /// Centralized string keys to avoid magic field names.
 class RepositoryNames {
@@ -144,7 +142,8 @@ class _SignInPageState extends State<SignInPage> {
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     Text(
-                      appName,
+                      appNameFull,
+                      textAlign: TextAlign.center,
                       style: TextTheme.of(context).headlineMedium,
                     ),
                     SizedBox(height: 4),
@@ -745,6 +744,52 @@ class NavigatorService {
   void navigateToSignIn() => pushReplacement(const SignInPage());
 }
 
+/// Manages sync state using server sequences per repository
+///
+/// IMPORTANT: Sequences are stored per namespace to ensure proper isolation
+/// between different users. Each user has their own set of lastSequence values.
+class SyncStateManager {
+  final LocalFirstClient client;
+  final String Function() getNamespace;
+  final _sequenceKeyPrefix = '__last_sequence__';
+
+  SyncStateManager(this.client, this.getNamespace);
+
+  /// Builds a namespace-aware key for storing sequence numbers
+  /// Format: `{namespace}__last_sequence__{repositoryName}`
+  String _buildSequenceKey(String repositoryName) {
+    final namespace = getNamespace();
+    return '${namespace}_$_sequenceKeyPrefix$repositoryName';
+  }
+
+  /// Gets the last synced sequence for a repository in the current namespace
+  Future<int?> getLastSequence(String repositoryName) async {
+    final key = _buildSequenceKey(repositoryName);
+    final value = await client.getConfigValue(key);
+    return value != null ? int.tryParse(value) : null;
+  }
+
+  /// Saves the last synced sequence for a repository in the current namespace
+  Future<void> saveLastSequence(String repositoryName, int sequence) async {
+    final key = _buildSequenceKey(repositoryName);
+    await client.setConfigValue(key, sequence.toString());
+  }
+
+  /// Extracts the maximum server sequence from a list of events
+  int? extractMaxSequence(List<JsonMap<dynamic>> events) {
+    if (events.isEmpty) return null;
+
+    int? maxSequence;
+    for (final event in events) {
+      final seq = event['serverSequence'];
+      if (seq is int) {
+        maxSequence = maxSequence == null ? seq : (seq > maxSequence ? seq : maxSequence);
+      }
+    }
+    return maxSequence;
+  }
+}
+
 /// Central orchestrator that wires repositories, storage, and sync strategies,
 /// handling auth flow, namespace switching per user, session-id management per
 /// device, and provides the high-level API used by the UI to read/write data.
@@ -760,25 +805,88 @@ class RepositoryService {
   final _lastUsernameKey = '__last_username__';
   final _sessionIdPrefix = '__session_id__';
   String? _currentSessionId;
+  SyncStateManager? _syncStateManager;
+  late final RestApiClient _apiClient;
 
   final LocalFirstRepository<UserModel> userRepository;
   final LocalFirstRepository<CounterLogModel> counterLogRepository;
   final LocalFirstRepository<SessionCounterModel> sessionCounterRepository;
-  final MongoPeriodicSyncStrategy syncStrategy;
+  late final PeriodicSyncStrategy syncStrategy;
 
   // Central orchestrator for the demo: wires repositories, storage, sync
   // strategy and handles auth/session (namespace) switching.
   RepositoryService._internal()
     : userRepository = _buildUserRepository(),
       counterLogRepository = _buildCounterLogRepository(),
-      sessionCounterRepository = _buildSessionCounterRepository(),
-      syncStrategy = MongoPeriodicSyncStrategy() {
-    syncStrategy.namespace = _currentNamespace;
+      sessionCounterRepository = _buildSessionCounterRepository() {
+    // Initialize REST API client
+    _apiClient = RestApiClient(baseUrl: serverBaseUrl);
+
+    // Initialize PeriodicSyncStrategy with callbacks
+    syncStrategy = PeriodicSyncStrategy(
+      syncInterval: Duration(seconds: 5),
+      repositoryNames: [
+        RepositoryNames.user,
+        RepositoryNames.counterLog,
+        RepositoryNames.sessionCounter,
+      ],
+      onFetchEvents: _fetchEvents,
+      onPushEvents: _pushEvents,
+      onBuildSyncFilter: _buildSyncFilter,
+      onSaveSyncState: _saveSyncState,
+      onPing: _apiClient.ping,
+    );
   }
 
   String get namespace => _currentNamespace;
 
   Stream<bool> get connectionState => syncStrategy.connectionChanges;
+
+  /// Fetches events from the server using the REST API
+  Future<List<JsonMap>> _fetchEvents(String repositoryName) async {
+    final manager = _syncStateManager;
+    final lastSequence = await manager?.getLastSequence(repositoryName);
+
+    return await _apiClient.fetchEvents(
+      repositoryName,
+      afterSequence: lastSequence,
+    );
+  }
+
+  /// Pushes events to the server using the REST API
+  Future<bool> _pushEvents(
+    String repositoryName,
+    LocalFirstEvents events,
+  ) async {
+    return await _apiClient.pushEvents(repositoryName, events);
+  }
+
+  /// Builds sync filter using server sequences
+  Future<JsonMap<dynamic>?> _buildSyncFilter(String repositoryName) async {
+    final manager = _syncStateManager;
+    if (manager == null) return null;
+
+    final lastSequence = await manager.getLastSequence(repositoryName);
+    if (lastSequence == null) {
+      return null;
+    }
+
+    return {'afterSequence': lastSequence};
+  }
+
+  /// Called when sync is completed - saves the latest sequence
+  Future<void> _saveSyncState(
+    String repositoryName,
+    List<JsonMap<dynamic>> events,
+  ) async {
+    final manager = _syncStateManager;
+    if (manager == null || events.isEmpty) return;
+
+    final maxSequence = manager.extractMaxSequence(events);
+    if (maxSequence != null) {
+      await manager.saveLastSequence(repositoryName, maxSequence);
+    }
+  }
 
   /// Initializes the client/storage and restores last logged user if possible.
   Future<UserModel?> initialize() async {
@@ -793,6 +901,10 @@ class RepositoryService {
     );
 
     await localFirst.initialize();
+
+    // Initialize sync state manager after client is ready
+    _syncStateManager = SyncStateManager(localFirst, () => _currentNamespace);
+
     return await restoreLastUser();
   }
 
@@ -823,16 +935,13 @@ class RepositoryService {
     syncStrategy.stop();
     final localUser = UserModel(username: username, avatarUrl: null);
     await _switchUserDatabase(localUser.id);
-    final syncedUsers = await _syncRemoteUsersToLocal();
+    await _syncRemoteUsersToLocal();
     final existing = await userRepository
         .query()
         .where(userRepository.idFieldName, isEqualTo: localUser.id)
         .getAll();
     if (existing.isNotEmpty) {
       authenticatedUser = existing.first.data;
-    } else if (syncedUsers.any((user) => user.id == localUser.id)) {
-      authenticatedUser =
-          syncedUsers.firstWhere((user) => user.id == localUser.id);
     } else {
       authenticatedUser = localUser;
       await userRepository.upsert(localUser, needSync: true);
@@ -844,19 +953,29 @@ class RepositoryService {
   }
 
   Future<List<UserModel>> _syncRemoteUsersToLocal() async {
-    final remote = await syncStrategy.fetchUsers();
-    final syncedUsers = <UserModel>[];
-    for (final data in remote) {
-      final user = userRepository.fromJson(data);
-      syncedUsers.add(user);
-      final exists = await userRepository
-          .query()
-          .where(userRepository.idFieldName, isEqualTo: user.id)
-          .getAll();
-      if (exists.isNotEmpty) continue;
-      await userRepository.upsert(user, needSync: false);
+    try {
+      // Fetch users from server REST API
+      final events = await _apiClient.fetchEvents(RepositoryNames.user);
+
+      final syncedUsers = <UserModel>[];
+      for (final eventJson in events) {
+        final data = eventJson[LocalFirstEvent.kData] as Map<String, dynamic>?;
+        if (data == null) continue;
+
+        final user = userRepository.fromJson(JsonMap.from(data));
+        syncedUsers.add(user);
+        final exists = await userRepository
+            .query()
+            .where(userRepository.idFieldName, isEqualTo: user.id)
+            .getAll();
+        if (exists.isNotEmpty) continue;
+        await userRepository.upsert(user, needSync: false);
+      }
+      return syncedUsers;
+    } catch (e, s) {
+      dev.log('Error syncing users: $e', name: tag, error: e, stackTrace: s);
+      return [];
     }
-    return syncedUsers;
   }
 
   /// Clears auth/session state and navigates back to sign-in.
@@ -908,16 +1027,14 @@ class RepositoryService {
 
   Future<T> _withGlobalString<T>(Future<T> Function() action) async {
     final storage = localFirst?.localStorage;
-    if (storage is HiveLocalFirstStorage) {
-      final previous = storage.namespace;
-      await storage.useNamespace('default');
-      try {
-        return await action();
-      } finally {
-        await storage.useNamespace(previous);
-      }
+    if (storage == null) return await action();
+    final previous = _currentNamespace;
+    await storage.useNamespace('default');
+    try {
+      return await action();
+    } finally {
+      await storage.useNamespace(previous);
     }
-    return await action();
   }
 
   String _sessionMetaKey(String username) {
@@ -1103,12 +1220,8 @@ class RepositoryService {
     final namespace = _sanitizeNamespace(username);
     if (_currentNamespace == namespace) return;
     _currentNamespace = namespace;
-    syncStrategy.namespace = namespace;
 
-    final storage = db.localStorage;
-    if (storage is HiveLocalFirstStorage) {
-      await storage.useNamespace(namespace);
-    }
+    await db.localStorage.useNamespace(namespace);
   }
 
   /// Normalizes a username into a namespace-safe string.
@@ -1433,336 +1546,3 @@ LocalFirstRepository<SessionCounterModel> _buildSessionCounterRepository() {
   );
 }
 
-/// Periodic sync strategy that runs on a timer to push pending local events in
-/// batches to MongoDB, pull remote changes since the last cursor, merge them
-/// locally, and report connectivity status for the UI.
-class MongoPeriodicSyncStrategy extends DataSyncStrategy {
-  static const logTag = 'MongoPeriodicSyncStrategy';
-
-  final Duration period;
-  final MongoApi mongoApi;
-
-  Timer? _timer;
-  bool _isSyncing = false;
-  String _namespace = 'default';
-  final JsonMap<DateTime?> lastSyncedAt = {};
-
-  MongoPeriodicSyncStrategy({
-    MongoApi? mongoApiMock,
-    this.period = const Duration(milliseconds: 500),
-  }) : mongoApi = mongoApiMock ?? MongoApi(uri: mongoConnectionString);
-
-  set namespace(String value) => _namespace = value;
-
-  /// Boots the periodic timer and triggers an immediate sync.
-  void start() {
-    stop();
-    client.awaitInitialization.then((_) async {
-      dev.log('Starting periodic sync', name: logTag);
-      _timer = Timer.periodic(period, _onTimerTick);
-
-      // Trigger immediate sync on start (and on reconnection).
-      unawaited(_onTimerTick(null));
-    });
-  }
-
-  void stop() {
-    _timer?.cancel();
-    _timer = null;
-    lastSyncedAt.clear();
-  }
-
-  void dispose() {
-    stop();
-  }
-
-  String _lastSyncKey(String repo) => '__last_sync__${_namespace}__$repo';
-
-  /// Convenience helper to fetch all remote users for bootstrap on sign-in.
-  Future<List<JsonMap>> fetchUsers() async {
-    final fetchResult = await mongoApi
-        .fetchUserEvents(null)
-        .timeout(period * 2);
-    return fetchResult.events
-        .map((e) => e[MongoApi.dataField])
-        .whereType<JsonMap>()
-        .toList();
-  }
-
-  @override
-  Future<SyncStatus> onPushToRemote(LocalFirstEvent _) async {
-    // Return pending because this strategy syncs in batch; implement real-time sync if needed here.
-    return SyncStatus.pending;
-  }
-
-  Future<void> _onTimerTick(_) async {
-    if (_isSyncing) return;
-    _isSyncing = true;
-    try {
-      final healthy = await mongoApi.ping().timeout(period);
-      if (!healthy) {
-        reportConnectionState(false);
-        return;
-      }
-      await _pushPending().timeout(period * 2);
-      await _pullRemoteChanges();
-      reportConnectionState(true);
-    } on TimeoutException catch (e, s) {
-      dev.log('Sync timeout: $e', name: logTag, error: e, stackTrace: s);
-      reportConnectionState(false);
-    } catch (e, s) {
-      dev.log('Sync error: $e', name: logTag, error: e, stackTrace: s);
-      reportConnectionState(false);
-    } finally {
-      _isSyncing = false;
-    }
-  }
-
-  Future<void> _pushPending() => Future.wait([
-    _pushPendingUserEvents(),
-    _pushPendingCounterLogEvents(),
-    _pushPendingSessionCounterEvents(),
-  ]);
-
-  Future<void> _pushPendingUserEvents() async {
-    final pendingEvents = await getPendingEvents(
-      repositoryName: RepositoryNames.user,
-    );
-    if (pendingEvents.isEmpty) return;
-    await mongoApi.pushUserEvents(pendingEvents.toJson());
-    await markEventsAsSynced(pendingEvents);
-  }
-
-  Future<void> _pushPendingCounterLogEvents() async {
-    final pendingEvents = await getPendingEvents(
-      repositoryName: RepositoryNames.counterLog,
-    );
-    if (pendingEvents.isEmpty) return;
-    await mongoApi.pushCounterLogEvents(pendingEvents.toJson());
-    await markEventsAsSynced(pendingEvents);
-  }
-
-  Future<void> _pushPendingSessionCounterEvents() async {
-    final pendingEvents = await getPendingEvents(
-      repositoryName: RepositoryNames.sessionCounter,
-    );
-    if (pendingEvents.isEmpty) return;
-    await mongoApi.pushSessionCounterEvents(pendingEvents.toJson());
-    await markEventsAsSynced(pendingEvents);
-  }
-
-  Future<void> _pullRemoteChanges() => Future.wait([
-    _pullUserChangesFromMongoApi(),
-    _pullLogChangesFromMongoApi(),
-    _pullSessionCounterChangesFromMongoApi(),
-  ]);
-
-  Future<void> _pullUserChangesFromMongoApi() async {
-    final lastSynced = await _getLatest(RepositoryNames.user);
-    final result = await mongoApi.fetchUserEvents(lastSynced);
-    if (result.events.isEmpty) return;
-    await pullChangesToLocal(
-      repositoryName: RepositoryNames.user,
-      remoteChanges: result.events,
-    );
-    if (result.maxServerCreatedAt != null) {
-      await _updateLatest(RepositoryNames.user, result.maxServerCreatedAt!);
-    }
-  }
-
-  Future<void> _pullLogChangesFromMongoApi() async {
-    final lastSynced = await _getLatest(RepositoryNames.counterLog);
-    final result = await mongoApi.fetchCounterLogEvents(lastSynced);
-    if (result.events.isEmpty) return;
-    await pullChangesToLocal(
-      repositoryName: RepositoryNames.counterLog,
-      remoteChanges: result.events,
-    );
-    if (result.maxServerCreatedAt != null) {
-      await _updateLatest(
-        RepositoryNames.counterLog,
-        result.maxServerCreatedAt!,
-      );
-    }
-  }
-
-  Future<void> _pullSessionCounterChangesFromMongoApi() async {
-    final lastSynced = await _getLatest(RepositoryNames.sessionCounter);
-    final result = await mongoApi.fetchSessionCounterEvents(lastSynced);
-    if (result.events.isEmpty) return;
-    await pullChangesToLocal(
-      repositoryName: RepositoryNames.sessionCounter,
-      remoteChanges: result.events,
-    );
-    if (result.maxServerCreatedAt != null) {
-      await _updateLatest(
-        RepositoryNames.sessionCounter,
-        result.maxServerCreatedAt!,
-      );
-    }
-  }
-
-  Future<void> _updateLatest(String repo, DateTime value) async {
-    lastSyncedAt[repo] = value;
-    dev.log(
-      'Updated last sync for $repo to ${value.toIso8601String()}',
-      name: logTag,
-    );
-    await client.setConfigValue(_lastSyncKey(repo), value.toIso8601String());
-  }
-
-  Future<DateTime?> _getLatest(String repo) async {
-    return lastSyncedAt[repo] ??= await () async {
-      final value = await client.getConfigValue(_lastSyncKey(repo));
-      return _parseDate(value);
-    }();
-  }
-
-  DateTime? _parseDate(dynamic value) {
-    if (value is DateTime) return value.toUtc();
-    if (value is String) return DateTime.tryParse(value)?.toUtc();
-    return null;
-  }
-}
-
-typedef FetchResult = ({List<JsonMap> events, DateTime? maxServerCreatedAt});
-
-/// Thin MongoDB client responsible for opening the database connection,
-/// ensuring indexes, pushing event batches idempotently, and fetching events
-/// per repository with simple server-side cursors.
-class MongoApi {
-  static const logTag = 'MongoApi';
-  static const serverCreatedAtLabel = 'serverCreatedAt';
-  static const dataField = LocalFirstEvent.kData;
-  final String uri;
-
-  Db? _db;
-
-  MongoApi({required this.uri});
-
-  String get eventIdLabel => LocalFirstEvent.kEventId;
-
-  Future<bool> ping() async {
-    try {
-      final db = await _getDb();
-      await db.runCommand({'ping': 1});
-      return true;
-    } catch (e, s) {
-      dev.log('Ping failed: $e', name: logTag, error: e, stackTrace: s);
-      return false;
-    }
-  }
-
-  Future<Db> _getDb() async {
-    final current = _db;
-    if (current != null && current.isConnected) return current;
-
-    final db = await Db.create(uri);
-    await db.open();
-    dev.log('Connected to MongoDB at $uri', name: logTag);
-    _db = db;
-    return db;
-  }
-
-  Future<DbCollection> _collection(String repositoryName) async {
-    final db = await _getDb();
-    final collection = db.collection(repositoryName);
-
-    try {
-      await collection.createIndex(keys: {serverCreatedAtLabel: 1});
-      await collection.createIndex(
-        keys: {LocalFirstEvent.kEventId: 1},
-        unique: true,
-      );
-    } catch (e, s) {
-      dev.log(
-        'Failed to ensure indexes for $repositoryName: $e',
-        name: logTag,
-        error: e,
-        stackTrace: s,
-      );
-    }
-
-    return collection;
-  }
-
-  Future<void> pushUserEvents(List<JsonMap> events) async {
-    await _upsertEvents(RepositoryNames.user, events);
-  }
-
-  Future<void> pushCounterLogEvents(List<JsonMap> events) async {
-    await _upsertEvents(RepositoryNames.counterLog, events);
-  }
-
-  Future<void> pushSessionCounterEvents(List<JsonMap> events) async {
-    await _upsertEvents(RepositoryNames.sessionCounter, events);
-  }
-
-  Future<FetchResult> fetchUserEvents(DateTime? since) async {
-    return _fetchEvents(RepositoryNames.user, since);
-  }
-
-  Future<FetchResult> fetchCounterLogEvents(DateTime? since) async {
-    return _fetchEvents(RepositoryNames.counterLog, since);
-  }
-
-  Future<FetchResult> fetchSessionCounterEvents(DateTime? since) async {
-    return _fetchEvents(RepositoryNames.sessionCounter, since);
-  }
-
-  Future<FetchResult> _fetchEvents(
-    String repositoryName,
-    DateTime? since,
-  ) async {
-    final collection = await _collection(repositoryName);
-    final selector = since != null
-        ? where.gt(serverCreatedAtLabel, since)
-        : where;
-    final cursor = collection.find(selector.sortBy(serverCreatedAtLabel));
-    final results = <JsonMap>[];
-    DateTime? max;
-    await cursor.forEach((doc) {
-      final map = JsonMap.from(doc)
-        ..remove('_id')
-        ..putIfAbsent(LocalFirstEvent.kRepository, () => repositoryName);
-      final raw = map[serverCreatedAtLabel];
-      if (raw is DateTime) {
-        final utc = raw.toUtc();
-        if (max == null || utc.isAfter(max!)) max = utc;
-      } else if (raw is String) {
-        final parsed = DateTime.tryParse(raw)?.toUtc();
-        if (parsed != null && (max == null || parsed.isAfter(max!))) {
-          max = parsed;
-        }
-      }
-      results.add(map);
-    });
-    return (events: results, maxServerCreatedAt: max);
-  }
-
-  Future<void> _upsertEvents(
-    String repositoryName,
-    List<JsonMap> events,
-  ) async {
-    if (events.isEmpty) return;
-    final collection = await _collection(repositoryName);
-    for (final event in events) {
-      final eventId = event[eventIdLabel];
-      final now = DateTime.now().toUtc();
-      try {
-        await collection.updateOne(where.eq(eventIdLabel, eventId), {
-          r'$set': event,
-          r'$setOnInsert': {serverCreatedAtLabel: now},
-        }, upsert: true);
-      } catch (e, s) {
-        dev.log(
-          'Failed to upsert event $eventId in $repositoryName: $e',
-          name: logTag,
-          error: e,
-          stackTrace: s,
-        );
-        rethrow;
-      }
-    }
-  }
-}

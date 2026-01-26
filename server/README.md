@@ -11,7 +11,7 @@ The easiest way to run the full stack (MongoDB + WebSocket Server):
 From the monorepo root:
 
 ```bash
-melos websocket:server
+melos server:start
 ```
 
 ### Using the Shell Script Directly
