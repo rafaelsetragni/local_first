@@ -67,6 +67,7 @@ The test suite covers:
 - ✅ Get all events (`GET /api/events/{repository}`)
 - ✅ Get events by sequence (`GET /api/events/{repository}?afterSequence={n}`)
 - ✅ Get specific event (`GET /api/events/{repository}/{eventId}`)
+- ✅ Get event by dataId (`GET /api/events/{repository}/byDataId/{dataId}`)
 
 ### Error Handling
 - ✅ Missing required fields (400)

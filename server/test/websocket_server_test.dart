@@ -339,6 +339,50 @@ void main() {
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       expect(data['error'], 'Event not found');
     });
+
+    test('GET /api/events/{repository}/byDataId/{dataId} fetches event by dataId',
+        () async {
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final dataId = 'data_id_user_$timestamp';
+
+      // Create event with specific dataId
+      await http.post(
+        Uri.parse('$baseUrl/api/events/test_users'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'eventId': 'event_$timestamp',
+          'dataId': dataId,
+          'data': {
+            'id': dataId,
+            'username': 'DataId Test User',
+          },
+        }),
+      );
+
+      // Fetch by dataId
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/events/test_users/byDataId/$dataId'),
+      );
+
+      expect(response.statusCode, 200);
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+
+      expect(data['repository'], 'test_users');
+      expect(data['event']['dataId'], dataId);
+      expect(data['event']['data']['username'], 'DataId Test User');
+      expect(data['event']['serverSequence'], isA<int>());
+    });
+
+    test('GET /api/events/{repository}/byDataId/{dataId} returns 404 for missing dataId',
+        () async {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/events/test_users/byDataId/nonexistent_data_id'),
+      );
+
+      expect(response.statusCode, 404);
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      expect(data['error'], 'Event not found');
+    });
   });
 
   group('REST API - Error Handling', () {

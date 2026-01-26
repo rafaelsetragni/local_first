@@ -20,6 +20,7 @@ import 'package:mongo_dart/mongo_dart.dart';
 /// - GET /api/repositories - List available repositories
 /// - GET /api/events/{repository}?afterSequence={n} - Get events after sequence
 /// - GET /api/events/{repository}/{eventId} - Get specific event
+/// - GET /api/events/{repository}/byDataId/{dataId} - Get event by dataId
 /// - POST /api/events/{repository} - Create single event
 /// - POST /api/events/{repository}/batch - Create multiple events
 ///
@@ -121,6 +122,8 @@ class WebSocketSyncServer {
           keys: {'eventId': 1},
           unique: true,
         );
+        // Index for dataId queries (used to fetch entities by their ID)
+        await collection.createIndex(keys: {'dataId': 1});
       } catch (e) {
         dev.log('Failed to create indexes for $repoName: $e', name: logTag);
       }
@@ -224,6 +227,17 @@ class WebSocketSyncServer {
             await _handleGetEventById(request, repository, identifier);
           } else {
             _sendError(response, HttpStatus.methodNotAllowed, 'Method not allowed');
+          }
+        } else if (pathSegments.length == 5) {
+          // /api/events/{repository}/byDataId/{dataId}
+          final repository = pathSegments[2];
+          final pathType = pathSegments[3];
+          final dataId = pathSegments[4];
+
+          if (pathType == 'byDataId' && method == 'GET') {
+            await _handleGetEventByDataId(request, repository, dataId);
+          } else {
+            _sendError(response, HttpStatus.notFound, 'Endpoint not found');
           }
         } else {
           _sendError(response, HttpStatus.notFound, 'Endpoint not found');
@@ -374,6 +388,43 @@ class WebSocketSyncServer {
     try {
       final collection = db.collection(repository);
       final event = await collection.findOne(where.eq('eventId', eventId));
+
+      if (event == null) {
+        _sendError(response, HttpStatus.notFound, 'Event not found');
+        return;
+      }
+
+      // Remove MongoDB internal _id
+      event.remove('_id');
+
+      response.statusCode = HttpStatus.ok;
+      response.write(jsonEncode({
+        'repository': repository,
+        'event': event,
+      }));
+      await response.close();
+    } catch (e) {
+      _sendError(response, HttpStatus.internalServerError, 'Failed to fetch event: $e');
+    }
+  }
+
+  /// Handles GET /api/events/{repository}/byDataId/{dataId} - Get event by dataId.
+  Future<void> _handleGetEventByDataId(
+    HttpRequest request,
+    String repository,
+    String dataId,
+  ) async {
+    final response = request.response;
+    final db = _db;
+
+    if (db == null) {
+      _sendError(response, HttpStatus.serviceUnavailable, 'Database not connected');
+      return;
+    }
+
+    try {
+      final collection = db.collection(repository);
+      final event = await collection.findOne(where.eq('dataId', dataId));
 
       if (event == null) {
         _sendError(response, HttpStatus.notFound, 'Event not found');

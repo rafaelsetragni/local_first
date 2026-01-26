@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:local_first/local_first.dart';
 import 'package:local_first_websocket/local_first_websocket.dart';
 import 'package:local_first_sqlite_storage/local_first_sqlite_storage.dart';
@@ -11,6 +13,7 @@ import 'package:local_first_shared_preferences/local_first_shared_preferences.da
 // Make sure to start the server first (from the monorepo root):
 // melos websocket:server
 const websocketUrl = 'ws://localhost:8080/sync';
+const baseHttpUrl = 'http://localhost:8080';
 
 /// Centralized string keys to avoid magic field names.
 class RepositoryNames {
@@ -883,33 +886,85 @@ class RepositoryService {
           .map((e) => e.data)
           .toList();
 
+  /// Fetches a user from the remote server by userId.
+  /// Returns UserModel if user exists, null if not (404), throws on connection error.
+  Future<UserModel?> _fetchRemoteUser(String userId) async {
+    try {
+      // The API endpoint is GET /api/events/{repository}/byDataId/{dataId}
+      // For user repository, we query by dataId which is the userId
+      final response = await http
+          .get(Uri.parse('$baseHttpUrl/api/events/user/byDataId/$userId'))
+          .timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 404) {
+        // User doesn't exist on server
+        return null;
+      }
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to fetch user: ${response.statusCode}');
+      }
+
+      // Extract user data from response
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final eventData = data['event'] as Map<String, dynamic>;
+      final userData = eventData['data'] as Map<String, dynamic>;
+
+      return UserModel.fromJson(userData);
+    } catch (e) {
+      throw Exception('Failed to fetch remote user: $e');
+    }
+  }
+
   /// Signs in a user and starts WebSocket sync.
+  ///
+  /// This method implements a server-first approach:
+  /// 1. Create local UserModel (generates correct userId)
+  /// 2. Fetch user from server via HTTP GET (fails if no connection)
+  /// 3. If exists remotely: discard local model, use remote data
+  /// 4. If doesn't exist: use local model and mark for sync
+  /// 5. Start WebSocket sync (handles data sync independently per namespace)
   Future<void> signIn({required String username}) async {
     syncStrategy.stop();
+
+    // Create local UserModel to generate userId using same ID generation logic
     final localUser = UserModel(username: username, avatarUrl: null);
-    await _switchUserDatabase(localUser.id);
+    final userId = localUser.id;
 
-    final existing = await userRepository
-        .query()
-        .where(userRepository.idFieldName, isEqualTo: localUser.id)
-        .getAll();
+    // Switch to user's namespace database
+    await _switchUserDatabase(userId);
 
-    final UserModel user;
-    if (existing.isNotEmpty) {
-      final firstEvent = existing.first as LocalFirstStateEvent<UserModel>;
-      user = firstEvent.data;
-      authenticatedUser = user;
-    } else {
-      user = localUser;
-      authenticatedUser = user;
-      await userRepository.upsert(localUser, needSync: true);
+    // Fetch user from server via HTTP GET
+    try {
+      final remoteUser = await _fetchRemoteUser(userId);
+
+      if (remoteUser != null) {
+        // User exists on server - use remote data temporarily
+        // WebSocket sync will populate local database with server data
+        // This ensures data comes from sync process, not HTTP GET
+        authenticatedUser = remoteUser;
+
+        // DO NOT upsert remote user here - let WebSocket sync handle it
+        // This prevents duplicate events and ensures sync process controls data flow
+      } else {
+        // User doesn't exist on server - use local model
+        authenticatedUser = localUser;
+
+        // Persist new user to local database and mark for sync to server
+        await userRepository.upsert(localUser, needSync: true);
+      }
+    } catch (e) {
+      throw Exception('Failed to sign in: $e');
     }
 
-    await _prepareSession(user);
+    // Prepare session and persist login state
+    await _prepareSession(authenticatedUser!);
     await _persistLastUsername(username);
 
-    // Start WebSocket connection
+    // Start WebSocket sync - handles synchronization independently per namespace
     await syncStrategy.start();
+
+    // Navigate to home screen
     NavigatorService().navigateToHome();
   }
 
