@@ -9,7 +9,6 @@ environment:
 
 dependencies:
   local_first:
-    path: ../local_first
 
 dev_dependencies:
   lints: ^6.0.0

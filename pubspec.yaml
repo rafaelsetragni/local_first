@@ -70,11 +70,11 @@ melos:
       description: Restart WebSocket server container.
       run: cd server && docker compose restart websocket_server
     install:examples:
-      description: Install all example apps to connected device (without running).
-      run: melos exec -c 1 -- "flutter install"
-      packageFilters:
-        scope: "*example"
-        ignore: "websocket_server_example"
+      description: |
+        Install all example apps to connected device (without running).
+        Run ./scripts/install_examples.sh directly for interactive device selection,
+        or use: melos run install:examples -- <device_number>
+      run: ./scripts/install_examples.sh
     clean:
       description: Run flutter clean on all packages.
       run: melos exec -c 1 -- "flutter clean"
