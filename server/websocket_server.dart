@@ -821,7 +821,8 @@ class WebSocketSyncServer {
     await cursor.forEach((doc) {
       final map = Map<String, dynamic>.from(doc)
         ..remove('_id')
-        ..putIfAbsent('repository', () => repositoryName);
+        ..putIfAbsent('repository', () => repositoryName)
+        ..putIfAbsent('syncOperation', () => 'create'); // Required by LocalFirstClient
       allEvents.add(map);
     });
 
