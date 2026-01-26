@@ -58,5 +58,8 @@ melos:
     websocket:server:
       description: Run WebSocket example server in Docker with hot reload.
       run: ./server/run_server.sh
+    clean:
+      description: Run flutter clean on all packages.
+      run: melos exec -c 1 -- "flutter clean"
 
 dependency_overrides:
