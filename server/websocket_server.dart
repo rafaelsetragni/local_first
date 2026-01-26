@@ -948,11 +948,16 @@ class WebSocketSyncServer {
 /// Represents a connected WebSocket client.
 class ConnectedClient {
   static const logTag = 'ConnectedClient';
+  static const _pingInterval = Duration(seconds: 3);
+  static const _pongTimeout = Duration(seconds: 10);
 
   final WebSocket webSocket;
   final WebSocketSyncServer server;
   bool isAuthenticated = false;
   StreamSubscription? _subscription;
+  Timer? _pingTimer;
+  DateTime? _lastPongTime;
+  bool _waitingForPong = false;
 
   ConnectedClient({required this.webSocket, required this.server});
 
@@ -979,6 +984,43 @@ class ConnectedClient {
     );
   }
 
+  /// Starts the ping timer to check client liveness.
+  void _startPingTimer() {
+    _pingTimer?.cancel();
+    _lastPongTime = DateTime.now();
+    _pingTimer = Timer.periodic(_pingInterval, (_) {
+      _checkClientLiveness();
+    });
+  }
+
+  /// Checks if the client is still alive by sending ping and checking for timeout.
+  void _checkClientLiveness() {
+    final now = DateTime.now();
+
+    // If we're waiting for a pong and timeout has passed, disconnect
+    if (_waitingForPong && _lastPongTime != null) {
+      final timeSinceLastPong = now.difference(_lastPongTime!);
+      if (timeSinceLastPong > _pongTimeout) {
+        dev.log(
+          'Client failed to respond to ping within ${_pongTimeout.inSeconds}s - disconnecting',
+          name: logTag,
+        );
+        close();
+        return;
+      }
+    }
+
+    // Send ping to client
+    _waitingForPong = true;
+    sendMessage({'type': 'ping'});
+  }
+
+  /// Handles pong response from client.
+  void _handlePong() {
+    _lastPongTime = DateTime.now();
+    _waitingForPong = false;
+  }
+
   /// Processes a message from the client.
   Future<void> _onMessage(dynamic rawMessage) async {
     try {
@@ -994,6 +1036,10 @@ class ConnectedClient {
 
         case 'ping':
           _handlePing();
+          break;
+
+        case 'pong':
+          _handlePong();
           break;
 
         case 'push_event':
@@ -1041,6 +1087,9 @@ class ConnectedClient {
     dev.log('Client authenticated', name: logTag);
 
     sendMessage({'type': 'auth_success'});
+
+    // Start ping timer to monitor client liveness
+    _startPingTimer();
   }
 
   /// Handles ping (heartbeat).
@@ -1216,6 +1265,8 @@ class ConnectedClient {
 
   /// Closes the client connection.
   Future<void> close() async {
+    _pingTimer?.cancel();
+    _pingTimer = null;
     await _subscription?.cancel();
     await webSocket.close();
   }

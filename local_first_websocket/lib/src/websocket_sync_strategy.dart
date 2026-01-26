@@ -145,7 +145,9 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
   bool _isConnected = false;
   Timer? _reconnectTimer;
   Timer? _heartbeatTimer;
+  Timer? _pongTimeoutTimer;
   Completer<void>? _authCompleter;
+  Completer<void>? _pongCompleter;
 
   // Tracks known repositories for sync
   final Set<String> _knownRepositories = {};
@@ -234,10 +236,16 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
   }
 
   /// Starts WebSocket connection and synchronization.
+  ///
+  /// This method is non-blocking - it initiates the connection process
+  /// in the background and returns immediately. Use the [connectionChanges]
+  /// stream to monitor connection status.
   Future<void> start() async {
     dev.log('Starting WebSocket sync strategy', name: logTag);
     await client.awaitInitialization;
-    await _connect();
+    // Start connection in background without blocking
+    // ignore: unawaited_futures
+    _connect();
   }
 
   /// Stops synchronization and closes the connection.
@@ -246,6 +254,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
     _disconnect();
     _reconnectTimer?.cancel();
     _heartbeatTimer?.cancel();
+    _pongTimeoutTimer?.cancel();
     _pendingQueue.clear();
   }
 
@@ -269,7 +278,13 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
           _channelFactory?.call(uri) ?? WebSocketChannel.connect(uri);
       _channel = channel;
 
-      await channel.ready;
+      // Wait for connection with timeout
+      await channel.ready.timeout(
+        const Duration(milliseconds: 1500),
+        onTimeout: () {
+          throw TimeoutException('WebSocket connection timeout');
+        },
+      );
 
       _isConnected = true;
       reportConnectionState(true);
@@ -299,6 +314,9 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
         error: e,
         stackTrace: s,
       );
+      // Clean up failed connection attempt
+      _channel?.sink.close();
+      _channel = null;
       _scheduleReconnect();
     }
   }
@@ -312,6 +330,9 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
     _channel?.sink.close();
     _channel = null;
     _heartbeatTimer?.cancel();
+    _pongTimeoutTimer?.cancel();
+    _pongTimeoutTimer = null;
+    _pongCompleter = null;
   }
 
   /// Schedules automatic reconnection.
@@ -332,6 +353,12 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
   /// Processes messages received from the server.
   void _onMessage(dynamic rawMessage) async {
     try {
+      // Any message from server means connection is alive - cancel pong timeout
+      _pongTimeoutTimer?.cancel();
+      _pongTimeoutTimer = null;
+      _pongCompleter?.complete();
+      _pongCompleter = null;
+
       final message = jsonDecode(rawMessage as String) as JsonMap<dynamic>;
       final type = message['type'] as String?;
 
@@ -360,17 +387,13 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
           try {
             _sendMessage({'type': 'pong'});
           } on StateError catch (e) {
-            // Connection lost while responding - server will detect via timeout
-            dev.log(
-              'Could not send pong, connection lost',
-              name: logTag,
-              error: e,
-            );
+            // Connection lost while responding
+            _handleConnectionLoss('ping response', e);
           }
           break;
 
         case 'pong':
-          // Heartbeat response
+          // Heartbeat response (already handled in _onMessage)
           break;
 
         case 'error':
@@ -444,11 +467,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
       });
     } on StateError catch (e) {
       // Connection lost while confirming - server will resend events
-      dev.log(
-        'Could not send events confirmation, connection lost',
-        name: logTag,
-        error: e,
-      );
+      _handleConnectionLoss('events confirmation', e);
     }
   }
 
@@ -511,11 +530,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
       return SyncStatus.pending;
     } on StateError catch (e) {
       // Connection was lost between the check and the send
-      dev.log(
-        'Connection lost while sending event: ${localData.eventId}',
-        name: logTag,
-        error: e,
-      );
+      _handleConnectionLoss('push event', e);
       _pendingQueue.add(localData);
       return SyncStatus.pending;
     } catch (e, s) {
@@ -572,26 +587,22 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
 
       // Wait for server response (with timeout)
       await _authCompleter!.future.timeout(
-        const Duration(seconds: 10),
+        const Duration(milliseconds: 1500),
         onTimeout: () {
           dev.log('Authentication timeout', name: logTag);
           throw TimeoutException('Authentication timeout');
         },
       );
     } on StateError catch (e) {
-      // Connection lost during auth - will retry on reconnect
-      dev.log(
-        'Could not send authentication, connection lost',
-        name: logTag,
-        error: e,
-      );
+      // Connection lost during auth - trigger reconnection
+      _handleConnectionLoss('authentication', e);
 
       // Try to refresh credentials if callback is provided
       if (onAuthenticationFailed != null) {
         try {
           final newCredentials = await onAuthenticationFailed!();
           if (newCredentials != null) {
-            // Update credentials and retry
+            // Update credentials for next connection attempt
             if (newCredentials.authToken != null) {
               _authToken = newCredentials.authToken;
             }
@@ -599,11 +610,9 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
               _headers = Map.from(newCredentials.headers!);
             }
             dev.log(
-              'Credentials refreshed, retrying authentication',
+              'Credentials refreshed for next connection',
               name: logTag,
             );
-            // Retry authentication with new credentials
-            await _authenticate();
           }
         } catch (e, s) {
           dev.log(
@@ -664,12 +673,8 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
 
             _sendMessage(message);
           } on StateError catch (e) {
-            // Connection lost during sync - will retry on reconnect
-            dev.log(
-              'Could not request events for $repositoryName, connection lost',
-              name: logTag,
-              error: e,
-            );
+            // Connection lost during sync
+            _handleConnectionLoss('request events for $repositoryName', e);
             return;
           }
         }
@@ -678,12 +683,8 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
         try {
           _sendMessage({'type': 'request_all_events'});
         } on StateError catch (e) {
-          // Connection lost during sync - will retry on reconnect
-          dev.log(
-            'Could not request all events, connection lost',
-            name: logTag,
-            error: e,
-          );
+          // Connection lost during sync
+          _handleConnectionLoss('request all events', e);
         }
       }
     } finally {
@@ -715,11 +716,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
         });
       } on StateError catch (e) {
         // Connection lost while flushing - events remain in queue
-        dev.log(
-          'Could not flush pending queue for ${entry.key}, connection lost',
-          name: logTag,
-          error: e,
-        );
+        _handleConnectionLoss('flush pending queue for ${entry.key}', e);
         return; // Stop trying to send more batches
       } catch (e, s) {
         // Other unexpected errors - log and continue with next batch
@@ -740,14 +737,31 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = Timer.periodic(heartbeatInterval, (_) {
       if (_isConnected) {
-        try {
-          _sendMessage({'type': 'ping'});
-        } on StateError catch (e) {
-          // Connection lost - heartbeat will stop naturally
-          dev.log('Heartbeat failed, connection lost', name: logTag, error: e);
-        }
+        _sendHeartbeat();
       }
     });
+  }
+
+  /// Sends a heartbeat ping and waits for pong response.
+  void _sendHeartbeat() async {
+    try {
+      // Create completer for pong response
+      _pongCompleter = Completer<void>();
+
+      // Send ping
+      _sendMessage({'type': 'ping'});
+
+      // Set timeout for pong response
+      _pongTimeoutTimer = Timer(const Duration(seconds: 2), () {
+        if (_pongCompleter != null && !_pongCompleter!.isCompleted) {
+          dev.log('Pong timeout - connection appears dead', name: logTag);
+          _handleConnectionLoss('pong timeout');
+        }
+      });
+    } on StateError catch (e) {
+      // Connection lost - trigger disconnect and reconnection
+      _handleConnectionLoss('heartbeat', e);
+    }
   }
 
   /// Handles connection errors.
@@ -765,6 +779,22 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
   /// Handles disconnection.
   void _onDisconnect() {
     dev.log('WebSocket disconnected', name: logTag);
+    _disconnect();
+    _scheduleReconnect();
+  }
+
+  /// Handles connection loss detected during operations.
+  ///
+  /// This is called when we detect the connection is lost while trying
+  /// to send messages (StateError from sink.add).
+  void _handleConnectionLoss(String operation, [dynamic error]) {
+    if (!_isConnected) return; // Already handling disconnection
+
+    dev.log(
+      'Connection lost during $operation',
+      name: logTag,
+      error: error,
+    );
     _disconnect();
     _scheduleReconnect();
   }

@@ -803,8 +803,8 @@ class RepositoryService {
     // Initialize WebSocketSyncStrategy with callbacks
     syncStrategy = WebSocketSyncStrategy(
       websocketUrl: websocketUrl,
-      reconnectDelay: Duration(seconds: 3),
-      heartbeatInterval: Duration(seconds: 30),
+      reconnectDelay: Duration(milliseconds: 1500),
+      heartbeatInterval: Duration(seconds: 3),
       onBuildSyncFilter: _buildSyncFilter,
       onSyncCompleted: _onSyncCompleted,
     );
