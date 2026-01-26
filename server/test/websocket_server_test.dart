@@ -598,6 +598,121 @@ void main() {
       expect(
           logEvents[1]['serverSequence'] > logEvents[2]['serverSequence'], true);
     });
+
+    test('GET /api/events/counter_log with afterSequence returns most recent logs',
+        () async {
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final dataIdOld = 'log_old_$timestamp';
+      final dataIdNew = 'log_new_$timestamp';
+
+      // Create 3 old log events
+      await http.post(
+        Uri.parse('$baseUrl/api/events/counter_log'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'eventId': 'log_old_1_$timestamp',
+          'dataId': dataIdOld,
+          'data': {'id': dataIdOld, 'action': 'increment', 'value': 1},
+        }),
+      );
+
+      await http.post(
+        Uri.parse('$baseUrl/api/events/counter_log'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'eventId': 'log_old_2_$timestamp',
+          'dataId': dataIdOld,
+          'data': {'id': dataIdOld, 'action': 'increment', 'value': 2},
+        }),
+      );
+
+      await http.post(
+        Uri.parse('$baseUrl/api/events/counter_log'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'eventId': 'log_old_3_$timestamp',
+          'dataId': dataIdOld,
+          'data': {'id': dataIdOld, 'action': 'increment', 'value': 3},
+        }),
+      );
+
+      // Get the last sequence number from first batch
+      final firstBatchResponse = await http.get(
+        Uri.parse('$baseUrl/api/events/counter_log?limit=100'),
+      );
+      final firstBatchData = jsonDecode(firstBatchResponse.body) as Map<String, dynamic>;
+      final firstBatchEvents = firstBatchData['events'] as List;
+
+      final oldLogsForTest = firstBatchEvents
+          .where((e) => e['dataId'] == dataIdOld)
+          .toList();
+
+      if (oldLogsForTest.isEmpty) {
+        fail('Old logs not found');
+      }
+
+      // Get the minimum sequence (oldest of our test logs)
+      final minSequence = oldLogsForTest
+          .map((e) => e['serverSequence'] as int)
+          .reduce((a, b) => a < b ? a : b);
+
+      // Create 3 new log events AFTER getting the sequence
+      await http.post(
+        Uri.parse('$baseUrl/api/events/counter_log'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'eventId': 'log_new_1_$timestamp',
+          'dataId': dataIdNew,
+          'data': {'id': dataIdNew, 'action': 'increment', 'value': 10},
+        }),
+      );
+
+      await http.post(
+        Uri.parse('$baseUrl/api/events/counter_log'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'eventId': 'log_new_2_$timestamp',
+          'dataId': dataIdNew,
+          'data': {'id': dataIdNew, 'action': 'increment', 'value': 20},
+        }),
+      );
+
+      await http.post(
+        Uri.parse('$baseUrl/api/events/counter_log'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'eventId': 'log_new_3_$timestamp',
+          'dataId': dataIdNew,
+          'data': {'id': dataIdNew, 'action': 'increment', 'value': 30},
+        }),
+      );
+
+      // Fetch logs after minSequence with limit 5
+      // Should return the 3 newest logs (not the old ones chronologically)
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/events/counter_log?afterSequence=$minSequence&limit=5'),
+      );
+
+      expect(response.statusCode, 200);
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final events = data['events'] as List;
+
+      // Filter for our test logs
+      final newLogs = events.where((e) => e['dataId'] == dataIdNew).toList();
+
+      // Should return the 3 new logs (most recent)
+      expect(newLogs.length, 3,
+          reason: 'Should return most recent logs after sequence');
+
+      // Verify they are in descending order (newest first)
+      expect(newLogs[0]['data']['value'], 30);
+      expect(newLogs[1]['data']['value'], 20);
+      expect(newLogs[2]['data']['value'], 10);
+
+      // Verify descending serverSequence
+      expect(newLogs[0]['serverSequence'] > newLogs[1]['serverSequence'], true);
+      expect(newLogs[1]['serverSequence'] > newLogs[2]['serverSequence'], true);
+    });
   });
 
   group('REST API - Error Handling', () {

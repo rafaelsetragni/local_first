@@ -630,9 +630,9 @@ class WebSocketSyncServer {
   /// is returned for each group. This prevents syncing intermediate states that have
   /// been superseded by newer events.
   ///
-  /// Note: The counter_log repository is excluded from deduplication. All log events
-  /// are returned in descending order (newest first) since logs are sequential and
-  /// newer devices only need recent logs.
+  /// Note: The counter_log repository is excluded from deduplication.
+  /// Logs are ALWAYS returned in descending order (newest first) since old logs
+  /// are historical and have no practical value for clients. Only recent logs matter.
   Future<List<Map<String, dynamic>>> fetchEvents(
     String repositoryName, {
     int? afterSequence,
@@ -648,8 +648,9 @@ class WebSocketSyncServer {
         ? where.gt('serverSequence', afterSequence)
         : where;
 
-    // For counter_log, sort descending (newest first) since old logs are not useful
-    // For other repositories, sort ascending for deduplication logic
+    // For counter_log: ALWAYS sort descending to get most recent logs first
+    // Old logs are historical only and have no practical value
+    // For other repositories: sort ascending for deduplication logic
     if (repositoryName == 'counter_log') {
       selector = selector.sortBy('serverSequence', descending: true);
     } else {
@@ -667,7 +668,7 @@ class WebSocketSyncServer {
       allEvents.add(map);
     });
 
-    // Skip deduplication for counter_log - all log events are preserved in descending order
+    // Skip deduplication for counter_log - all log events preserved in descending order
     if (repositoryName == 'counter_log') {
       // Return all events in descending order (newest first) with optional limit
       if (limit != null && limit > 0) {

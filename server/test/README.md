@@ -216,8 +216,10 @@ The `fetchEvents` endpoint returns only the latest event for each `dataId` to mi
 
 **Important Exception:**
 - The `counter_log` repository is **excluded** from deduplication
-- All log events are returned in **descending order** (newest first) since logs are sequential
-- Old log events are not useful for new devices, so they receive recent logs first
+- All log events are **ALWAYS** returned in **descending order** (newest first)
+- This applies both with and without `afterSequence` parameter
+- Old log events are historical only and have no practical value for clients
+- Only recent logs matter, so clients always receive the most recent logs first
 - This ensures efficient synchronization while preserving complete audit trails
 
 **How It Works:**
@@ -242,7 +244,11 @@ The `fetchEvents` endpoint returns only the latest event for each `dataId` to mi
   - Creates 3 log events with same dataId
   - Verifies all 3 events are returned (no deduplication)
   - Verifies events are in descending order (newest first)
-  - Ensures logs preserve complete sequential history with efficient ordering
+- "GET /api/events/counter_log with afterSequence returns most recent logs"
+  - Creates old logs, then new logs after a sequence point
+  - Verifies that with afterSequence, newest logs are still returned first
+  - Ensures descending order is maintained even with sequence filtering
+  - Confirms old logs are not prioritized in incremental sync
 
 ## Troubleshooting
 
