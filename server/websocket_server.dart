@@ -822,7 +822,7 @@ class WebSocketSyncServer {
       final map = Map<String, dynamic>.from(doc)
         ..remove('_id')
         ..putIfAbsent('repository', () => repositoryName)
-        ..putIfAbsent('syncOperation', () => 'create'); // Required by LocalFirstClient
+        ..putIfAbsent('syncOperation', () => 0); // 0=insert, 1=update, 2=delete
       allEvents.add(map);
     });
 
