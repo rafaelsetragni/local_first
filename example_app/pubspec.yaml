@@ -1,27 +1,28 @@
-name: local_first_counter_example
-description: "LocalFirst counter example."
-publish_to: "none" #
-version: 1.0.0+1
+name: local_first_example_app
+description: Comprehensive example app demonstrating all Local First features.
+publish_to: none
+
+resolution: workspace
 
 environment:
   sdk: ^3.10.0
-
-resolution: workspace
+  flutter: ">=1.17.0"
 
 dependencies:
   flutter:
     sdk: flutter
-  intl: ^0.20.2
   local_first:
-  local_first_hive_storage:
+  local_first_websocket:
+  local_first_periodic_strategy:
   local_first_sqlite_storage:
   local_first_shared_preferences:
-  local_first_websocket:
+  mongo_dart: ^0.10.3
   http: ^1.2.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+
 flutter:
   uses-material-design: true

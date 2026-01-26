@@ -6,6 +6,8 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:local_first/local_first.dart';
 import 'package:local_first_websocket/local_first_websocket.dart';
+import 'package:local_first_sqlite_storage/local_first_sqlite_storage.dart';
+import 'package:local_first_shared_preferences/local_first_shared_preferences.dart';
 import 'package:http/http.dart' as http;
 
 // To use this example, first you need to start the WebSocket server.
@@ -22,8 +24,8 @@ import 'package:http/http.dart' as http;
 const websocketServerUrl = 'ws://127.0.0.1:8080/ws';
 const httpServerUrl = 'http://127.0.0.1:8080';
 
-const appName = 'LF InMemory';
-const appNameFull = 'Local First\nInMemory';
+const appName = 'LF SQLite';
+const appNameFull = 'Local First\nSQLite';
 
 /// Centralized string keys to avoid magic field names.
 class RepositoryNames {
@@ -869,7 +871,10 @@ class RepositoryService {
         counterLogRepository,
         sessionCounterRepository,
       ],
-      localStorage: InMemoryLocalFirstStorage(),
+      localStorage: SqliteLocalFirstStorage(
+        databaseName: 'local_first_example.db',
+      ),
+      keyValueStorage: SharedPreferencesConfigStorage(),
       syncStrategies: [syncStrategy],
     );
 
