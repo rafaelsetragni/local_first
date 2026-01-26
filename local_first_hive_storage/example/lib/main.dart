@@ -25,6 +25,8 @@ import 'package:mongo_dart/mongo_dart.dart' hide State, Center;
 const mongoConnectionString =
     'mongodb://admin:admin@127.0.0.1:27017/remote_counter_db?authSource=admin';
 
+const appName = 'LocalFirst Hive Counter';
+
 /// Centralized string keys to avoid magic field names.
 class RepositoryNames {
   static const user = 'user';
@@ -73,7 +75,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Offline Counter',
+      title: appName,
       navigatorKey: NavigatorService().navigatorKey,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
@@ -142,7 +144,7 @@ class _SignInPageState extends State<SignInPage> {
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     Text(
-                      'Offline Counter',
+                      appName,
                       style: TextTheme.of(context).headlineMedium,
                     ),
                     SizedBox(height: 4),
@@ -821,13 +823,16 @@ class RepositoryService {
     syncStrategy.stop();
     final localUser = UserModel(username: username, avatarUrl: null);
     await _switchUserDatabase(localUser.id);
-    await _syncRemoteUsersToLocal();
+    final syncedUsers = await _syncRemoteUsersToLocal();
     final existing = await userRepository
         .query()
         .where(userRepository.idFieldName, isEqualTo: localUser.id)
         .getAll();
     if (existing.isNotEmpty) {
       authenticatedUser = existing.first.data;
+    } else if (syncedUsers.any((user) => user.id == localUser.id)) {
+      authenticatedUser =
+          syncedUsers.firstWhere((user) => user.id == localUser.id);
     } else {
       authenticatedUser = localUser;
       await userRepository.upsert(localUser, needSync: true);
@@ -838,10 +843,12 @@ class RepositoryService {
     NavigatorService().navigateToHome();
   }
 
-  Future<void> _syncRemoteUsersToLocal() async {
+  Future<List<UserModel>> _syncRemoteUsersToLocal() async {
     final remote = await syncStrategy.fetchUsers();
+    final syncedUsers = <UserModel>[];
     for (final data in remote) {
       final user = userRepository.fromJson(data);
+      syncedUsers.add(user);
       final exists = await userRepository
           .query()
           .where(userRepository.idFieldName, isEqualTo: user.id)
@@ -849,6 +856,7 @@ class RepositoryService {
       if (exists.isNotEmpty) continue;
       await userRepository.upsert(user, needSync: false);
     }
+    return syncedUsers;
   }
 
   /// Clears auth/session state and navigates back to sign-in.

@@ -9,7 +9,9 @@ workspace:
   - local_first_hive_storage
   - local_first_sqlite_storage
   - local_first_shared_preferences
+  - local_first_websocket
   - local_first/example
+  - local_first_websocket/example
 
 dev_dependencies:
   flutter_lints: ^6.0.0
@@ -47,10 +49,14 @@ melos:
             -a local_first_hive_storage/coverage/lcov.info \
             -a local_first_sqlite_storage/coverage/lcov.info \
             -a local_first_shared_preferences/coverage/lcov.info \
+            -a local_first_websocket/coverage/lcov.info \
             -o coverage/lcov.info
       packageFilters:
         dirExists:
           - test
         ignore: "*example*"
+    websocket:server:
+      description: Run WebSocket example server in Docker with hot reload.
+      run: ./server/run_server.sh
 
 dependency_overrides:
