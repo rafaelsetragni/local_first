@@ -258,6 +258,9 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
   Future<void> _connect() async {
     if (_isConnected) return;
 
+    // Report disconnected state at start of connection attempt
+    reportConnectionState(false);
+
     try {
       dev.log('Connecting to WebSocket: $websocketUrl', name: logTag);
 
