@@ -10,7 +10,7 @@ The tests require a running MongoDB instance. The easiest way is to use Docker C
 
 ```bash
 # Start MongoDB + WebSocket production server (from monorepo root)
-melos websocket:server
+melos server:start
 # Production server runs on port 8080
 ```
 
@@ -256,7 +256,7 @@ The `fetchEvents` endpoint returns only the latest event for each `dataId` to mi
 
 Start MongoDB:
 ```bash
-melos websocket:server
+melos server:start
 # Or directly:
 docker run -d --name local_first_mongodb -p 27017:27017 \
   -e MONGO_INITDB_ROOT_USERNAME=admin \

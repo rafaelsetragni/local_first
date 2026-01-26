@@ -12,7 +12,7 @@ import 'rest_api_client.dart';
 // To use this example, you need to start the WebSocket server.
 // From the monorepo root, run:
 //
-// melos websocket:server
+// melos server:start
 //
 // The server will start on port 8080 with MongoDB backend.
 // Make sure MongoDB is running using Docker:

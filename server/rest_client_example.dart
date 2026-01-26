@@ -11,7 +11,7 @@ import 'dart:io';
 /// - Creating batch events
 ///
 /// To run this example:
-/// 1. Start the server: `melos websocket:server`
+/// 1. Start the server: `melos server:start`
 /// 2. Run this client: `dart run rest_client_example.dart`
 void main() async {
   final client = RestApiClient('http://localhost:8080');

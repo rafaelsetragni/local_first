@@ -438,7 +438,7 @@ The example includes a complete WebSocket server implementation using the Dart s
 From the monorepo root, run:
 
 ```bash
-melos websocket:server
+melos server:start
 ```
 
 This command automatically:

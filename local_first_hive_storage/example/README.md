@@ -70,7 +70,7 @@ This example showcases the **separation of concerns** principle: the plugin hand
 From the monorepo root, run:
 
 ```bash
-melos websocket:server
+melos server:start
 ```
 
 This command automatically:
@@ -292,7 +292,7 @@ class RestApiClient {
    ```
 3. Check server logs
    ```bash
-   melos websocket:server
+   melos server:start
    ```
 
 ### Sync Not Working

@@ -27,7 +27,7 @@ import 'package:mongo_dart/mongo_dart.dart';
 /// To run this server:
 /// ```bash
 /// # From the monorepo root (recommended):
-/// melos websocket:server
+/// melos server:start
 ///
 /// # Or directly:
 /// cd server && dart run websocket_server.dart
@@ -36,7 +36,7 @@ import 'package:mongo_dart/mongo_dart.dart';
 /// dart run websocket_server.dart --test
 /// ```
 ///
-/// The recommended `melos websocket:server` command automatically:
+/// The recommended `melos server:start` command automatically:
 /// - Starts MongoDB with Docker Compose
 /// - Configures networking between services
 /// - Shows real-time logs

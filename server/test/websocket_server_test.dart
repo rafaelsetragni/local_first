@@ -70,7 +70,7 @@ void main() {
       if (result.exitCode != 0) {
         throw Exception(
           'MongoDB container not found or not running. '
-          'Start it with: melos websocket:server',
+          'Start it with: melos server:start',
         );
       }
     } catch (e) {

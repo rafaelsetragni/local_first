@@ -55,9 +55,20 @@ melos:
         dirExists:
           - test
         ignore: "*example*"
-    websocket:server:
-      description: Run WebSocket example server in Docker with hot reload.
+    server:start:
+      description: Start WebSocket server in Docker with MongoDB.
       run: ./server/run_server.sh
+    server:stop:
+      description: Stop WebSocket server and MongoDB containers.
+      run: cd server && docker compose down
+    server:restart:
+      description: Restart WebSocket server container.
+      run: cd server && docker compose restart websocket_server
+    install:examples:
+      description: Install all example apps to connected device (without running).
+      run: melos exec -c 1 -- "flutter install"
+      packageFilters:
+        scope: "*example*"
     clean:
       description: Run flutter clean on all packages.
       run: melos exec -c 1 -- "flutter clean"
