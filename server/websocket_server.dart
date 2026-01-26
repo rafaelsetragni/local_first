@@ -594,6 +594,11 @@ class WebSocketSyncServer {
   }
 
   /// Fetches events from MongoDB after a given sequence number.
+  ///
+  /// Returns only the latest event for each dataId to minimize network traffic.
+  /// Events are grouped by dataId and only the event with the highest serverSequence
+  /// is returned for each group. This prevents syncing intermediate states that have
+  /// been superseded by newer events.
   Future<List<Map<String, dynamic>>> fetchEvents(
     String repositoryName, {
     int? afterSequence,
@@ -611,19 +616,52 @@ class WebSocketSyncServer {
 
     selector = selector.sortBy('serverSequence');
 
-    if (limit != null && limit > 0) {
-      selector = selector.limit(limit);
-    }
-
+    // Don't apply limit in query - we need all events to properly group by dataId
     final cursor = collection.find(selector);
-    final results = <Map<String, dynamic>>[];
+    final allEvents = <Map<String, dynamic>>[];
 
     await cursor.forEach((doc) {
       final map = Map<String, dynamic>.from(doc)
         ..remove('_id')
         ..putIfAbsent('repository', () => repositoryName);
-      results.add(map);
+      allEvents.add(map);
     });
+
+    // Group events by dataId and keep only the latest event for each dataId
+    final latestEventsByDataId = <String, Map<String, dynamic>>{};
+
+    for (final event in allEvents) {
+      final dataId = event['dataId'] as String?;
+
+      // If no dataId, include the event as-is (backwards compatibility)
+      if (dataId == null) {
+        // For events without dataId, use eventId as unique identifier
+        final eventId = event['eventId'] as String;
+        latestEventsByDataId[eventId] = event;
+        continue;
+      }
+
+      final existing = latestEventsByDataId[dataId];
+      if (existing == null) {
+        latestEventsByDataId[dataId] = event;
+      } else {
+        // Keep event with higher serverSequence
+        final existingSeq = existing['serverSequence'] as int;
+        final currentSeq = event['serverSequence'] as int;
+        if (currentSeq > existingSeq) {
+          latestEventsByDataId[dataId] = event;
+        }
+      }
+    }
+
+    // Convert back to list and sort by serverSequence
+    final results = latestEventsByDataId.values.toList()
+      ..sort((a, b) => (a['serverSequence'] as int).compareTo(b['serverSequence'] as int));
+
+    // Apply limit after grouping
+    if (limit != null && limit > 0) {
+      return results.take(limit).toList();
+    }
 
     return results;
   }

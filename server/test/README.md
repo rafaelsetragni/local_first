@@ -81,6 +81,7 @@ The test suite covers:
 - ✅ Server sequence assignment
 - ✅ Sequential ordering
 - ✅ First event in new repository (ObjectId bug regression test)
+- ✅ Event deduplication (returns only latest event per dataId)
 
 ### WebSocket Protocol
 - ✅ Connection establishment
@@ -182,6 +183,33 @@ The test "Creating first event in new repository initializes sequence counter co
 - Test database is completely dropped before and after test suite
 - Specific test creates events in a unique repository each run
 - Ensures the "first time" code path is always tested
+
+### Event Deduplication
+
+The `fetchEvents` endpoint returns only the latest event for each `dataId` to minimize network traffic during synchronization.
+
+**The Optimization:**
+- When multiple events exist for the same `dataId`, only the event with the highest `serverSequence` is returned
+- This prevents syncing intermediate states that have been superseded by newer events
+- Example: If a user updates their profile 3 times, only the final state is synced
+
+**How It Works:**
+1. Fetch all events matching the criteria (afterSequence, repository)
+2. Group events by `dataId`
+3. For each group, keep only the event with the highest `serverSequence`
+4. Return deduplicated events sorted by `serverSequence`
+
+**Backwards Compatibility:**
+- Events without a `dataId` field are included as-is
+- Uses `eventId` as fallback unique identifier for legacy events
+
+**Test Coverage:**
+- "GET /api/events/{repository} returns only latest event per dataId"
+  - Creates 3 updates for same user
+  - Verifies only the latest version (V3) is returned
+- "GET /api/events/{repository}?afterSequence={n} returns only latest event per dataId"
+  - Tests deduplication with sequence filtering
+  - Verifies each dataId appears at most once
 
 ## Troubleshooting
 
