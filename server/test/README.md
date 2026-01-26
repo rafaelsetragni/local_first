@@ -79,6 +79,7 @@ The test suite covers:
 - ✅ Idempotency (duplicate events)
 - ✅ Server sequence assignment
 - ✅ Sequential ordering
+- ✅ First event in new repository (ObjectId bug regression test)
 
 ### WebSocket Protocol
 - ✅ Connection establishment
@@ -99,6 +100,44 @@ Each test group follows this pattern:
 2. **Execute** - Call API endpoint or WebSocket action
 3. **Assert** - Verify response and behavior
 4. **Cleanup** - Automatic via tearDown
+
+### Test Determinism
+
+The test suite ensures deterministic behavior by:
+- **Dropping the entire test database** before all tests (`setUpAll`)
+- Using a separate test database (`remote_counter_db_test`)
+- Cleaning up after all tests (`tearDownAll`)
+
+This approach ensures:
+- No state leakage between test runs
+- Each test suite starts with a completely clean database
+- Tests can be run multiple times with consistent results
+- Critical bugs (like ObjectId type casting) are reliably detected
+
+## Regression Tests
+
+### ObjectId Type Cast Bug
+
+The test "Creating first event in new repository initializes sequence counter correctly" specifically guards against a critical bug where MongoDB's automatic ObjectId casting caused failures.
+
+**The Bug:**
+- When creating the first event in a new repository, the sequence counter was initialized using `where.eq('_id', repositoryName)`
+- MongoDB automatically treats `_id` fields as ObjectIds
+- Passing a String repository name caused: `type 'String' is not a subtype of type 'ObjectId?'`
+
+**The Fix:**
+- Changed to use `'repository'` field instead of `'_id'` in the sequence counter
+- This avoids MongoDB's automatic ObjectId type casting
+
+**Why Tests Didn't Catch It Initially:**
+1. Tests only cleaned specific collections, not `_sequence_counters`
+2. Once created in the first test, the counter persisted for all subsequent tests
+3. The bug only occurred when creating a counter for the first time
+
+**Current Protection:**
+- Test database is completely dropped before and after test suite
+- Specific test creates events in a unique repository each run
+- Ensures the "first time" code path is always tested
 
 ## Troubleshooting
 

@@ -130,7 +130,7 @@ class WebSocketSyncServer {
     try {
       final countersCollection = db.collection('_sequence_counters');
       await countersCollection.createIndex(
-        keys: {'_id': 1},
+        keys: {'repository': 1},
         unique: true,
       );
     } catch (e) {
@@ -332,22 +332,24 @@ class WebSocketSyncServer {
 
     try {
       final afterSequence = request.uri.queryParameters['afterSequence'];
-      final limit = int.tryParse(request.uri.queryParameters['limit'] ?? '100') ?? 100;
+      final limitParam = request.uri.queryParameters['limit'];
+
+      // Apply default limit of 5 for counter_log, 100 for others
+      final defaultLimit = repository == 'counter_log' ? 5 : 100;
+      final limit = limitParam != null ? (int.tryParse(limitParam) ?? defaultLimit) : defaultLimit;
 
       final events = await fetchEvents(
         repository,
         afterSequence: afterSequence != null ? int.tryParse(afterSequence) : null,
+        limit: limit,
       );
-
-      // Apply limit
-      final limitedEvents = events.take(limit).toList();
 
       response.statusCode = HttpStatus.ok;
       response.write(jsonEncode({
         'repository': repository,
-        'events': limitedEvents,
-        'count': limitedEvents.length,
-        'hasMore': events.length > limit,
+        'events': events,
+        'count': events.length,
+        'hasMore': events.length >= limit,
       }));
       await response.close();
     } catch (e) {
@@ -474,8 +476,10 @@ class WebSocketSyncServer {
 
     final countersCollection = db.collection('_sequence_counters');
 
+    // Use 'repository' field instead of '_id' to avoid ObjectId casting issues
+    // MongoDB automatically treats '_id' fields as ObjectIds, causing type cast errors
     final result = await countersCollection.findAndModify(
-      query: where.eq('_id', repositoryName),
+      query: where.eq('repository', repositoryName),
       update: {r'$inc': {'sequence': 1}},
       returnNew: true,
       upsert: true,
@@ -495,7 +499,6 @@ class WebSocketSyncServer {
     final eventId = event['eventId'];
 
     try {
-      dev.log('Checking if event exists: $eventId in $repositoryName', name: logTag);
       // Check if event already exists
       final existing = await collection.findOne(where.eq('eventId', eventId));
 
@@ -506,11 +509,9 @@ class WebSocketSyncServer {
         return;
       }
 
-      dev.log('Getting next sequence for $repositoryName', name: logTag);
       // Get next sequence number
       final serverSequence = await _getNextSequence(repositoryName);
 
-      dev.log('Preparing event with sequence $serverSequence', name: logTag);
       // Add server sequence to event and ensure no _id field
       final eventWithSequence = Map<String, dynamic>.from(event)
         ..remove('_id') // Remove any _id field from client
@@ -519,7 +520,6 @@ class WebSocketSyncServer {
       // Ensure all nested maps and values are properly serialized
       final cleanedEvent = _cleanEventForMongo(eventWithSequence);
 
-      dev.log('Inserting event into MongoDB: ${cleanedEvent.keys.toList()}', name: logTag);
       await collection.insertOne(cleanedEvent);
 
       dev.log('Event $eventId pushed to $repositoryName with sequence $serverSequence', name: logTag);
@@ -546,6 +546,7 @@ class WebSocketSyncServer {
   Future<List<Map<String, dynamic>>> fetchEvents(
     String repositoryName, {
     int? afterSequence,
+    int? limit,
   }) async {
     final db = _db;
     if (db == null) {
@@ -553,11 +554,17 @@ class WebSocketSyncServer {
     }
 
     final collection = db.collection(repositoryName);
-    final selector = afterSequence != null
+    var selector = afterSequence != null
         ? where.gt('serverSequence', afterSequence)
         : where;
 
-    final cursor = collection.find(selector.sortBy('serverSequence'));
+    selector = selector.sortBy('serverSequence');
+
+    if (limit != null && limit > 0) {
+      selector = selector.limit(limit);
+    }
+
+    final cursor = collection.find(selector);
     final results = <Map<String, dynamic>>[];
 
     await cursor.forEach((doc) {
@@ -576,7 +583,9 @@ class WebSocketSyncServer {
     final result = <String, List<Map<String, dynamic>>>{};
 
     for (final repo in repos) {
-      result[repo] = await fetchEvents(repo);
+      // Limit counter_log to 5 most recent events to avoid overwhelming clients
+      final limit = repo == 'counter_log' ? 5 : null;
+      result[repo] = await fetchEvents(repo, limit: limit);
     }
 
     return result;
@@ -834,6 +843,7 @@ class ConnectedClient {
 
     final repositoryName = message['repository'] as String?;
     final afterSequence = message['afterSequence'] as int?;
+    final limit = message['limit'] as int?;
 
     if (repositoryName == null) {
       sendMessage({
@@ -844,9 +854,13 @@ class ConnectedClient {
     }
 
     try {
+      // Apply default limit of 5 for counter_log if not specified
+      final effectiveLimit = limit ?? (repositoryName == 'counter_log' ? 5 : null);
+
       final events = await server.fetchEvents(
         repositoryName,
         afterSequence: afterSequence,
+        limit: effectiveLimit,
       );
 
       if (events.isNotEmpty) {

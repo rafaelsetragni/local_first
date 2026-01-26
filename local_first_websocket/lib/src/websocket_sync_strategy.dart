@@ -654,6 +654,11 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
               message.addAll(filterParams);
             }
 
+            // Limit counter_log to 5 most recent events
+            if (repositoryName == 'counter_log') {
+              message['limit'] = 5;
+            }
+
             _sendMessage(message);
           } on StateError catch (e) {
             // Connection lost during sync - will retry on reconnect

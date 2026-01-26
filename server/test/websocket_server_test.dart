@@ -85,8 +85,9 @@ void main() {
       throw Exception('Server failed to start after 15 seconds');
     }
 
-    // Clean up test data before starting
-    await _cleanupTestData();
+    // Drop test database to ensure deterministic test state
+    print('Dropping test database to ensure clean state...');
+    await _dropTestDatabase();
   });
 
   // Teardown: Stop server after all tests
@@ -95,8 +96,8 @@ void main() {
     serverProcess.kill();
     await serverProcess.exitCode;
 
-    // Clean up test data
-    await _cleanupTestData();
+    // Drop test database for cleanup
+    await _dropTestDatabase();
   });
 
   group('REST API - Health and Info Endpoints', () {
@@ -450,6 +451,44 @@ void main() {
         expect(currSeq, greaterThan(prevSeq));
       }
     });
+
+    test(
+        'Creating first event in new repository initializes sequence counter correctly',
+        () async {
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final repo = 'test_new_repo_$timestamp';
+
+      // This test specifically verifies the fix for the ObjectId type cast bug.
+      // When creating the first event in a new repository, the sequence counter
+      // must be created using 'repository' field instead of '_id' to avoid
+      // MongoDB's automatic ObjectId casting.
+
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/events/$repo'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'eventId': 'first_event_$timestamp',
+          'data': {
+            'test': 'data',
+            'created_at': DateTime.now().toUtc().toIso8601String(),
+          },
+        }),
+      );
+
+      // Should succeed without ObjectId type cast error
+      expect(response.statusCode, 201);
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      expect(data['status'], 'success');
+
+      // Verify event was created with sequence 1
+      final getResponse = await http.get(Uri.parse('$baseUrl/api/events/$repo'));
+      expect(getResponse.statusCode, 200);
+
+      final eventsData = jsonDecode(getResponse.body) as Map<String, dynamic>;
+      final events = eventsData['events'] as List;
+      expect(events.length, 1);
+      expect(events[0]['serverSequence'], 1);
+    });
   });
 
   group('WebSocket - Basic Connection', () {
@@ -555,34 +594,33 @@ void main() {
 }
 
 /// Helper function to clean up test data from MongoDB
-Future<void> _cleanupTestData() async {
+/// Drops the entire test database to ensure deterministic test execution.
+/// This prevents state leakage between test runs and ensures each test
+/// suite starts with a completely clean database.
+Future<void> _dropTestDatabase() async {
   try {
-    // Clean up test collections
-    final testCollections = [
-      'test_users',
-      'test_sequence',
-      'test_sequence_assignment',
-      'test_broadcast',
-    ];
+    final result = await Process.run('docker', [
+      'exec',
+      'local_first_mongodb',
+      'mongosh',
+      '--quiet',
+      '-u',
+      'admin',
+      '-p',
+      'admin',
+      '--authenticationDatabase',
+      'admin',
+      'remote_counter_db_test',
+      '--eval',
+      'db.dropDatabase()',
+    ]);
 
-    for (final collection in testCollections) {
-      await Process.run('docker', [
-        'exec',
-        'local_first_mongodb',
-        'mongosh',
-        '--quiet',
-        '-u',
-        'admin',
-        '-p',
-        'admin',
-        '--authenticationDatabase',
-        'admin',
-        'remote_counter_db_test',
-        '--eval',
-        'db.$collection.drop()',
-      ]);
+    if (result.exitCode == 0) {
+      print('Test database dropped successfully');
+    } else {
+      print('Warning: Failed to drop test database: ${result.stderr}');
     }
   } catch (e) {
-    print('Warning: Could not clean up test data: $e');
+    print('Warning: Could not drop test database: $e');
   }
 }
