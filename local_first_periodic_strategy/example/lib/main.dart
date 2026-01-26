@@ -844,7 +844,7 @@ class RepositoryService {
 
     // Initialize PeriodicSyncStrategy with callbacks
     syncStrategy = PeriodicSyncStrategy(
-      syncInterval: Duration(seconds: 2),
+      syncInterval: Duration(milliseconds: 500),
       repositoryNames: [
         RepositoryNames.user,
         RepositoryNames.counterLog,
