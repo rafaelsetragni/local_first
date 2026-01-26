@@ -1,5 +1,5 @@
-name: local_first_example_app
-description: Comprehensive example app demonstrating all Local First features.
+name: counter_app
+description: A collaborative real-time counter app demonstrating Local First architecture with dual sync strategies.
 publish_to: none
 
 resolution: workspace

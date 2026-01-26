@@ -17,6 +17,7 @@ workspace:
   - local_first_shared_preferences/example
   - local_first_websocket/example
   - local_first_periodic_strategy/example
+  - counter_app
 
 dev_dependencies:
   flutter_lints: ^6.0.0

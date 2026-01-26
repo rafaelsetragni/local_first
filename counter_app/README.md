@@ -1,6 +1,6 @@
-# Local First - Comprehensive Example App
+# Counter App
 
-A production-ready example demonstrating all Local First features with proper code organization.
+A collaborative real-time counter application demonstrating Local First architecture with proper code organization and production-ready patterns.
 
 ## Features
 
@@ -81,7 +81,7 @@ docker run -d --name local_first_mongodb -p 27017:27017 \
 ### 3. Run the App
 
 ```bash
-cd example_app
+cd counter_app
 flutter run
 ```
 
