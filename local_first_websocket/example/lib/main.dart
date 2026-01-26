@@ -8,8 +8,8 @@ import 'package:local_first_sqlite_storage/local_first_sqlite_storage.dart';
 import 'package:local_first_shared_preferences/local_first_shared_preferences.dart';
 
 // WebSocket server URL
-// Make sure to start the server first:
-// dart run example/server/websocket_server.dart
+// Make sure to start the server first (from the monorepo root):
+// melos websocket:server
 const websocketUrl = 'ws://localhost:8080/sync';
 
 /// Centralized string keys to avoid magic field names.

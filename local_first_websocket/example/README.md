@@ -39,13 +39,13 @@ This single command will:
 
 To stop all services:
 ```bash
-cd local_first_websocket/example/server
+cd server
 docker compose down
 ```
 
 To stop and remove all data (clean slate):
 ```bash
-cd local_first_websocket/example/server
+cd server
 docker compose down -v
 ```
 
@@ -78,7 +78,7 @@ The monorepo includes VS Code launch configurations for easy development.
 If you prefer not to use melos:
 
 ```bash
-cd local_first_websocket/example/server
+cd server
 docker compose up
 ```
 
@@ -97,8 +97,8 @@ For quick iteration without Docker, you can run the server directly:
 
 2. **Run the server**:
    ```bash
-   cd local_first_websocket
-   dart run example/server/websocket_server.dart
+   cd server
+   dart run websocket_server.dart
    ```
 
 3. You should see:
@@ -196,7 +196,7 @@ onSyncCompleted: (repositoryName, events) async {
 
 ## WebSocket Server Implementation
 
-The server ([websocket_server.dart](server/websocket_server.dart)) demonstrates:
+The server ([websocket_server.dart](../../server/websocket_server.dart)) demonstrates:
 
 - WebSocket connection handling with multiple clients
 - MongoDB integration for persistence
@@ -334,7 +334,7 @@ The server maintains a sequence counter per repository:
 
 ## Docker Compose Management
 
-All commands should be run from `local_first_websocket/example/server/`:
+All commands should be run from `server/` (at the monorepo root):
 
 ### View Logs
 
@@ -391,7 +391,7 @@ Your code is mounted as a volume, so most changes are reflected immediately:
 
 ```bash
 # Check service status
-cd local_first_websocket/example/server
+cd server
 docker compose ps
 
 # View logs for errors
@@ -460,7 +460,7 @@ exit
 ### Clean Slate (Reset Everything)
 
 ```bash
-cd local_first_websocket/example/server
+cd server
 
 # Stop and remove everything including data
 docker compose down -v
