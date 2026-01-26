@@ -469,7 +469,7 @@ class WebSocketSyncServer {
 
       // Log incoming fetch request
       final afterSeq = seqParam != null ? int.tryParse(seqParam) : null;
-      print('[FETCH] Repository: $repository, afterSeq: ${afterSeq ?? "none"}, limit: $limit');
+      print('[REST GET] Repository: $repository, afterSeq: ${afterSeq ?? "none"}, limit: $limit');
 
       final events = await fetchEvents(
         repository,
@@ -480,9 +480,9 @@ class WebSocketSyncServer {
       // Log fetch result
       if (events.isNotEmpty) {
         final sequences = events.map((e) => e['serverSequence']).toList();
-        print('[FETCH] ✓ Returned ${events.length} events with sequences: $sequences');
+        print('[REST GET] ✓ Returned ${events.length} events with sequences: $sequences');
       } else {
-        print('[FETCH] ✓ No events found (all up to date)');
+        print('[REST GET] ✓ No events found (all up to date)');
       }
 
       response.statusCode = HttpStatus.ok;
@@ -653,7 +653,7 @@ class WebSocketSyncServer {
       final events = (body['events'] as List).cast<Map<String, dynamic>>();
 
       // Log incoming push request
-      print('[PUSH] Repository: $repository, events: ${events.length}');
+      print('[REST POST] Repository: $repository, events: ${events.length}');
 
       // Validate all events have eventId
       for (final event in events) {
@@ -671,7 +671,7 @@ class WebSocketSyncServer {
       await pushEventsBatch(repository, events);
 
       final eventIds = events.map((e) => e['eventId'] as String).toList();
-      print('[PUSH] ✓ Saved ${eventIds.length} events: ${eventIds.take(5).join(", ")}${eventIds.length > 5 ? "..." : ""}');
+      print('[REST POST] ✓ Saved ${eventIds.length} events: ${eventIds.take(5).join(", ")}${eventIds.length > 5 ? "..." : ""}');
 
       response.statusCode = HttpStatus.created;
       response.write(
@@ -1064,7 +1064,9 @@ class ConnectedClient {
     }
 
     try {
+      print('[WS PUSH] Repository: $repositoryName, event: ${event['eventId']}');
       await server.pushEvent(repositoryName, event);
+      print('[WS PUSH] ✓ Saved event: ${event['eventId']}');
 
       // Send acknowledgment
       sendMessage({
@@ -1095,18 +1097,15 @@ class ConnectedClient {
     }
 
     try {
-      dev.log(
-        'Received batch of ${events.length} events for $repositoryName',
-        name: logTag,
-      );
       final eventList = events.cast<Map<String, dynamic>>();
-      for (var i = 0; i < eventList.length; i++) {
-        dev.log('Event $i keys: ${eventList[i].keys.toList()}', name: logTag);
-      }
+      print('[WS PUSH] Repository: $repositoryName, events: ${eventList.length}');
+
       await server.pushEventsBatch(repositoryName, eventList);
 
-      // Send acknowledgment
       final eventIds = eventList.map((e) => e['eventId'] as String).toList();
+      print('[WS PUSH] ✓ Saved ${eventIds.length} events: ${eventIds.take(5).join(", ")}${eventIds.length > 5 ? "..." : ""}');
+
+      // Send acknowledgment
       sendMessage({
         'type': 'ack',
         'eventIds': eventIds,
@@ -1141,6 +1140,8 @@ class ConnectedClient {
       final config = WebSocketSyncServer._getRepositoryConfig(repositoryName);
       final effectiveLimit = limit ?? config.defaultLimit;
 
+      print('[WS GET] Repository: $repositoryName, afterSeq: ${afterSequence ?? "none"}, limit: $effectiveLimit');
+
       final events = await server.fetchEvents(
         repositoryName,
         afterSequence: afterSequence,
@@ -1148,11 +1149,15 @@ class ConnectedClient {
       );
 
       if (events.isNotEmpty) {
+        final sequences = events.map((e) => e['serverSequence']).toList();
+        print('[WS GET] ✓ Returned ${events.length} events with sequences: $sequences');
         sendMessage({
           'type': 'events',
           'repository': repositoryName,
           'events': events,
         });
+      } else {
+        print('[WS GET] ✓ No events found (all up to date)');
       }
 
       sendMessage({'type': 'sync_complete', 'repository': repositoryName});
