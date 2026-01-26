@@ -17,10 +17,9 @@ dependencies:
     path: ../
   local_first_hive_storage:
     path: ../../local_first_hive_storage
-
-  redis: ^4.0.0
-  mongo_dart: ^0.10.5
-  awesome_task_manager: ^2.0.0
+  local_first_websocket:
+    path: ../../local_first_websocket
+  http: ^1.2.0
 
 dev_dependencies:
   flutter_test:
