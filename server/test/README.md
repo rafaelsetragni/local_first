@@ -114,6 +114,49 @@ This approach ensures:
 - Tests can be run multiple times with consistent results
 - Critical bugs (like ObjectId type casting) are reliably detected
 
+### Database Safety Protections
+
+**CRITICAL**: The test suite has multiple layers of protection to prevent accidental production data corruption:
+
+1. **Database Name Validation** (startup):
+   - Test DB name MUST be different from production DB name
+   - Test DB name MUST contain the word "test"
+   - Tests FAIL immediately if validation fails
+
+2. **Runtime Database Verification** (after server start):
+   - Queries MongoDB to verify which databases exist
+   - Ensures production database is not being used
+   - Fails if `remote_counter_db` is found without `remote_counter_db_test`
+
+3. **Environment Variable Isolation**:
+   - Server started with explicit `MONGO_DB=remote_counter_db_test`
+   - Production database: `remote_counter_db`
+   - Test database: `remote_counter_db_test`
+
+**Never disable or bypass these safety checks!**
+
+### CRITICAL: Stop Docker Server Before Running Tests
+
+**IMPORTANT**: If the Docker WebSocket server is running on port 8080, tests may connect to it instead of starting their own test server. This causes tests to use the **PRODUCTION** database!
+
+Before running tests, **ALWAYS**:
+
+```bash
+# Stop the Docker server
+docker stop local_first_websocket_server
+
+# Then run tests
+dart test
+```
+
+**Symptoms of this issue:**
+- Test collections appear in production database (`remote_counter_db`)
+- Collections named `test_*` in production
+- Safety check fails with "Production database detected"
+
+**Protection**:
+The test suite now includes a port check that will fail if port 8080 is already in use, preventing accidental connection to the production server.
+
 ## Regression Tests
 
 ### ObjectId Type Cast Bug

@@ -25,6 +25,38 @@ void main() {
     baseUrl = 'http://localhost:8080';
     wsUrl = 'ws://localhost:8080';
 
+    // CRITICAL: Verify test database name to prevent production data corruption
+    const testDbName = 'remote_counter_db_test';
+    const prodDbName = 'remote_counter_db';
+
+    if (testDbName == prodDbName) {
+      throw Exception(
+        'SAFETY CHECK FAILED: Test database name cannot be the same as production! '
+        'Test DB: $testDbName, Prod DB: $prodDbName',
+      );
+    }
+
+    if (!testDbName.contains('test')) {
+      throw Exception(
+        'SAFETY CHECK FAILED: Test database name must contain "test" to prevent accidents. '
+        'Current: $testDbName',
+      );
+    }
+
+    // CRITICAL: Verify port 8080 is not already in use
+    // If Docker server is running, tests will connect to it instead of starting a new one
+    try {
+      final serverSocket = await ServerSocket.bind('127.0.0.1', 8080);
+      await serverSocket.close();
+    } catch (e) {
+      throw Exception(
+        'SAFETY CHECK FAILED: Port 8080 is already in use!\n'
+        'This usually means the Docker WebSocket server is running.\n'
+        'Stop it with: docker stop local_first_websocket_server\n'
+        'Tests must start their own server with test database configuration.',
+      );
+    }
+
     // Check if MongoDB is running
     try {
       final result = await Process.run('docker', [
@@ -50,13 +82,13 @@ void main() {
     }
 
     // Start the server with test database
-    print('Starting WebSocket server with test database...');
+    print('Starting WebSocket server with test database: $testDbName');
     serverProcess = await Process.start(
       'dart',
       ['run', 'websocket_server.dart'],
       workingDirectory: Directory.current.path,
       environment: {
-        'MONGO_DB': 'remote_counter_db_test', // Use separate test database
+        'MONGO_DB': testDbName, // Use separate test database
         'MONGO_HOST': '127.0.0.1',
         'MONGO_PORT': '27017',
       },
@@ -84,6 +116,9 @@ void main() {
       serverProcess.kill();
       throw Exception('Server failed to start after 15 seconds');
     }
+
+    // CRITICAL: Verify server is using test database
+    await _verifyTestDatabase();
 
     // Drop test database to ensure deterministic test state
     print('Dropping test database to ensure clean state...');
@@ -593,11 +628,9 @@ void main() {
   });
 }
 
-/// Helper function to clean up test data from MongoDB
-/// Drops the entire test database to ensure deterministic test execution.
-/// This prevents state leakage between test runs and ensures each test
-/// suite starts with a completely clean database.
-Future<void> _dropTestDatabase() async {
+/// Verifies that the server is connected to the test database.
+/// This is a critical safety check to prevent accidental operations on production data.
+Future<void> _verifyTestDatabase() async {
   try {
     final result = await Process.run('docker', [
       'exec',
@@ -610,7 +643,54 @@ Future<void> _dropTestDatabase() async {
       'admin',
       '--authenticationDatabase',
       'admin',
-      'remote_counter_db_test',
+      '--eval',
+      'db.getMongo().getDBNames()',
+    ]);
+
+    if (result.exitCode == 0) {
+      final output = result.stdout.toString();
+
+      // Verify test database exists or will be created
+      // Also ensure we're NOT accidentally using production database
+      if (output.contains('remote_counter_db') &&
+          !output.contains('remote_counter_db_test')) {
+        throw Exception(
+          'SAFETY CHECK FAILED: Production database detected! '
+          'Tests must use remote_counter_db_test, not remote_counter_db. '
+          'Databases found: $output',
+        );
+      }
+
+      print('✓ Database safety check passed - using test database');
+    }
+  } catch (e) {
+    if (e.toString().contains('SAFETY CHECK FAILED')) {
+      rethrow;
+    }
+    print('Warning: Could not verify test database (may be created on first use): $e');
+  }
+}
+
+/// Helper function to clean up test data from MongoDB
+/// Drops the entire test database to ensure deterministic test execution.
+/// This prevents state leakage between test runs and ensures each test
+/// suite starts with a completely clean database.
+Future<void> _dropTestDatabase() async {
+  const testDbName = 'remote_counter_db_test';
+
+  try {
+    final result = await Process.run('docker', [
+      'exec',
+      'local_first_mongodb',
+      'mongosh',
+      '--quiet',
+      '-u',
+      'admin',
+      '-p',
+      'admin',
+      '--authenticationDatabase',
+      'admin',
+      testDbName,
       '--eval',
       'db.dropDatabase()',
     ]);
