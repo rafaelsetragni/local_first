@@ -586,16 +586,17 @@ void main() {
           reason:
               'counter_log should return all events, not deduplicate by dataId');
 
-      // Verify all events are present with correct values
-      expect(logEvents[0]['data']['value'], 1);
+      // Verify all events are present with correct values in DESCENDING order (newest first)
+      // Log events are returned newest first since old logs are not useful for new devices
+      expect(logEvents[0]['data']['value'], 3);
       expect(logEvents[1]['data']['value'], 2);
-      expect(logEvents[2]['data']['value'], 3);
+      expect(logEvents[2]['data']['value'], 1);
 
-      // Verify they are sorted by serverSequence
+      // Verify they are sorted by serverSequence in descending order
       expect(
-          logEvents[0]['serverSequence'] < logEvents[1]['serverSequence'], true);
+          logEvents[0]['serverSequence'] > logEvents[1]['serverSequence'], true);
       expect(
-          logEvents[1]['serverSequence'] < logEvents[2]['serverSequence'], true);
+          logEvents[1]['serverSequence'] > logEvents[2]['serverSequence'], true);
     });
   });
 
