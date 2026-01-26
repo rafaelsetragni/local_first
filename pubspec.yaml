@@ -11,7 +11,6 @@ workspace:
   - local_first_shared_preferences
   - local_first_websocket
   - local_first_periodic_strategy
-  - server
   - local_first/example
   - local_first_hive_storage/example
   - local_first_sqlite_storage/example

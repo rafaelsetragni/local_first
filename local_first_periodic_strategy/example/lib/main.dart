@@ -765,14 +765,34 @@ class SyncStateManager {
   /// Gets the last synced sequence for a repository in the current namespace
   Future<int?> getLastSequence(String repositoryName) async {
     final key = _buildSequenceKey(repositoryName);
+    dev.log(
+      '[SyncStateManager] Getting sequence for $repositoryName with key: $key',
+      name: 'SyncStateManager',
+    );
     final value = await client.getConfigValue(key);
-    return value != null ? int.tryParse(value) : null;
+    final parsed = value != null ? int.tryParse(value) : null;
+    dev.log(
+      '[SyncStateManager] Retrieved sequence: $parsed (raw: $value)',
+      name: 'SyncStateManager',
+    );
+    return parsed;
   }
 
   /// Saves the last synced sequence for a repository in the current namespace
   Future<void> saveLastSequence(String repositoryName, int sequence) async {
     final key = _buildSequenceKey(repositoryName);
+    dev.log(
+      '[SyncStateManager] Saving sequence $sequence for $repositoryName with key: $key',
+      name: 'SyncStateManager',
+    );
     await client.setConfigValue(key, sequence.toString());
+
+    // Verify it was saved by reading it back
+    final saved = await client.getConfigValue(key);
+    dev.log(
+      '[SyncStateManager] Verification: saved value is $saved',
+      name: 'SyncStateManager',
+    );
   }
 
   /// Extracts the maximum server sequence from a list of events
@@ -879,12 +899,55 @@ class RepositoryService {
     String repositoryName,
     List<JsonMap<dynamic>> events,
   ) async {
+    dev.log(
+      '[_saveSyncState] Called for $repositoryName with ${events.length} events',
+      name: tag,
+    );
+
     final manager = _syncStateManager;
-    if (manager == null || events.isEmpty) return;
+    if (manager == null) {
+      dev.log('[_saveSyncState] Manager is null!', name: tag);
+      return;
+    }
+
+    if (events.isEmpty) {
+      dev.log('[_saveSyncState] Events list is empty', name: tag);
+      return;
+    }
+
+    // Debug: Log first event structure to see what fields are available
+    dev.log(
+      '[_saveSyncState] First event keys: ${events.first.keys.toList()}',
+      name: tag,
+    );
+    dev.log(
+      '[_saveSyncState] First event data: ${events.first}',
+      name: tag,
+    );
 
     final maxSequence = manager.extractMaxSequence(events);
+    dev.log(
+      '[_saveSyncState] Extracted maxSequence: $maxSequence',
+      name: tag,
+    );
+
     if (maxSequence != null) {
+      // Save the last sequence we processed
+      // The server is responsible for returning only events > seq using where.gt()
+      dev.log(
+        '[_saveSyncState] Saving sequence $maxSequence for $repositoryName',
+        name: tag,
+      );
       await manager.saveLastSequence(repositoryName, maxSequence);
+      dev.log(
+        '[_saveSyncState] Sequence saved successfully',
+        name: tag,
+      );
+    } else {
+      dev.log(
+        '[_saveSyncState] maxSequence is null - not saving',
+        name: tag,
+      );
     }
   }
 

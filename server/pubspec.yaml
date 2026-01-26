@@ -1,7 +1,6 @@
 name: websocket_server_example
 description: WebSocket server example for local_first_websocket
 publish_to: none
-resolution: workspace
 
 environment:
   sdk: ^3.10.0

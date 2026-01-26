@@ -24,9 +24,9 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./:/server
+      - ../:/workspace
       - pub_cache:/root/.pub-cache
-    working_dir: /server
+    working_dir: /workspace/server
     command:
       - sh
       - -c
