@@ -10,7 +10,12 @@ workspace:
   - local_first_sqlite_storage
   - local_first_shared_preferences
   - local_first_websocket
+  - local_first_periodic_strategy
+  - server
   - local_first/example
+  - local_first_hive_storage/example
+  - local_first_sqlite_storage/example
+  - local_first_shared_preferences/example
   - local_first_websocket/example
 
 dev_dependencies:
@@ -68,7 +73,8 @@ melos:
       description: Install all example apps to connected device (without running).
       run: melos exec -c 1 -- "flutter install"
       packageFilters:
-        scope: "*example*"
+        scope: "*example"
+        ignore: "websocket_server_example"
     clean:
       description: Run flutter clean on all packages.
       run: melos exec -c 1 -- "flutter clean"

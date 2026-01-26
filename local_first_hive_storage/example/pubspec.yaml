@@ -2,6 +2,7 @@ name: local_first_hive_counter_example
 description: "Hive-backed LocalFirst counter example."
 publish_to: "none" #
 version: 1.0.0+1
+resolution: workspace
 
 environment:
   sdk: ^3.10.0
@@ -10,22 +11,14 @@ dependencies:
   flutter:
     sdk: flutter
   intl: ^0.20.2
-
   local_first:
-    path: ../../local_first
   local_first_hive_storage:
-    path: ../
   local_first_periodic_strategy:
-    path: ../../local_first_periodic_strategy
   http: ^1.2.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
-
-dependency_overrides:
-  local_first:
-    path: ../../local_first
 flutter:
   uses-material-design: true
