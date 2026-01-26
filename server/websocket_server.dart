@@ -18,7 +18,7 @@ import 'package:mongo_dart/mongo_dart.dart';
 /// REST API Endpoints:
 /// - GET /api/health - Health check
 /// - GET /api/repositories - List available repositories
-/// - GET /api/events/{repository}?afterSequence={n} - Get events after sequence
+/// - GET /api/events/{repository}?seq={n} - Get events after sequence
 /// - GET /api/events/{repository}/{eventId} - Get specific event
 /// - GET /api/events/{repository}/byDataId/{dataId} - Get event by dataId
 /// - POST /api/events/{repository} - Create single event
@@ -442,7 +442,7 @@ class WebSocketSyncServer {
     }
   }
 
-  /// Handles GET /api/events/{repository}?afterSequence={n} - Get events after sequence.
+  /// Handles GET /api/events/{repository}?seq={n} - Get events after sequence.
   Future<void> _handleGetEvents(HttpRequest request, String repository) async {
     final response = request.response;
     final db = _db;
@@ -457,7 +457,7 @@ class WebSocketSyncServer {
     }
 
     try {
-      final afterSequence = request.uri.queryParameters['afterSequence'];
+      final seqParam = request.uri.queryParameters['seq'];
       final limitParam = request.uri.queryParameters['limit'];
 
       // Get default limit from repository configuration
@@ -469,8 +469,8 @@ class WebSocketSyncServer {
 
       final events = await fetchEvents(
         repository,
-        afterSequence: afterSequence != null
-            ? int.tryParse(afterSequence)
+        afterSequence: seqParam != null
+            ? int.tryParse(seqParam)
             : null,
         limit: limit,
       );

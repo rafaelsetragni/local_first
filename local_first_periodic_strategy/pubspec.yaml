@@ -1,0 +1,14 @@
+name: local_first_periodic_strategy
+description: A reusable periodic synchronization strategy plugin for LocalFirst framework
+version: 1.0.0
+publish_to: 'none'
+
+environment:
+  sdk: ^3.10.0
+
+dependencies:
+  local_first:
+    path: ../local_first
+
+dev_dependencies:
+  lints: ^6.0.0
