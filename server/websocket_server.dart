@@ -988,6 +988,9 @@ class ConnectedClient {
   void _startPingTimer() {
     _pingTimer?.cancel();
     _lastPongTime = DateTime.now();
+    print(
+      '[PING] 🔄 Starting ping timer (interval: ${_pingInterval.inSeconds}s, timeout: ${_pongTimeout.inSeconds}s)',
+    );
     _pingTimer = Timer.periodic(_pingInterval, (_) {
       _checkClientLiveness();
     });
@@ -1001,9 +1004,8 @@ class ConnectedClient {
     if (_waitingForPong && _lastPongTime != null) {
       final timeSinceLastPong = now.difference(_lastPongTime!);
       if (timeSinceLastPong > _pongTimeout) {
-        dev.log(
-          'Client failed to respond to ping within ${_pongTimeout.inSeconds}s - disconnecting',
-          name: logTag,
+        print(
+          '[PING] ⏱️  TIMEOUT: Client failed to respond within ${_pongTimeout.inSeconds}s - disconnecting',
         );
         close();
         return;
@@ -1012,6 +1014,7 @@ class ConnectedClient {
 
     // Send ping to client
     _waitingForPong = true;
+    print('[PING] 📡 Sending PING to client');
     sendMessage({'type': 'ping'});
   }
 
@@ -1019,6 +1022,7 @@ class ConnectedClient {
   void _handlePong() {
     _lastPongTime = DateTime.now();
     _waitingForPong = false;
+    print('[PING] ✅ Received PONG from client');
   }
 
   /// Processes a message from the client.
@@ -1092,8 +1096,9 @@ class ConnectedClient {
     _startPingTimer();
   }
 
-  /// Handles ping (heartbeat).
+  /// Handles ping (heartbeat) from client.
   void _handlePing() {
+    print('[PING] 📡 Received PING from client, sending PONG');
     sendMessage({'type': 'pong'});
   }
 

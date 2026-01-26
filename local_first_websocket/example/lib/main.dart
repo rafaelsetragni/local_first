@@ -804,7 +804,7 @@ class RepositoryService {
     syncStrategy = WebSocketSyncStrategy(
       websocketUrl: websocketUrl,
       reconnectDelay: Duration(milliseconds: 1500),
-      heartbeatInterval: Duration(seconds: 3),
+      heartbeatInterval: Duration(seconds: 15),
       onBuildSyncFilter: _buildSyncFilter,
       onSyncCompleted: _onSyncCompleted,
     );
