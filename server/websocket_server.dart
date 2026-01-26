@@ -467,13 +467,23 @@ class WebSocketSyncServer {
           ? (int.tryParse(limitParam) ?? defaultLimit)
           : defaultLimit;
 
+      // Log incoming fetch request
+      final afterSeq = seqParam != null ? int.tryParse(seqParam) : null;
+      print('[FETCH] Repository: $repository, afterSeq: ${afterSeq ?? "none"}, limit: $limit');
+
       final events = await fetchEvents(
         repository,
-        afterSequence: seqParam != null
-            ? int.tryParse(seqParam)
-            : null,
+        afterSequence: afterSeq,
         limit: limit,
       );
+
+      // Log fetch result
+      if (events.isNotEmpty) {
+        final sequences = events.map((e) => e['serverSequence']).toList();
+        print('[FETCH] ✓ Returned ${events.length} events with sequences: $sequences');
+      } else {
+        print('[FETCH] ✓ No events found (all up to date)');
+      }
 
       response.statusCode = HttpStatus.ok;
       response.write(
@@ -642,6 +652,9 @@ class WebSocketSyncServer {
 
       final events = (body['events'] as List).cast<Map<String, dynamic>>();
 
+      // Log incoming push request
+      print('[PUSH] Repository: $repository, events: ${events.length}');
+
       // Validate all events have eventId
       for (final event in events) {
         if (!event.containsKey('eventId')) {
@@ -658,6 +671,7 @@ class WebSocketSyncServer {
       await pushEventsBatch(repository, events);
 
       final eventIds = events.map((e) => e['eventId'] as String).toList();
+      print('[PUSH] ✓ Saved ${eventIds.length} events: ${eventIds.take(5).join(", ")}${eventIds.length > 5 ? "..." : ""}');
 
       response.statusCode = HttpStatus.created;
       response.write(
