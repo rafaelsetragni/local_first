@@ -58,6 +58,15 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
   /// Interval for sending heartbeat ping messages
   final Duration heartbeatInterval;
 
+  /// Whether to enable pending queue for offline event queueing.
+  ///
+  /// When true (default), events created while disconnected are queued
+  /// and sent when connection is restored.
+  ///
+  /// When false, pending queue is disabled - useful when using a separate
+  /// periodic sync strategy that handles offline events.
+  final bool enablePendingQueue;
+
   /// Optional authentication token
   String? _authToken;
 
@@ -163,6 +172,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
     this.reconnectDelay = const Duration(seconds: 3),
     JsonMap<String>? headers,
     this.heartbeatInterval = const Duration(seconds: 30),
+    this.enablePendingQueue = true,
     String? authToken,
     this.onAuthenticationFailed,
     @visibleForTesting WebSocketChannel Function(Uri)? channelFactory,
@@ -255,7 +265,9 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
     _reconnectTimer?.cancel();
     _heartbeatTimer?.cancel();
     _pongTimeoutTimer?.cancel();
-    _pendingQueue.clear();
+    if (enablePendingQueue) {
+      _pendingQueue.clear();
+    }
   }
 
   /// Disposes of all resources.
@@ -305,8 +317,10 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
       await _authenticate();
       await _syncInitialState();
 
-      // Send pending events
-      await _flushPendingQueue();
+      // Send pending events (if queue is enabled)
+      if (enablePendingQueue) {
+        await _flushPendingQueue();
+      }
     } catch (e, s) {
       dev.log(
         'Error connecting to WebSocket: $e',
@@ -481,8 +495,10 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
 
     dev.log('Received ACK for ${eventIds.length} events', name: logTag);
 
-    // Remove from pending queue
-    _pendingQueue.removeWhere((event) => eventIds.contains(event.eventId));
+    // Remove from pending queue (if enabled)
+    if (enablePendingQueue) {
+      _pendingQueue.removeWhere((event) => eventIds.contains(event.eventId));
+    }
 
     // Mark events as synced
     final repositories = message['repositories'] as JsonMap<dynamic>?;
@@ -507,13 +523,22 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
   @override
   Future<SyncStatus> onPushToRemote(LocalFirstEvent localData) async {
     if (!_isConnected) {
-      // Add to queue if disconnected
-      _pendingQueue.add(localData);
-      dev.log(
-        'Event added to queue (disconnected): ${localData.eventId}',
-        name: logTag,
-      );
-      return SyncStatus.pending;
+      if (enablePendingQueue) {
+        // Add to queue if disconnected and queue is enabled
+        _pendingQueue.add(localData);
+        dev.log(
+          'Event added to queue (disconnected): ${localData.eventId}',
+          name: logTag,
+        );
+        return SyncStatus.pending;
+      } else {
+        // Queue disabled - mark as failed, let periodic sync handle it
+        dev.log(
+          'Event not sent (disconnected, queue disabled): ${localData.eventId}',
+          name: logTag,
+        );
+        return SyncStatus.failed;
+      }
     }
 
     try {
@@ -531,8 +556,12 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
     } on StateError catch (e) {
       // Connection was lost between the check and the send
       _handleConnectionLoss('push event', e);
-      _pendingQueue.add(localData);
-      return SyncStatus.pending;
+      if (enablePendingQueue) {
+        _pendingQueue.add(localData);
+        return SyncStatus.pending;
+      } else {
+        return SyncStatus.failed;
+      }
     } catch (e, s) {
       // Other unexpected errors
       dev.log(
@@ -541,7 +570,9 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
         error: e,
         stackTrace: s,
       );
-      _pendingQueue.add(localData);
+      if (enablePendingQueue) {
+        _pendingQueue.add(localData);
+      }
       return SyncStatus.failed;
     }
   }
@@ -694,6 +725,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
 
   /// Sends all pending events in the queue.
   Future<void> _flushPendingQueue() async {
+    if (!enablePendingQueue) return;
     if (_pendingQueue.isEmpty) return;
 
     dev.log('Sending ${_pendingQueue.length} pending events', name: logTag);
