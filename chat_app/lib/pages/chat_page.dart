@@ -23,6 +23,9 @@ class ChatPage extends StatefulWidget {
 }
 
 class _ChatPageState extends State<ChatPage> {
+  static const _pageSize = 25;
+  static const _loadMoreThreshold = 0.8;
+
   final _repositoryService = RepositoryService();
   final _messageController = TextEditingController();
   final _scrollController = ScrollController();
@@ -30,7 +33,7 @@ class _ChatPageState extends State<ChatPage> {
 
   // Stream subscriptions
   StreamSubscription<ChatModel?>? _chatSubscription;
-  StreamSubscription<List<MessageModel>>? _messagesSubscription;
+  StreamSubscription<List<MessageModel>>? _newMessagesSubscription;
   StreamSubscription<List<UserModel>>? _usersSubscription;
 
   // State data
@@ -39,10 +42,15 @@ class _ChatPageState extends State<ChatPage> {
   Map<String, String> _avatarMap = {};
   bool _isLoading = true;
 
+  // Pagination state
+  bool _hasMore = true;
+  bool _isLoadingMore = false;
+
   @override
   void initState() {
     super.initState();
     _currentChat = widget.chat;
+    _scrollController.addListener(_onScroll);
     _setupSubscriptions();
   }
 
@@ -56,18 +64,6 @@ class _ChatPageState extends State<ChatPage> {
       }
     });
 
-    // Messages subscription
-    _messagesSubscription = _repositoryService
-        .watchMessages(widget.chat.id)
-        .listen((messages) {
-      if (mounted) {
-        setState(() {
-          _messages = messages;
-          _isLoading = false;
-        });
-      }
-    });
-
     // Users subscription for avatars
     _usersSubscription = _repositoryService.watchUsers().listen((users) {
       if (mounted) {
@@ -78,12 +74,107 @@ class _ChatPageState extends State<ChatPage> {
         setState(() => _avatarMap = avatarMap);
       }
     });
+
+    // Load initial messages
+    _loadInitialMessages();
+  }
+
+  Future<void> _loadInitialMessages() async {
+    try {
+      final messages = await _repositoryService.getMessages(
+        widget.chat.id,
+        limit: _pageSize,
+      );
+
+      if (mounted) {
+        setState(() {
+          _messages = messages;
+          _isLoading = false;
+          _hasMore = messages.length >= _pageSize;
+        });
+
+        // Start watching for new messages after loading initial ones
+        _setupNewMessagesSubscription();
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  void _setupNewMessagesSubscription() {
+    // Watch for new messages (created after the newest one we have)
+    final newestTime = _messages.isNotEmpty
+        ? _messages.first.createdAt
+        : DateTime.now().toUtc();
+
+    _newMessagesSubscription?.cancel();
+    _newMessagesSubscription = _repositoryService
+        .watchNewMessages(widget.chat.id, newestTime)
+        .listen((newMessages) {
+      if (mounted && newMessages.isNotEmpty) {
+        setState(() {
+          // Add new messages to the beginning (they are newest)
+          for (final msg in newMessages) {
+            if (!_messages.any((m) => m.id == msg.id)) {
+              _messages.insert(0, msg);
+            }
+          }
+        });
+      }
+    });
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+
+    final maxScroll = _scrollController.position.maxScrollExtent;
+    final currentScroll = _scrollController.position.pixels;
+
+    // Since list is reversed, we check when user scrolls UP (towards older messages)
+    // In a reversed list, maxScrollExtent is at the TOP (oldest messages)
+    if (currentScroll >= maxScroll * _loadMoreThreshold) {
+      _loadMoreMessages();
+    }
+  }
+
+  Future<void> _loadMoreMessages() async {
+    if (_isLoadingMore || !_hasMore) return;
+
+    setState(() => _isLoadingMore = true);
+
+    try {
+      final moreMessages = await _repositoryService.getMessages(
+        widget.chat.id,
+        limit: _pageSize,
+        offset: _messages.length,
+      );
+
+      if (mounted) {
+        setState(() {
+          // Filter out duplicates and add to the end (older messages)
+          for (final msg in moreMessages) {
+            if (!_messages.any((m) => m.id == msg.id)) {
+              _messages.add(msg);
+            }
+          }
+          _hasMore = moreMessages.length >= _pageSize;
+          _isLoadingMore = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoadingMore = false);
+      }
+    }
   }
 
   @override
   void dispose() {
+    _scrollController.removeListener(_onScroll);
     _chatSubscription?.cancel();
-    _messagesSubscription?.cancel();
+    _newMessagesSubscription?.cancel();
     _usersSubscription?.cancel();
     _messageController.dispose();
     _scrollController.dispose();
@@ -192,10 +283,19 @@ class _ChatPageState extends State<ChatPage> {
     return ListView.builder(
       controller: _scrollController,
       reverse: true,
-      itemCount: _messages.length,
+      // Add 1 for loading indicator when loading more
+      itemCount: _messages.length + (_isLoadingMore ? 1 : 0),
       itemBuilder: (context, index) {
-        // Display in reverse order (newest at bottom)
-        final message = _messages[_messages.length - 1 - index];
+        // Show loading indicator at the end (top in reversed list)
+        if (_isLoadingMore && index == _messages.length) {
+          return const Padding(
+            padding: EdgeInsets.all(16.0),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        // Messages are already sorted newest first from getMessages
+        final message = _messages[index];
         final isOwnMessage = authenticatedUser != null &&
             message.senderId == authenticatedUser.username;
         final avatarUrl = _avatarMap[message.senderId] ?? '';

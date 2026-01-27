@@ -444,7 +444,36 @@ class RepositoryService {
 
   // ========== MESSAGE OPERATIONS ==========
 
-  /// Watches messages in a specific chat
+  /// Gets messages in a specific chat with pagination
+  /// Returns messages ordered by createdAt descending (newest first)
+  Future<List<MessageModel>> getMessages(
+    String chatId, {
+    int limit = 25,
+    int offset = 0,
+  }) async {
+    final events = await messageRepository.query()
+        .where(MessageFields.chatId, isEqualTo: chatId)
+        .orderBy(CommonFields.createdAt, descending: true)
+        .startAfter(offset)
+        .limitTo(limit)
+        .getAll();
+    return _messagesFromEvents(events);
+  }
+
+  /// Watches for new messages in a specific chat (real-time updates)
+  /// Only returns messages created after the given timestamp
+  Stream<List<MessageModel>> watchNewMessages(String chatId, DateTime after) {
+    return messageRepository.query()
+        .where(MessageFields.chatId, isEqualTo: chatId)
+        .orderBy(CommonFields.createdAt, descending: false)
+        .watch()
+        .map((events) {
+          final messages = _messagesFromEvents(events);
+          return messages.where((m) => m.createdAt.isAfter(after)).toList();
+        });
+  }
+
+  /// Watches messages in a specific chat (legacy - returns all)
   Stream<List<MessageModel>> watchMessages(String chatId) {
     return messageRepository.query()
         .where(MessageFields.chatId, isEqualTo: chatId)
