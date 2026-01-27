@@ -138,9 +138,34 @@ class PeriodicSyncStrategy extends DataSyncStrategy {
     this.onPing,
   });
 
-  /// Starts the periodic synchronization.
+  /// Starts the periodic synchronization timer.
   ///
-  /// This should be called after the LocalFirstClient is initialized.
+  /// This method should be called after the [LocalFirstClient.initialize] completes.
+  /// It will:
+  /// 1. Wait for client initialization if not already complete
+  /// 2. Report connected state to the client
+  /// 3. Start the periodic sync timer with [syncInterval]
+  /// 4. Perform an immediate initial sync
+  ///
+  /// **Usage:**
+  /// ```dart
+  /// final client = LocalFirstClient(
+  ///   repositories: [repository],
+  ///   localStorage: storage,
+  ///   syncStrategies: [periodicStrategy],
+  /// );
+  ///
+  /// await client.initialize();
+  /// await periodicStrategy.start(); // Start syncing
+  /// ```
+  ///
+  /// **Behavior:**
+  /// - Idempotent: calling multiple times has no effect if already running
+  /// - Non-blocking: returns immediately after starting the timer
+  /// - Performs immediate sync: doesn't wait for the first interval
+  ///
+  /// **Exceptions:**
+  /// No exceptions are thrown. Sync errors are logged but don't stop the timer.
   Future<void> start() async {
     if (_isRunning) return;
 
@@ -159,7 +184,24 @@ class PeriodicSyncStrategy extends DataSyncStrategy {
     await _performSync();
   }
 
-  /// Stops the periodic synchronization.
+  /// Stops the periodic synchronization timer.
+  ///
+  /// This method:
+  /// 1. Cancels the periodic sync timer
+  /// 2. Reports disconnected state to the client
+  /// 3. Stops any ongoing sync (waits for current cycle to complete)
+  ///
+  /// **Usage:**
+  /// ```dart
+  /// periodicStrategy.stop(); // Stop syncing
+  /// ```
+  ///
+  /// **Behavior:**
+  /// - Idempotent: calling multiple times has no effect if already stopped
+  /// - Does not clear pending events: they remain in local storage
+  /// - Current sync cycle completes before stopping
+  ///
+  /// After stopping, you can restart with [start].
   void stop() {
     dev.log('Stopping periodic sync strategy', name: logTag);
 
@@ -170,7 +212,18 @@ class PeriodicSyncStrategy extends DataSyncStrategy {
     reportConnectionState(false);
   }
 
-  /// Disposes of all resources.
+  /// Disposes of all resources and stops synchronization.
+  ///
+  /// This method calls [stop] to clean up the timer and report disconnection.
+  /// Should be called when the strategy is no longer needed (e.g., app shutdown).
+  ///
+  /// **Usage:**
+  /// ```dart
+  /// periodicStrategy.dispose(); // Clean up before app exit
+  /// ```
+  ///
+  /// After calling dispose, the strategy instance should not be used again.
+  /// Create a new instance if you need to restart synchronization.
   void dispose() {
     stop();
   }
@@ -318,11 +371,31 @@ class PeriodicSyncStrategy extends DataSyncStrategy {
     }
   }
 
-  /// Implementation of push: queues event for next sync cycle
+  /// Queues local event for push during the next sync cycle.
   ///
-  /// Unlike WebSocketSyncStrategy which sends events immediately,
-  /// PeriodicSyncStrategy batches events and sends them during the next
-  /// sync cycle.
+  /// This method is called automatically by the LocalFirst framework when
+  /// a local change needs to be synchronized to the server.
+  ///
+  /// **Parameters:**
+  /// - [localData]: The local event to queue for synchronization
+  ///
+  /// **Returns:**
+  /// - [SyncStatus.pending]: Event queued successfully, will be pushed on next sync
+  ///
+  /// **Behavior:**
+  ///
+  /// Unlike [WebSocketSyncStrategy] which sends events immediately,
+  /// [PeriodicSyncStrategy] batches events and sends them during the next
+  /// sync cycle. This provides:
+  /// - Better network efficiency through batching
+  /// - Reduced server load
+  /// - Lower battery usage on mobile devices
+  ///
+  /// The event is stored in local storage and will be included in the next
+  /// [_performSync] call, which happens at [syncInterval] intervals.
+  ///
+  /// **Exceptions:**
+  /// No exceptions are thrown. The event is always queued successfully.
   @override
   Future<SyncStatus> onPushToRemote(LocalFirstEvent localData) async {
     // Events are automatically pushed during the next sync cycle
