@@ -1,0 +1,499 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:developer' as dev;
+
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
+import 'package:local_first/local_first.dart';
+import 'package:local_first_websocket/local_first_websocket.dart';
+import 'package:local_first_periodic_strategy/local_first_periodic_strategy.dart';
+import 'package:local_first_sqlite_storage/local_first_sqlite_storage.dart';
+import 'package:local_first_shared_preferences/local_first_shared_preferences.dart';
+
+import '../config/app_config.dart';
+import '../models/field_names.dart';
+import '../models/user_model.dart';
+import '../models/chat_model.dart';
+import '../models/message_model.dart';
+import '../repositories/repositories.dart';
+import '../services/navigator_service.dart';
+import '../services/sync_state_manager.dart';
+
+/// Central orchestrator for chat app using WebSocket and Periodic sync
+class RepositoryService {
+  static const tag = 'RepositoryService';
+
+  static RepositoryService? _instance;
+  factory RepositoryService() => _instance ??= RepositoryService._internal();
+
+  /// For testing only - allows injecting a mock instance
+  @visibleForTesting
+  static set instance(RepositoryService? testInstance) {
+    _instance = testInstance;
+  }
+
+  LocalFirstClient? localFirst;
+  UserModel? authenticatedUser;
+  String _currentNamespace = 'default';
+  final _lastUsernameKey = '__last_username__';
+  SyncStateManager? _syncStateManager;
+  final http.Client _httpClient = http.Client();
+  final NavigatorService _navigatorService = NavigatorService();
+
+  final LocalFirstRepository<UserModel> userRepository;
+  final LocalFirstRepository<ChatModel> chatRepository;
+  final LocalFirstRepository<MessageModel> messageRepository;
+  late final WebSocketSyncStrategy webSocketStrategy;
+  late final PeriodicSyncStrategy periodicStrategy;
+
+  RepositoryService._internal()
+      : userRepository = buildUserRepository(),
+        chatRepository = buildChatRepository(),
+        messageRepository = buildMessageRepository() {
+    // Initialize WebSocketSyncStrategy for real-time push notifications
+    // Pending queue disabled - let periodic strategy handle offline events
+    webSocketStrategy = WebSocketSyncStrategy(
+      websocketUrl: websocketUrl,
+      reconnectDelay: Duration(milliseconds: 1500),
+      heartbeatInterval: Duration(seconds: 60),
+      enablePendingQueue: false,
+      onBuildSyncFilter: (_) async => null, // Don't pull - only receive pushes
+      onSyncCompleted: (filter, events) async {}, // No-op - periodic handles state
+    );
+
+    // Initialize PeriodicSyncStrategy for consistency and offline sync
+    // Uses server sequence to fetch missed events
+    periodicStrategy = PeriodicSyncStrategy(
+      syncInterval: Duration(seconds: 30),
+      repositoryNames: [
+        RepositoryNames.user,
+        RepositoryNames.chat,
+        RepositoryNames.message,
+      ],
+      onFetchEvents: _fetchEvents,
+      onPushEvents: _pushEvents,
+      onBuildSyncFilter: _buildSyncFilter,
+      onSaveSyncState: _onSyncCompleted,
+    );
+  }
+
+  String get namespace => _currentNamespace;
+  Stream<bool> get connectionState => webSocketStrategy.connectionChanges;
+  bool get isConnected => webSocketStrategy.latestConnectionState ?? false;
+
+  /// Builds sync filter using server sequence numbers
+  Future<JsonMap<dynamic>?> _buildSyncFilter(String repositoryName) async {
+    final manager = _syncStateManager;
+    if (manager == null) return null;
+
+    final lastSequence = await manager.getLastSequence(repositoryName);
+    if (lastSequence == null) {
+      return null; // No previous sync - request all events
+    }
+
+    return {'afterSequence': lastSequence};
+  }
+
+  /// Fetches events from REST API for periodic sync
+  Future<List<JsonMap>> _fetchEvents(String repositoryName) async {
+    try {
+      final filter = await _buildSyncFilter(repositoryName);
+      final uri = filter != null && filter.containsKey('afterSequence')
+          ? Uri.parse(
+              '$baseHttpUrl/api/events/$repositoryName?seq=${filter['afterSequence']}',
+            )
+          : Uri.parse('$baseHttpUrl/api/events/$repositoryName');
+
+      final response = await _httpClient.get(uri).timeout(
+            const Duration(seconds: 10),
+          );
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to fetch events: ${response.statusCode}');
+      }
+
+      // Decode with allowMalformed to handle invalid UTF-8 sequences
+      final responseBody = utf8.decode(response.bodyBytes, allowMalformed: true);
+      final data = jsonDecode(responseBody) as Map<String, dynamic>;
+      final events = (data['events'] as List).cast<Map<String, dynamic>>();
+
+      return events;
+    } catch (e, s) {
+      dev.log(
+        'Error fetching events',
+        name: 'RepositoryService',
+        error: e,
+        stackTrace: s,
+      );
+      return [];
+    }
+  }
+
+  /// Pushes events to REST API for periodic sync
+  Future<bool> _pushEvents(
+    String repositoryName,
+    LocalFirstEvents events,
+  ) async {
+    if (events.isEmpty) return true;
+
+    try {
+      final eventList = events.map((e) => e.toJson()).toList();
+
+      final jsonBody = jsonEncode(
+        {'events': eventList},
+        toEncodable: (obj) => obj is DateTime ? obj.toIso8601String() : obj,
+      );
+
+      final response = await _httpClient.post(
+        Uri.parse('$baseHttpUrl/api/events/$repositoryName/batch'),
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+        body: utf8.encode(jsonBody),
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode != 201) {
+        dev.log(
+          'Failed to push events: ${response.statusCode}',
+          name: 'RepositoryService',
+        );
+        return false;
+      }
+
+      return true;
+    } catch (e, s) {
+      dev.log(
+        'Error pushing events',
+        name: 'RepositoryService',
+        error: e,
+        stackTrace: s,
+      );
+      return false;
+    }
+  }
+
+  /// Called when sync is completed - saves the latest sequence
+  Future<void> _onSyncCompleted(
+    String repositoryName,
+    List<JsonMap<dynamic>> events,
+  ) async {
+    final manager = _syncStateManager;
+    if (manager == null || events.isEmpty) return;
+
+    final maxSequence = manager.extractMaxSequence(events);
+    if (maxSequence != null) {
+      await manager.saveLastSequence(repositoryName, maxSequence);
+    }
+  }
+
+  /// Initializes the client/storage and restores last logged user if possible
+  Future<UserModel?> initialize() async {
+    final localFirst = this.localFirst ??= LocalFirstClient(
+      repositories: [
+        userRepository,
+        chatRepository,
+        messageRepository,
+      ],
+      localStorage: SqliteLocalFirstStorage(
+        databaseName: 'chat_app.db',
+      ),
+      keyValueStorage: SharedPreferencesConfigStorage(),
+      syncStrategies: [webSocketStrategy, periodicStrategy],
+    );
+
+    await localFirst.initialize();
+
+    // Initialize sync state manager after client is ready
+    _syncStateManager = SyncStateManager(localFirst, () => _currentNamespace);
+
+    return await restoreLastUser();
+  }
+
+  /// Extract models from events
+  List<UserModel> _usersFromEvents(List<LocalFirstEvent<UserModel>> events) =>
+      events.whereType<LocalFirstStateEvent<UserModel>>()
+          .map((e) => e.data)
+          .toList();
+
+  List<ChatModel> _chatsFromEvents(List<LocalFirstEvent<ChatModel>> events) =>
+      events.whereType<LocalFirstStateEvent<ChatModel>>()
+          .map((e) => e.data)
+          .toList();
+
+  List<MessageModel> _messagesFromEvents(
+      List<LocalFirstEvent<MessageModel>> events) =>
+      events.whereType<LocalFirstStateEvent<MessageModel>>()
+          .map((e) => e.data)
+          .toList();
+
+  /// Fetches a user from the remote server by userId
+  Future<UserModel?> _fetchRemoteUser(String userId) async {
+    try {
+      final response = await _httpClient
+          .get(Uri.parse('$baseHttpUrl/api/events/user/byDataId/$userId'))
+          .timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 404) {
+        return null; // User doesn't exist on server
+      }
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to fetch user: ${response.statusCode}');
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final eventData = data['event'] as Map<String, dynamic>;
+      final userData = eventData['data'] as Map<String, dynamic>;
+
+      return UserModel.fromJson(userData);
+    } catch (e) {
+      throw Exception('Failed to fetch remote user: $e');
+    }
+  }
+
+  /// Signs in a user and starts all sync strategies
+  Future<void> signIn({required String username}) async {
+    localFirst?.stopAllStrategies();
+
+    // Create local UserModel to generate userId
+    final localUser = UserModel(username: username, avatarUrl: null);
+    final userId = localUser.id;
+
+    // Switch to user's namespace database
+    await _switchUserDatabase(userId);
+
+    // Fetch user from server via HTTP GET
+    try {
+      final remoteUser = await _fetchRemoteUser(userId);
+
+      if (remoteUser != null) {
+        // User exists on server - use remote data
+        authenticatedUser = remoteUser;
+      } else {
+        // User doesn't exist on server - use local model
+        authenticatedUser = localUser;
+        await userRepository.upsert(localUser, needSync: true);
+      }
+    } catch (e) {
+      throw Exception('Failed to sign in: $e');
+    }
+
+    // Persist login state
+    await _persistLastUsername(username);
+
+    // Start all sync strategies
+    await localFirst?.startAllStrategies();
+
+    // Navigate to home
+    _navigatorService.navigateToHome();
+  }
+
+  /// Signs out the current user
+  Future<void> signOut() async {
+    localFirst?.stopAllStrategies();
+    authenticatedUser = null;
+    await _switchUserDatabase('');
+    await _setGlobalString(_lastUsernameKey, '');
+
+    // Navigate to sign in
+    _navigatorService.navigateToSignIn();
+  }
+
+  /// Restores the last logged user if available
+  Future<UserModel?> restoreLastUser() async {
+    final username = await _getGlobalString(_lastUsernameKey);
+    if (username == null || username.isEmpty) return null;
+
+    try {
+      final normalizedId = UserModel(username: username, avatarUrl: null).id;
+      await _switchUserDatabase(normalizedId);
+
+      final results = await userRepository.query()
+          .where(userRepository.idFieldName, isEqualTo: normalizedId)
+          .getAll();
+
+      if (results.isEmpty) return null;
+
+      final user = (results.first as LocalFirstStateEvent<UserModel>).data;
+      authenticatedUser = user;
+      await localFirst?.startAllStrategies();
+      return user;
+    } catch (e) {
+      dev.log('Failed to restore last user: $e', name: tag);
+      return null;
+    }
+  }
+
+  /// Persists the last username for auto-login
+  Future<void> _persistLastUsername(String username) =>
+      _setGlobalString(_lastUsernameKey, username);
+
+  /// Gets a global string value (from default namespace)
+  Future<String?> _getGlobalString(String key) async {
+    final client = localFirst;
+    if (client == null) return null;
+    return _withGlobalString(() => client.getConfigValue(key));
+  }
+
+  /// Sets a global string value (in default namespace)
+  Future<void> _setGlobalString(String key, String value) async {
+    final client = localFirst;
+    if (client == null) return;
+    await _withGlobalString(() => client.setConfigValue(key, value));
+  }
+
+  /// Temporarily switches to default namespace, executes action, then restores
+  Future<T> _withGlobalString<T>(Future<T> Function() action) async {
+    final storage = localFirst?.localStorage;
+    if (storage == null) return await action();
+
+    final previous = _currentNamespace;
+    await storage.useNamespace('default');
+    try {
+      return await action();
+    } finally {
+      await storage.useNamespace(previous);
+    }
+  }
+
+  /// Switches to a user-specific database namespace
+  Future<void> _switchUserDatabase(String userId) async {
+    final db = localFirst;
+    if (db == null) return;
+
+    final namespace = _sanitizeNamespace(userId);
+    if (_currentNamespace == namespace) return;
+
+    _currentNamespace = namespace;
+    await db.localStorage.useNamespace(namespace);
+  }
+
+  /// Sanitizes username for use as database namespace
+  String _sanitizeNamespace(String username) {
+    if (username.isEmpty) return 'default';
+    final sanitized = username.toLowerCase().replaceAll(
+      RegExp(r'[^a-z0-9_]'),
+      '_',
+    );
+    return 'user_$sanitized';
+  }
+
+  // ========== CHAT OPERATIONS ==========
+
+  /// Watches all chats ordered by last message time
+  Stream<List<ChatModel>> watchChats() {
+    return chatRepository.query()
+        .orderBy(ChatFields.lastMessageAt, descending: true)
+        .watch()
+        .map(_chatsFromEvents);
+  }
+
+  /// Watches a specific chat by ID
+  Stream<ChatModel?> watchChat(String chatId) {
+    return chatRepository.query()
+        .where(chatRepository.idFieldName, isEqualTo: chatId)
+        .watch()
+        .map((events) {
+      final chats = _chatsFromEvents(events);
+      return chats.isNotEmpty ? chats.first : null;
+    });
+  }
+
+  /// Creates a new chat
+  Future<void> createChat({required String chatName}) async {
+    final user = authenticatedUser;
+    if (user == null) throw Exception('User not authenticated');
+
+    final chat = ChatModel(
+      name: chatName,
+      createdBy: user.username,
+    );
+
+    await chatRepository.upsert(chat, needSync: true);
+  }
+
+  /// Deletes a chat
+  Future<void> deleteChat(String chatId) async {
+    await chatRepository.delete(chatId, needSync: true);
+  }
+
+  /// Updates chat avatar
+  Future<ChatModel> updateChatAvatar(String chatId, String avatarUrl) async {
+    final chatResults = await chatRepository.query()
+        .where(chatRepository.idFieldName, isEqualTo: chatId)
+        .getAll();
+
+    if (chatResults.isEmpty) {
+      throw Exception('Chat not found');
+    }
+
+    final chatEvent = chatResults.first as LocalFirstStateEvent<ChatModel>;
+    final chat = chatEvent.data;
+
+    final updated = ChatModel(
+      id: chat.id,
+      name: chat.name,
+      createdBy: chat.createdBy,
+      avatarUrl: avatarUrl.isEmpty ? null : avatarUrl,
+      createdAt: chat.createdAt,
+      updatedAt: DateTime.now().toUtc(),
+      lastMessageAt: chat.lastMessageAt,
+    );
+
+    await chatRepository.upsert(updated, needSync: true);
+    return updated;
+  }
+
+  // ========== MESSAGE OPERATIONS ==========
+
+  /// Watches messages in a specific chat
+  Stream<List<MessageModel>> watchMessages(String chatId) {
+    return messageRepository.query()
+        .where(MessageFields.chatId, isEqualTo: chatId)
+        .orderBy(CommonFields.createdAt, descending: false)
+        .watch()
+        .map(_messagesFromEvents);
+  }
+
+  /// Sends a message in a chat
+  Future<void> sendMessage({
+    required String chatId,
+    required String text,
+  }) async {
+    final user = authenticatedUser;
+    if (user == null) throw Exception('User not authenticated');
+
+    if (text.trim().isEmpty) return;
+
+    final message = MessageModel(
+      chatId: chatId,
+      senderId: user.username,
+      text: text.trim(),
+    );
+
+    await messageRepository.upsert(message, needSync: true);
+  }
+
+  /// Watches all users
+  Stream<List<UserModel>> watchUsers() {
+    return userRepository.query()
+        .orderBy(CommonFields.username)
+        .watch()
+        .map(_usersFromEvents);
+  }
+
+  /// Updates user avatar
+  Future<UserModel> updateAvatarUrl(String avatarUrl) async {
+    final user = authenticatedUser;
+    if (user == null) throw Exception('User not authenticated');
+
+    final updated = UserModel(
+      username: user.username,
+      avatarUrl: avatarUrl.isEmpty ? null : avatarUrl,
+      createdAt: user.createdAt,
+      updatedAt: DateTime.now().toUtc(),
+    );
+
+    await userRepository.upsert(updated, needSync: true);
+    authenticatedUser = updated;
+    return updated;
+  }
+}
