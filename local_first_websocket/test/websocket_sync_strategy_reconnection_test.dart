@@ -232,6 +232,10 @@ void main() {
       await strategy.start();
       await Future.delayed(Duration(milliseconds: 50));
 
+      // Simulate auth success on first connection
+      controllers[0].add(jsonEncode({'type': 'auth_success'}));
+      await Future.delayed(Duration(milliseconds: 50));
+
       // Receive events to track the repository
       final eventsMessage = jsonEncode({
         'type': 'events',
@@ -251,8 +255,12 @@ void main() {
       controllers[0].addError(Exception('Connection lost'));
       await Future.delayed(Duration(milliseconds: 50));
 
-      // Wait for reconnection
-      await Future.delayed(Duration(milliseconds: 150));
+      // Wait for reconnection and simulate auth success on reconnection
+      await Future.delayed(Duration(milliseconds: 100));
+      if (controllers.length >= 2) {
+        controllers[1].add(jsonEncode({'type': 'auth_success'}));
+      }
+      await Future.delayed(Duration(milliseconds: 50));
 
       // Should have reconnected
       expect(connectionAttempt, greaterThanOrEqualTo(2));
@@ -311,6 +319,10 @@ void main() {
       strategy.attach(client);
 
       await strategy.start();
+      await Future.delayed(Duration(milliseconds: 50));
+
+      // Simulate auth success response
+      messageController.add(jsonEncode({'type': 'auth_success'}));
       await Future.delayed(Duration(milliseconds: 50));
 
       // Should request all events (no timestamps yet)

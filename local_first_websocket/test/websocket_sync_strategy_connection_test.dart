@@ -76,6 +76,11 @@ void main() {
       strategy.attach(client);
 
       await strategy.start();
+      await Future.delayed(Duration(milliseconds: 50));
+
+      // Simulate server auth success response
+      messageController.add(jsonEncode({'type': 'auth_success'}));
+      await Future.delayed(Duration(milliseconds: 50));
 
       verify(() => mockChannel.ready).called(1);
       verify(() => client.reportConnectionState(true)).called(1);
@@ -405,6 +410,10 @@ void main() {
       await strategy.start();
       await Future.delayed(Duration(milliseconds: 50));
 
+      // Simulate server auth success response
+      messageController.add(jsonEncode({'type': 'auth_success'}));
+      await Future.delayed(Duration(milliseconds: 50));
+
       final captured = verify(() => mockSink.add(captureAny())).captured;
       final requestMessages = captured
           .where((msg) {
@@ -440,12 +449,17 @@ void main() {
       await strategy.start();
       await Future.delayed(Duration(milliseconds: 50));
 
+      // Simulate server auth success response
+      messageController.add(jsonEncode({'type': 'auth_success'}));
+      await Future.delayed(Duration(milliseconds: 50));
+
       verify(() => client.reportConnectionState(true)).called(1);
 
       strategy.stop();
 
       verify(() => mockSink.close()).called(1);
-      verify(() => client.reportConnectionState(false)).called(1);
+      // reportConnectionState(false) is called twice: once during connection setup and once during disconnect
+      verify(() => client.reportConnectionState(false)).called(2);
 
       strategy.dispose();
     });
@@ -510,7 +524,7 @@ void main() {
       strategy.dispose();
     });
 
-    test('should not authenticate when no token or headers', () async {
+    test('should send auth without token when no credentials provided', () async {
       final strategy = WebSocketSyncStrategy(
         websocketUrl: 'ws://localhost:8080/test',
         onBuildSyncFilter: (_) async => null,
@@ -534,7 +548,11 @@ void main() {
           })
           .toList();
 
-      expect(authMessages, isEmpty);
+      // Authentication is always sent (server requires it), but without token
+      expect(authMessages, isNotEmpty);
+      final authMessage = jsonDecode(authMessages.first as String);
+      expect(authMessage['type'], 'auth');
+      expect(authMessage.containsKey('token'), isFalse);
 
       strategy.dispose();
     });
