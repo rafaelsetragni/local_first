@@ -1,6 +1,12 @@
 # local_first_periodic_strategy
 
+[![Flutter](https://img.shields.io/badge/Flutter-%2302569B.svg?style=for-the-badge&logo=Flutter&logoColor=white)](#)
+[![Discord](https://img.shields.io/discord/888523488376279050.svg?style=for-the-badge&colorA=7289da&label=Chat%20on%20Discord)](https://discord.awesome-notifications.carda.me)
+
+[![Open Source Love](https://badges.frapsoft.com/os/v1/open-source.svg?v=103)](#)
 [![pub package](https://img.shields.io/pub/v/local_first_periodic_strategy.svg)](https://pub.dev/packages/local_first_periodic_strategy)
+![Full tests workflow](https://github.com/rafaelsetragni/local_first/actions/workflows/dart.yml/badge.svg?branch=main)
+[![codecov](https://codecov.io/github/rafaelsetragni/local_first/graph/badge.svg?token=7BRG8JcWTQ)](https://codecov.io/github/rafaelsetragni/local_first)
 
 <br>
 
