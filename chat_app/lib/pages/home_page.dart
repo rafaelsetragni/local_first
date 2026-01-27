@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:implicitly_animated_reorderable_list/implicitly_animated_reorderable_list.dart';
+import 'package:implicitly_animated_reorderable_list/transitions.dart';
 
 import '../models/chat_model.dart';
 import '../services/repository_service.dart';
@@ -137,49 +139,54 @@ class _HomePageState extends State<HomePage> {
             );
           }
 
-          return ListView.builder(
-            itemCount: chats.length,
-            itemBuilder: (context, index) {
-              final chat = chats[index];
-              return Dismissible(
-                key: Key(chat.id),
-                direction: DismissDirection.endToStart,
-                confirmDismiss: (direction) async {
-                  return await _showConfirmDialog(
-                    context,
-                    'Delete Chat',
-                    'Are you sure you want to delete "${chat.name}"?',
-                  );
-                },
-                onDismissed: (direction) async {
-                  await _repositoryService.deleteChat(chat.id);
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('${chat.name} deleted'),
-                        duration: const Duration(seconds: 2),
-                      ),
-                    );
-                  }
-                },
-                background: Container(
-                  color: Colors.red,
-                  alignment: Alignment.centerRight,
-                  padding: const EdgeInsets.only(right: 20),
-                  child: const Icon(
-                    Icons.delete,
-                    color: Colors.white,
-                  ),
-                ),
-                child: ChatTile(
-                  chat: chat,
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (context) => ChatPage(chat: chat),
-                      ),
+          return ImplicitlyAnimatedList<ChatModel>(
+            items: chats,
+            areItemsTheSame: (a, b) => a.id == b.id,
+            itemBuilder: (context, animation, chat, index) {
+              return SizeFadeTransition(
+                sizeFraction: 0.7,
+                curve: Curves.easeInOut,
+                animation: animation,
+                child: Dismissible(
+                  key: Key(chat.id),
+                  direction: DismissDirection.endToStart,
+                  confirmDismiss: (direction) async {
+                    return await _showConfirmDialog(
+                      context,
+                      'Delete Chat',
+                      'Are you sure you want to delete "${chat.name}"?',
                     );
                   },
+                  onDismissed: (direction) async {
+                    await _repositoryService.deleteChat(chat.id);
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('${chat.name} deleted'),
+                          duration: const Duration(seconds: 2),
+                        ),
+                      );
+                    }
+                  },
+                  background: Container(
+                    color: Colors.red,
+                    alignment: Alignment.centerRight,
+                    padding: const EdgeInsets.only(right: 20),
+                    child: const Icon(
+                      Icons.delete,
+                      color: Colors.white,
+                    ),
+                  ),
+                  child: ChatTile(
+                    chat: chat,
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => ChatPage(chat: chat),
+                        ),
+                      );
+                    },
+                  ),
                 ),
               );
             },

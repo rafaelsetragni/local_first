@@ -9,6 +9,8 @@ class ChatModel {
   final DateTime createdAt;
   final DateTime updatedAt;
   final DateTime? lastMessageAt;
+  final String? lastMessageText;
+  final String? lastMessageSender;
 
   ChatModel._({
     required this.id,
@@ -18,6 +20,8 @@ class ChatModel {
     required this.createdAt,
     required this.updatedAt,
     this.lastMessageAt,
+    this.lastMessageText,
+    this.lastMessageSender,
   });
 
   /// Factory constructor with optional ID generation from sanitized name
@@ -29,6 +33,8 @@ class ChatModel {
     DateTime? createdAt,
     DateTime? updatedAt,
     DateTime? lastMessageAt,
+    String? lastMessageText,
+    String? lastMessageSender,
   }) {
     final now = DateTime.now().toUtc();
     final sanitizedId = id ?? _sanitizeId(name);
@@ -41,6 +47,8 @@ class ChatModel {
       createdAt: createdAt ?? now,
       updatedAt: updatedAt ?? now,
       lastMessageAt: lastMessageAt,
+      lastMessageText: lastMessageText,
+      lastMessageSender: lastMessageSender,
     );
   }
 
@@ -60,6 +68,9 @@ class ChatModel {
       CommonFields.updatedAt: updatedAt.toIso8601String(),
       if (lastMessageAt != null)
         ChatFields.lastMessageAt: lastMessageAt!.toIso8601String(),
+      if (lastMessageText != null) ChatFields.lastMessageText: lastMessageText,
+      if (lastMessageSender != null)
+        ChatFields.lastMessageSender: lastMessageSender,
     };
   }
 
@@ -75,6 +86,8 @@ class ChatModel {
       lastMessageAt: json[ChatFields.lastMessageAt] != null
           ? DateTime.parse(json[ChatFields.lastMessageAt] as String)
           : null,
+      lastMessageText: json[ChatFields.lastMessageText] as String?,
+      lastMessageSender: json[ChatFields.lastMessageSender] as String?,
     );
   }
 
@@ -90,14 +103,29 @@ class ChatModel {
     final preferred = local.updatedAt.isAfter(remote.updatedAt) ? local : remote;
     final fallback = identical(preferred, local) ? remote : local;
 
-    // Merge lastMessageAt: take the later timestamp
+    // Merge lastMessageAt: take the later timestamp and its associated text/sender
     DateTime? mergedLastMessageAt;
+    String? mergedLastMessageText;
+    String? mergedLastMessageSender;
+
     if (preferred.lastMessageAt != null && fallback.lastMessageAt != null) {
-      mergedLastMessageAt = preferred.lastMessageAt!.isAfter(fallback.lastMessageAt!)
-          ? preferred.lastMessageAt
-          : fallback.lastMessageAt;
-    } else {
-      mergedLastMessageAt = preferred.lastMessageAt ?? fallback.lastMessageAt;
+      if (preferred.lastMessageAt!.isAfter(fallback.lastMessageAt!)) {
+        mergedLastMessageAt = preferred.lastMessageAt;
+        mergedLastMessageText = preferred.lastMessageText;
+        mergedLastMessageSender = preferred.lastMessageSender;
+      } else {
+        mergedLastMessageAt = fallback.lastMessageAt;
+        mergedLastMessageText = fallback.lastMessageText;
+        mergedLastMessageSender = fallback.lastMessageSender;
+      }
+    } else if (preferred.lastMessageAt != null) {
+      mergedLastMessageAt = preferred.lastMessageAt;
+      mergedLastMessageText = preferred.lastMessageText;
+      mergedLastMessageSender = preferred.lastMessageSender;
+    } else if (fallback.lastMessageAt != null) {
+      mergedLastMessageAt = fallback.lastMessageAt;
+      mergedLastMessageText = fallback.lastMessageText;
+      mergedLastMessageSender = fallback.lastMessageSender;
     }
 
     // Merge avatarUrl: prefer non-null value, or use preferred
@@ -105,6 +133,8 @@ class ChatModel {
 
     // Only create new object if merge changed something
     if (mergedLastMessageAt == preferred.lastMessageAt &&
+        mergedLastMessageText == preferred.lastMessageText &&
+        mergedLastMessageSender == preferred.lastMessageSender &&
         mergedAvatarUrl == preferred.avatarUrl) {
       return preferred;
     }
@@ -118,13 +148,16 @@ class ChatModel {
       createdAt: preferred.createdAt,
       updatedAt: preferred.updatedAt,
       lastMessageAt: mergedLastMessageAt,
+      lastMessageText: mergedLastMessageText,
+      lastMessageSender: mergedLastMessageSender,
     );
   }
 
   @override
   String toString() {
     return 'ChatModel(id: $id, name: $name, createdBy: $createdBy, '
-        'avatarUrl: $avatarUrl, lastMessageAt: $lastMessageAt)';
+        'avatarUrl: $avatarUrl, lastMessageAt: $lastMessageAt, '
+        'lastMessageText: $lastMessageText, lastMessageSender: $lastMessageSender)';
   }
 
   @override
@@ -137,7 +170,9 @@ class ChatModel {
         other.avatarUrl == avatarUrl &&
         other.createdAt == createdAt &&
         other.updatedAt == updatedAt &&
-        other.lastMessageAt == lastMessageAt;
+        other.lastMessageAt == lastMessageAt &&
+        other.lastMessageText == lastMessageText &&
+        other.lastMessageSender == lastMessageSender;
   }
 
   @override
@@ -150,6 +185,8 @@ class ChatModel {
       createdAt,
       updatedAt,
       lastMessageAt,
+      lastMessageText,
+      lastMessageSender,
     );
   }
 }

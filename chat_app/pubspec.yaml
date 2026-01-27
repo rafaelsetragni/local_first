@@ -21,6 +21,7 @@ dependencies:
   http: ^1.2.0
   intl: ^0.20.2
   cupertino_icons: ^1.0.8
+  implicitly_animated_reorderable_list: ^0.4.2
 
 dev_dependencies:
   flutter_test:

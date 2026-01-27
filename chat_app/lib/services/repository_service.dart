@@ -378,10 +378,10 @@ class RepositoryService {
 
   // ========== CHAT OPERATIONS ==========
 
-  /// Watches all chats ordered by last message time
+  /// Watches all chats ordered by most recent activity (updatedAt)
   Stream<List<ChatModel>> watchChats() {
     return chatRepository.query()
-        .orderBy(ChatFields.lastMessageAt, descending: true)
+        .orderBy(CommonFields.updatedAt, descending: true)
         .watch()
         .map(_chatsFromEvents);
   }
@@ -436,6 +436,8 @@ class RepositoryService {
       createdAt: chat.createdAt,
       updatedAt: DateTime.now().toUtc(),
       lastMessageAt: chat.lastMessageAt,
+      lastMessageText: chat.lastMessageText,
+      lastMessageSender: chat.lastMessageSender,
     );
 
     await chatRepository.upsert(updated, needSync: true);
@@ -482,7 +484,7 @@ class RepositoryService {
         .map(_messagesFromEvents);
   }
 
-  /// Sends a message in a chat
+  /// Sends a message in a chat and updates the chat's lastMessageAt
   Future<void> sendMessage({
     required String chatId,
     required String text,
@@ -498,7 +500,32 @@ class RepositoryService {
       text: text.trim(),
     );
 
+    // Save the message
     await messageRepository.upsert(message, needSync: true);
+
+    // Update the chat's lastMessageAt
+    final chatResults = await chatRepository.query()
+        .where(chatRepository.idFieldName, isEqualTo: chatId)
+        .getAll();
+
+    if (chatResults.isNotEmpty) {
+      final chatEvent = chatResults.first as LocalFirstStateEvent<ChatModel>;
+      final chat = chatEvent.data;
+
+      final updatedChat = ChatModel(
+        id: chat.id,
+        name: chat.name,
+        createdBy: chat.createdBy,
+        avatarUrl: chat.avatarUrl,
+        createdAt: chat.createdAt,
+        updatedAt: DateTime.now().toUtc(),
+        lastMessageAt: message.createdAt,
+        lastMessageText: message.text,
+        lastMessageSender: message.senderId,
+      );
+
+      await chatRepository.upsert(updatedChat, needSync: true);
+    }
   }
 
   /// Watches all users

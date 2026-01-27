@@ -128,7 +128,6 @@ void main() {
           periodicStrat: mockPeriodicStrategy,
           httpClient: mockHttpClient,
           navigator: mockNavigatorService,
-          storage: mockStorage,
         );
       });
 
@@ -863,7 +862,6 @@ void main() {
           periodicStrat: mockPeriodicStrategy,
           httpClient: mockHttpClient,
           navigator: mockNavigatorService,
-          storage: mockStorage,
         );
 
         helper = TestRepositoryServiceHelper(service);
@@ -1289,7 +1287,6 @@ void main() {
             periodicStrat: mockPeriodicStrategy,
             httpClient: mockHttpClient,
             navigator: mockNavigatorService,
-            storage: null,
           );
 
           serviceWithoutStorage.localFirst = null;

@@ -42,7 +42,6 @@ class RepositoryService {
     required WebSocketSyncStrategy wsStrategy,
     required PeriodicSyncStrategy periodicStrat,
     http.Client? httpClient,
-    LocalFirstStorage? storage,
     NavigatorService? navigator,
   }) {
     final service = RepositoryService._test(
@@ -53,7 +52,6 @@ class RepositoryService {
       periodicStrat: periodicStrat,
     );
     service._httpClient = httpClient ?? http.Client();
-    service._storage = storage;
     service._navigatorService = navigator ?? NavigatorService();
     return service;
   }
@@ -66,7 +64,6 @@ class RepositoryService {
   String? _currentSessionId;
   SyncStateManager? _syncStateManager;
   http.Client _httpClient = http.Client();
-  LocalFirstStorage? _storage;
   NavigatorService _navigatorService = NavigatorService();
 
   final LocalFirstRepository<UserModel> userRepository;
@@ -99,7 +96,7 @@ class RepositoryService {
       heartbeatInterval: Duration(seconds: 60),
       enablePendingQueue: false,
       onBuildSyncFilter: (_) async => null, // Don't pull - only receive pushes
-      onSyncCompleted: (_, __) async {}, // No-op - periodic handles state
+      onSyncCompleted: (_, _) async {}, // No-op - periodic handles state
     );
 
     // Initialize PeriodicSyncStrategy for consistency and offline sync

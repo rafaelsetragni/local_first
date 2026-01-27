@@ -42,7 +42,9 @@ class ChatTile extends StatelessWidget {
         ),
       ),
       subtitle: Text(
-        'Created by ${chat.createdBy}',
+        _buildSubtitle(),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: TextStyle(
           color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
           fontSize: 13,
@@ -59,6 +61,14 @@ class ChatTile extends StatelessWidget {
           : null,
       onTap: onTap,
     );
+  }
+
+  /// Builds the subtitle text showing last message or creation info
+  String _buildSubtitle() {
+    if (chat.lastMessageText != null && chat.lastMessageSender != null) {
+      return '${chat.lastMessageSender}: ${chat.lastMessageText}';
+    }
+    return 'Created by ${chat.createdBy}';
   }
 
   /// Formats timestamp to show time if today, or date if older

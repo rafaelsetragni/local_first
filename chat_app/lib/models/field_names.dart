@@ -24,6 +24,8 @@ class ChatFields {
   static const createdBy = 'created_by';
   static const avatarUrl = 'avatar_url';
   static const lastMessageAt = 'last_message_at';
+  static const lastMessageText = 'last_message_text';
+  static const lastMessageSender = 'last_message_sender';
 }
 
 /// Fields specific to MessageModel
