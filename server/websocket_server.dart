@@ -5,8 +5,10 @@ import 'dart:io';
 
 import 'package:mongo_dart/mongo_dart.dart';
 
-// mongo_dart query selector builder
-final where = SelectorBuilder();
+// mongo_dart query selector builder - use getter to always get fresh instance
+// IMPORTANT: SelectorBuilder is mutable and accumulates state between calls
+// Using a getter ensures each query starts with a clean slate
+SelectorBuilder get where => SelectorBuilder();
 
 /// Hybrid WebSocket + REST API server for local_first synchronization.
 ///
@@ -708,18 +710,21 @@ class WebSocketSyncServer {
 
     final countersCollection = db.collection('_sequence_counters');
 
-    // Use 'repository' field instead of '_id' to avoid ObjectId casting issues
-    // MongoDB automatically treats '_id' fields as ObjectIds, causing type cast errors
-    final result = await countersCollection.findAndModify(
-      query: where.eq('repository', repositoryName),
-      update: {
+    // Use raw map for MongoDB update operators - more reliable than ModifierBuilder
+    await countersCollection.updateOne(
+      where.eq('repository', repositoryName),
+      {
         r'$inc': {'sequence': 1},
+        r'$setOnInsert': {'repository': repositoryName},
       },
-      returnNew: true,
       upsert: true,
     );
 
-    return result?['sequence'] as int? ?? 1;
+    final doc = await countersCollection.findOne(
+      where.eq('repository', repositoryName),
+    );
+
+    return doc?['sequence'] as int? ?? 1;
   }
 
   /// Pushes an event to MongoDB.
