@@ -13,6 +13,7 @@ dependencies:
     sdk: flutter
   local_first:
   local_first_websocket:
+  local_first_periodic_strategy:
   local_first_sqlite_storage:
   local_first_shared_preferences:
   mongo_dart: ^0.10.3

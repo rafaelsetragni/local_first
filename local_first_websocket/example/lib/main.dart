@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as dev;
 import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:local_first/local_first.dart';
 import 'package:local_first_websocket/local_first_websocket.dart';
+import 'package:local_first_periodic_strategy/local_first_periodic_strategy.dart';
 import 'package:local_first_sqlite_storage/local_first_sqlite_storage.dart';
 import 'package:local_first_shared_preferences/local_first_shared_preferences.dart';
 
@@ -794,25 +796,43 @@ class RepositoryService {
   final LocalFirstRepository<UserModel> userRepository;
   final LocalFirstRepository<CounterLogModel> counterLogRepository;
   final LocalFirstRepository<SessionCounterModel> sessionCounterRepository;
-  late final WebSocketSyncStrategy syncStrategy;
+  late final WebSocketSyncStrategy webSocketStrategy;
+  late final PeriodicSyncStrategy periodicStrategy;
 
   RepositoryService._internal()
       : userRepository = _buildUserRepository(),
         counterLogRepository = _buildCounterLogRepository(),
         sessionCounterRepository = _buildSessionCounterRepository() {
-    // Initialize WebSocketSyncStrategy with callbacks
-    syncStrategy = WebSocketSyncStrategy(
+    // Initialize WebSocketSyncStrategy for real-time push notifications
+    // Pending queue disabled - let periodic strategy handle offline events
+    webSocketStrategy = WebSocketSyncStrategy(
       websocketUrl: websocketUrl,
       reconnectDelay: Duration(milliseconds: 1500),
       heartbeatInterval: Duration(seconds: 15),
+      enablePendingQueue: false,
+      onBuildSyncFilter: (_) async => null, // Don't pull - only receive pushes
+      onSyncCompleted: (_, __) async {}, // No-op - periodic handles state
+    );
+
+    // Initialize PeriodicSyncStrategy for consistency and offline sync
+    // Uses server sequence to fetch missed events
+    periodicStrategy = PeriodicSyncStrategy(
+      syncInterval: Duration(seconds: 10),
+      repositoryNames: [
+        RepositoryNames.user,
+        RepositoryNames.counterLog,
+        RepositoryNames.sessionCounter,
+      ],
+      onFetchEvents: _fetchEvents,
+      onPushEvents: _pushEvents,
       onBuildSyncFilter: _buildSyncFilter,
-      onSyncCompleted: _onSyncCompleted,
+      onSaveSyncState: _onSyncCompleted,
     );
   }
 
   String get namespace => _currentNamespace;
-  Stream<bool> get connectionState => syncStrategy.connectionChanges;
-  bool get isConnected => syncStrategy.latestConnectionState ?? false;
+  Stream<bool> get connectionState => webSocketStrategy.connectionChanges;
+  bool get isConnected => webSocketStrategy.latestConnectionState ?? false;
 
   /// Builds sync filter using server sequence numbers
   Future<JsonMap<dynamic>?> _buildSyncFilter(String repositoryName) async {
@@ -827,6 +847,56 @@ class RepositoryService {
 
     // Request events after last known sequence
     return {'afterSequence': lastSequence};
+  }
+
+  /// Fetches events from REST API for periodic sync
+  Future<List<JsonMap>> _fetchEvents(String repositoryName) async {
+    try {
+      final filter = await _buildSyncFilter(repositoryName);
+      final uri = filter != null && filter.containsKey('afterSequence')
+          ? Uri.parse('$baseHttpUrl/api/events/$repositoryName?seq=${filter['afterSequence']}')
+          : Uri.parse('$baseHttpUrl/api/events/$repositoryName');
+
+      final response = await http.get(uri).timeout(const Duration(seconds: 5));
+
+      if (response.statusCode != 200) {
+        dev.log('Failed to fetch events: ${response.statusCode}', name: 'RepositoryService');
+        return [];
+      }
+
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final events = (data['events'] as List<dynamic>?)?.cast<Map<String, dynamic>>() ?? [];
+
+      return events;
+    } catch (e, s) {
+      dev.log('Error fetching events', name: 'RepositoryService', error: e, stackTrace: s);
+      return [];
+    }
+  }
+
+  /// Pushes local events to REST API for periodic sync
+  Future<bool> _pushEvents(String repositoryName, LocalFirstEvents events) async {
+    if (events.isEmpty) return true;
+
+    try {
+      final eventList = events.map((e) => e.toJson()).toList();
+
+      final response = await http.post(
+        Uri.parse('$baseHttpUrl/api/events/$repositoryName/batch'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'events': eventList}),
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode != 201) {
+        dev.log('Failed to push events: ${response.statusCode}', name: 'RepositoryService');
+        return false;
+      }
+
+      return true;
+    } catch (e, s) {
+      dev.log('Error pushing events', name: 'RepositoryService', error: e, stackTrace: s);
+      return false;
+    }
   }
 
   /// Called when sync is completed - saves the latest sequence
@@ -855,7 +925,7 @@ class RepositoryService {
         databaseName: 'websocket_example.db',
       ),
       keyValueStorage: SharedPreferencesConfigStorage(),
-      syncStrategies: [syncStrategy],
+      syncStrategies: [webSocketStrategy, periodicStrategy],
     );
 
     await localFirst.initialize();
@@ -916,16 +986,16 @@ class RepositoryService {
     }
   }
 
-  /// Signs in a user and starts WebSocket sync.
+  /// Signs in a user and starts all sync strategies.
   ///
   /// This method implements a server-first approach:
   /// 1. Create local UserModel (generates correct userId)
   /// 2. Fetch user from server via HTTP GET (fails if no connection)
   /// 3. If exists remotely: discard local model, use remote data
   /// 4. If doesn't exist: use local model and mark for sync
-  /// 5. Start WebSocket sync (handles data sync independently per namespace)
+  /// 5. Start all sync strategies (handles data sync independently per namespace)
   Future<void> signIn({required String username}) async {
-    syncStrategy.stop();
+    localFirst?.stopAllStrategies();
 
     // Create local UserModel to generate userId using same ID generation logic
     final localUser = UserModel(username: username, avatarUrl: null);
@@ -961,8 +1031,8 @@ class RepositoryService {
     await _prepareSession(authenticatedUser!);
     await _persistLastUsername(username);
 
-    // Start WebSocket sync - handles synchronization independently per namespace
-    await syncStrategy.start();
+    // Start all sync strategies - handles synchronization independently per namespace
+    await localFirst?.startAllStrategies();
 
     // Navigate to home screen
     NavigatorService().navigateToHome();
@@ -970,7 +1040,7 @@ class RepositoryService {
 
   /// Clears auth/session state and navigates back to sign-in.
   Future<void> signOut() async {
-    syncStrategy.stop();
+    localFirst?.stopAllStrategies();
     authenticatedUser = null;
     _currentSessionId = null;
     await _switchUserDatabase('');
@@ -991,7 +1061,7 @@ class RepositoryService {
     final user = (results.first as LocalFirstStateEvent<UserModel>).data;
     authenticatedUser = user;
     await _prepareSession(user);
-    await syncStrategy.start();
+    await localFirst?.startAllStrategies();
     return user;
   }
 

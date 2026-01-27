@@ -98,6 +98,54 @@ class LocalFirstClient {
     _onInitialize.complete();
   }
 
+  /// Starts all sync strategies.
+  ///
+  /// This is a convenience method that calls `start()` on all registered
+  /// sync strategies. Strategies that implement `start()` will be initialized
+  /// and begin their synchronization process.
+  ///
+  /// Note: Not all strategies may implement `start()`. This method uses
+  /// dynamic invocation to check if the strategy has a `start()` method.
+  /// If a strategy doesn't implement `start()`, it will be skipped silently.
+  Future<void> startAllStrategies() async {
+    for (final strategy in syncStrategies) {
+      try {
+        // Try to call start() method if it exists
+        final dynamic dynamicStrategy = strategy;
+        final result = dynamicStrategy.start();
+        // If the result is a Future, await it
+        if (result is Future) {
+          await result;
+        }
+      } catch (e) {
+        // Strategy doesn't implement start() or start() failed
+        // Continue with other strategies
+      }
+    }
+  }
+
+  /// Stops all sync strategies.
+  ///
+  /// This is a convenience method that calls `stop()` on all registered
+  /// sync strategies. Strategies that implement `stop()` will halt their
+  /// synchronization process.
+  ///
+  /// Note: Not all strategies may implement `stop()`. This method uses
+  /// dynamic invocation to check if the strategy has a `stop()` method.
+  /// If a strategy doesn't implement `stop()`, it will be skipped silently.
+  void stopAllStrategies() {
+    for (final strategy in syncStrategies) {
+      try {
+        // Try to call stop() method if it exists
+        final dynamic dynamicStrategy = strategy;
+        dynamicStrategy.stop();
+      } catch (e) {
+        // Strategy doesn't implement stop() or stop() failed
+        // Continue with other strategies
+      }
+    }
+  }
+
   /// Clears all data from the local database.
   ///
   /// This wipes every table and reinitializes each repository. Use with
