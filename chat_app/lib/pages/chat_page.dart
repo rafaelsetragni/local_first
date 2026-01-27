@@ -7,6 +7,7 @@ import '../models/message_model.dart';
 import '../models/user_model.dart';
 import '../services/repository_service.dart';
 import '../widgets/avatar_preview.dart';
+import '../widgets/connection_status_bar.dart';
 import '../widgets/message_bubble.dart';
 
 /// Chat page displaying messages and input for a specific chat
@@ -193,8 +194,9 @@ class _ChatPageState extends State<ChatPage> {
   Widget build(BuildContext context) {
     final hasAvatar = _currentChat.avatarUrl != null && _currentChat.avatarUrl!.isNotEmpty;
 
-    return Scaffold(
-      appBar: AppBar(
+    return ConnectionStatusBar(
+      child: Scaffold(
+        appBar: AppBar(
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -228,18 +230,19 @@ class _ChatPageState extends State<ChatPage> {
           ],
         ),
       ),
-      body: Column(
-        children: [
-          // Messages list
-          Expanded(
-            child: GestureDetector(
-              onTap: () => FocusScope.of(context).unfocus(),
-              child: _buildMessagesList(context),
+        body: Column(
+          children: [
+            // Messages list
+            Expanded(
+              child: GestureDetector(
+                onTap: () => FocusScope.of(context).unfocus(),
+                child: _buildMessagesList(context),
+              ),
             ),
-          ),
-          // Message input
-          _buildMessageInput(context),
-        ],
+            // Message input
+            _buildMessageInput(context),
+          ],
+        ),
       ),
     );
   }

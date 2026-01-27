@@ -4,6 +4,7 @@ import '../models/chat_model.dart';
 import '../services/repository_service.dart';
 import '../widgets/avatar_preview.dart';
 import '../widgets/chat_tile.dart';
+import '../widgets/connection_status_bar.dart';
 import 'chat_page.dart';
 
 /// Home page displaying a list of all available chats
@@ -29,7 +30,8 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final user = _repositoryService.authenticatedUser;
 
-    return Scaffold(
+    return ConnectionStatusBar(
+      child: Scaffold(
       appBar: AppBar(
         title: Row(
           mainAxisSize: MainAxisSize.min,
@@ -184,9 +186,10 @@ class _HomePageState extends State<HomePage> {
           );
         },
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _showCreateChatDialog(context),
-        child: const Icon(Icons.add),
+        floatingActionButton: FloatingActionButton(
+          onPressed: () => _showCreateChatDialog(context),
+          child: const Icon(Icons.add),
+        ),
       ),
     );
   }
