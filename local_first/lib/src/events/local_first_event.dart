@@ -81,13 +81,14 @@ abstract class LocalFirstEvent<T> {
     final lastEventId = itemJson.remove(kLastEventId) as String?;
     final statusIndex = itemJson.remove(kSyncStatus) as int?;
     final opIndex = itemJson.remove(kOperation) as int?;
-    final createdAtMs = itemJson.remove(kSyncCreatedAt) as int?;
+    final createdAtValue = itemJson.remove(kSyncCreatedAt);
     final eventId = itemJson.remove(kEventId) as String?;
+    final createdAt = _parseSyncCreatedAt(createdAtValue);
 
     if ((eventId ?? lastEventId) == null ||
         statusIndex == null ||
         opIndex == null ||
-        createdAtMs == null) {
+        createdAt == null) {
       throw FormatException(
         'Invalid local event storage for ${repository.name}',
       );
@@ -97,7 +98,7 @@ abstract class LocalFirstEvent<T> {
     final baseMeta = (
       id: eventId ?? lastEventId!,
       status: SyncStatus.values[statusIndex],
-      createdAt: DateTime.fromMillisecondsSinceEpoch(createdAtMs, isUtc: true),
+      createdAt: createdAt,
     );
 
     if (operation == SyncOperation.delete) {
@@ -348,4 +349,19 @@ extension LocalFirstEventsToJson<T> on LocalFirstEvents<T> {
   /// Groups objects by operation type (insert, update, delete) as expected
   /// by the push endpoint.
   List<JsonMap> toJson() => [for (var event in this) event.toJson()];
+}
+
+DateTime? _parseSyncCreatedAt(dynamic value) {
+  if (value is DateTime) return value.toUtc();
+  if (value is int) {
+    try {
+      return DateTime.fromMillisecondsSinceEpoch(value, isUtc: true);
+    } catch (_) {
+      return null;
+    }
+  }
+  if (value is String) {
+    return DateTime.tryParse(value)?.toUtc();
+  }
+  return null;
 }

@@ -1,3 +1,9 @@
+## 0.7.0
+
+- Added comprehensive counter app example demonstrating real-time WebSocket synchronization
+- Improved test coverage and reliability across the framework
+- Enhanced documentation and code examples
+
 ## 0.6.0
 
 - Added `local_first_shared_preferences` adapter with namespaced config storage and example app.

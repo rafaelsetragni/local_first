@@ -282,8 +282,9 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     }
 
     final schema = _schemaFor(tableName);
-    final lastEventId = item['_lasteventId'] as String?;
-    final row = _encodeDataRow(schema, item, id, lastEventId);
+    final lastEventId =
+        item[LocalFirstEvent.kLastEventId] ?? item['_lasteventId'];
+    final row = _encodeDataRow(schema, item, id, lastEventId as String?);
 
     await db.insert(
       resolvedTable,
@@ -345,8 +346,8 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     final resolvedTable = _tableName(tableName);
 
     final schema = _schemaFor(tableName);
-    final eventId = item['_lasteventId'] as String?;
-    final row = _encodeDataRow(schema, item, id, eventId);
+    final eventId = item[LocalFirstEvent.kLastEventId] ?? item['_lasteventId'];
+    final row = _encodeDataRow(schema, item, id, eventId as String?);
 
     await db.insert(
       resolvedTable,
@@ -630,30 +631,33 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       );
     }
 
+    final controller = StreamController<List<LocalFirstEvent<T>>>.broadcast();
+
     final observer = _SqliteQueryObserver<T>(
-      query,
-      StreamController<List<LocalFirstEvent<T>>>.broadcast(),
+      query: query,
+      controller: controller,
+      emit: () async {
+        try {
+          final results = await this.query<T>(query);
+          if (!controller.isClosed) {
+            controller.add(results);
+          }
+        } catch (e, st) {
+          if (!controller.isClosed) {
+            controller.addError(e, st);
+          }
+        }
+      },
     );
 
     _observers
         .putIfAbsent(query.repositoryName, () => <_SqliteQueryObserver>{})
         .add(observer);
 
-    Future<void> emit() async {
-      try {
-        final results = await this.query<T>(query);
-        if (!observer.controller.isClosed) {
-          observer.controller.add(results);
-        }
-      } catch (e, st) {
-        if (!observer.controller.isClosed) {
-          observer.controller.addError(e, st);
-        }
-      }
-    }
-
     observer.controller
-      ..onListen = emit
+      ..onListen = () async {
+        await observer.emit();
+      }
       ..onCancel = () {
         final observers = _observers[query.repositoryName];
         observers?.remove(observer);
@@ -897,12 +901,8 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
         observers.remove(observer);
         continue;
       }
-      try {
-        final results = await query(observer.query);
-        observer.controller.add(results);
-      } catch (e, st) {
-        observer.controller.addError(e, st);
-      }
+      // Use the emit closure to preserve generic type <T>
+      await observer.emit();
     }
   }
 
@@ -1002,6 +1002,13 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       }
     }
 
+    // Add !includeDeleted filter arg BEFORE processing sorts
+    // This ensures args are in the correct order for the SQL placeholders
+    if (!query.includeDeleted) {
+      whereClauses.add('e.operation != ?');
+      args.add(SyncOperation.delete.index);
+    }
+
     for (final sort in query.sorts) {
       final column = columnExpr(sort.field);
       orderClauses.add('$column ${sort.descending ? 'DESC' : 'ASC'}');
@@ -1015,11 +1022,6 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     );
     if (whereClauses.isNotEmpty) {
       sql.write(' WHERE ${whereClauses.join(' AND ')}');
-    }
-    if (!query.includeDeleted) {
-      sql.write(whereClauses.isEmpty ? ' WHERE ' : ' AND ');
-      sql.write('e.operation != ?');
-      args.add(SyncOperation.delete.index);
     }
     if (orderClauses.isNotEmpty) {
       sql.write(' ORDER BY ${orderClauses.join(', ')}');
@@ -1044,20 +1046,41 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     final repo = query.repository;
     final mapped = rows.map(_decodeJoinedRow);
-    return mapped
-        .map(
-          (json) =>
-              LocalFirstEvent<T>.fromLocalStorage(repository: repo, json: json),
-        )
-        .toList();
+    final events = <LocalFirstEvent<T>>[];
+
+    for (final json in mapped) {
+      if (!_hasRequiredEventFields(json)) continue;
+      try {
+        events.add(
+          LocalFirstEvent<T>.fromLocalStorage(repository: repo, json: json),
+        );
+      } catch (_) {
+        // ignore malformed legacy entries
+      }
+    }
+
+    return events;
+  }
+
+  bool _hasRequiredEventFields(JsonMap json) {
+    return (json.containsKey(LocalFirstEvent.kEventId) ||
+            json.containsKey(LocalFirstEvent.kLastEventId)) &&
+        json.containsKey(LocalFirstEvent.kSyncStatus) &&
+        json.containsKey(LocalFirstEvent.kOperation) &&
+        json.containsKey(LocalFirstEvent.kSyncCreatedAt);
   }
 }
 
 class _SqliteQueryObserver<T> {
-  _SqliteQueryObserver(this.query, this.controller);
+  _SqliteQueryObserver({
+    required this.query,
+    required this.controller,
+    required this.emit,
+  });
 
   final LocalFirstQuery<T> query;
   final StreamController<List<LocalFirstEvent<T>>> controller;
+  final Future<void> Function() emit;
 }
 
 /// Test helper exposing internal methods of [SqliteLocalFirstStorage] for unit tests.

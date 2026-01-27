@@ -9,7 +9,15 @@ workspace:
   - local_first_hive_storage
   - local_first_sqlite_storage
   - local_first_shared_preferences
+  - local_first_websocket
+  - local_first_periodic_strategy
   - local_first/example
+  - local_first_hive_storage/example
+  - local_first_sqlite_storage/example
+  - local_first_shared_preferences/example
+  - local_first_websocket/example
+  - local_first_periodic_strategy/example
+  - counter_app
 
 dev_dependencies:
   flutter_lints: ^6.0.0
@@ -47,10 +55,30 @@ melos:
             -a local_first_hive_storage/coverage/lcov.info \
             -a local_first_sqlite_storage/coverage/lcov.info \
             -a local_first_shared_preferences/coverage/lcov.info \
+            -a local_first_websocket/coverage/lcov.info \
+            -a local_first_periodic_strategy/coverage/lcov.info \
             -o coverage/lcov.info
       packageFilters:
         dirExists:
           - test
         ignore: "*example*"
+    server:start:
+      description: Start WebSocket server in Docker with MongoDB.
+      run: ./server/run_server.sh
+    server:stop:
+      description: Stop WebSocket server and MongoDB containers.
+      run: cd server && docker compose down
+    server:restart:
+      description: Restart WebSocket server container.
+      run: cd server && docker compose restart websocket_server
+    install:examples:
+      description: |
+        Install all example apps to connected device (without running).
+        Run ./scripts/install_examples.sh directly for interactive device selection,
+        or use: melos run install:examples -- <device_number>
+      run: ./scripts/install_examples.sh
+    clean:
+      description: Run flutter clean on all packages.
+      run: melos exec -c 1 -- "flutter clean"
 
 dependency_overrides:

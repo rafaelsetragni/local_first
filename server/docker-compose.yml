@@ -1,0 +1,56 @@
+services:
+  mongodb:
+    image: mongo:7
+    container_name: local_first_mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: admin
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - local_first_network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  websocket_server:
+    image: dart:stable
+    container_name: local_first_websocket_server
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../:/workspace
+      - pub_cache:/root/.pub-cache
+    working_dir: /workspace/server
+    command:
+      - sh
+      - -c
+      - |
+        echo "Installing dependencies..."
+        dart pub get
+        echo "Starting WebSocket server..."
+        dart run websocket_server.dart
+    networks:
+      - local_first_network
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    environment:
+      - MONGO_HOST=mongodb
+      - MONGO_PORT=27017
+    restart: unless-stopped
+
+networks:
+  local_first_network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+    driver: local
+  pub_cache:
+    driver: local

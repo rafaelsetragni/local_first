@@ -1,0 +1,29 @@
+name: local_first_websocket
+description: "WebSocket sync strategy for local_first: real-time bidirectional synchronization with automatic reconnection."
+version: 0.2.0
+repository: https://github.com/rafaelsetragni/local_first
+issue_tracker: https://github.com/rafaelsetragni/local_first/issues
+
+resolution: workspace
+
+environment:
+  sdk: ^3.10.0
+  flutter: ">=1.17.0"
+
+topics:
+  - local-first
+  - websocket
+  - real-time
+  - sync
+
+dependencies:
+  flutter:
+    sdk: flutter
+  local_first: ^0.7.0
+  web_socket_channel: ^3.0.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  mocktail: ^1.0.3
