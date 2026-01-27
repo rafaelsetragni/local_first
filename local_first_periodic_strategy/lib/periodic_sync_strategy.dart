@@ -11,9 +11,8 @@ import 'package:local_first/local_first.dart';
 /// [repositoryName] The name of the repository to fetch events for
 ///
 /// Returns a list of events as JSON maps that should be applied locally
-typedef FetchEventsCallback = Future<List<JsonMap>> Function(
-  String repositoryName,
-);
+typedef FetchEventsCallback =
+    Future<List<JsonMap>> Function(String repositoryName);
 
 /// Callback for pushing local events to remote server.
 ///
@@ -21,10 +20,8 @@ typedef FetchEventsCallback = Future<List<JsonMap>> Function(
 /// [events] List of events to push as LocalFirstEvent objects
 ///
 /// Returns true if push was successful
-typedef PushEventsCallback = Future<bool> Function(
-  String repositoryName,
-  LocalFirstEvents events,
-);
+typedef PushEventsCallback =
+    Future<bool> Function(String repositoryName, LocalFirstEvents events);
 
 /// Callback for building sync filter parameters for a repository.
 ///
@@ -34,19 +31,16 @@ typedef PushEventsCallback = Future<bool> Function(
 /// the appropriate filter parameters for the business logic.
 ///
 /// Return null or empty map to request all events.
-typedef BuildSyncFilterCallback = Future<JsonMap<dynamic>?> Function(
-  String repositoryName,
-);
+typedef BuildSyncFilterCallback =
+    Future<JsonMap<dynamic>?> Function(String repositoryName);
 
 /// Callback for saving sync state after events are successfully applied.
 ///
 /// This is called after remote events are applied locally. The implementation
 /// should save the sync state (last sync timestamp, last sequence, etc.) so
 /// that the next sync can fetch only new events.
-typedef SaveSyncStateCallback = Future<void> Function(
-  String repositoryName,
-  List<JsonMap<dynamic>> events,
-);
+typedef SaveSyncStateCallback =
+    Future<void> Function(String repositoryName, List<JsonMap<dynamic>> events);
 
 /// Callback for checking connection health.
 ///
@@ -266,12 +260,7 @@ class PeriodicSyncStrategy extends DataSyncStrategy {
 
       dev.log('Sync cycle completed', name: logTag);
     } catch (e, s) {
-      dev.log(
-        'Sync error: $e',
-        name: logTag,
-        error: e,
-        stackTrace: s,
-      );
+      dev.log('Sync error: $e', name: logTag, error: e, stackTrace: s);
       reportConnectionState(false);
     } finally {
       _isSyncing = false;
@@ -305,10 +294,7 @@ class PeriodicSyncStrategy extends DataSyncStrategy {
             name: logTag,
           );
         } else {
-          dev.log(
-            'Failed to push events for $repositoryName',
-            name: logTag,
-          );
+          dev.log('Failed to push events for $repositoryName', name: logTag);
         }
       } catch (e, s) {
         // Log error but continue with other repositories
@@ -400,10 +386,7 @@ class PeriodicSyncStrategy extends DataSyncStrategy {
   Future<SyncStatus> onPushToRemote(LocalFirstEvent localData) async {
     // Events are automatically pushed during the next sync cycle
     // Return pending status to indicate they need to be synced
-    dev.log(
-      'Event queued for next sync: ${localData.eventId}',
-      name: logTag,
-    );
+    dev.log('Event queued for next sync: ${localData.eventId}', name: logTag);
     return SyncStatus.pending;
   }
 }

@@ -27,9 +27,9 @@ void main() {
       // Attach a mock client to avoid LateInitializationError
       client = MockLocalFirstClient();
       when(() => client.reportConnectionState(any())).thenReturn(null);
-      when(() => client.connectionChanges).thenAnswer(
-        (_) => Stream<bool>.value(false),
-      );
+      when(
+        () => client.connectionChanges,
+      ).thenAnswer((_) => Stream<bool>.value(false));
       when(() => client.latestConnectionState).thenReturn(false);
 
       strategy.attach(client);
@@ -139,33 +139,39 @@ void main() {
       expect(strategy.headers, {'X-Custom': 'value'});
     });
 
-    test('should update only authToken when headers is null in updateCredentials', () {
-      final strategy = WebSocketSyncStrategy(
-        websocketUrl: 'ws://localhost:8080/test',
-        onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, _) async {},
-        headers: {'Existing': 'header'},
-      );
+    test(
+      'should update only authToken when headers is null in updateCredentials',
+      () {
+        final strategy = WebSocketSyncStrategy(
+          websocketUrl: 'ws://localhost:8080/test',
+          onBuildSyncFilter: (_) async => null,
+          onSyncCompleted: (_, _) async {},
+          headers: {'Existing': 'header'},
+        );
 
-      strategy.updateCredentials(authToken: 'new-token');
+        strategy.updateCredentials(authToken: 'new-token');
 
-      expect(strategy.authToken, 'new-token');
-      expect(strategy.headers, {'Existing': 'header'});
-    });
+        expect(strategy.authToken, 'new-token');
+        expect(strategy.headers, {'Existing': 'header'});
+      },
+    );
 
-    test('should update only headers when authToken is null in updateCredentials', () {
-      final strategy = WebSocketSyncStrategy(
-        websocketUrl: 'ws://localhost:8080/test',
-        onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, _) async {},
-        authToken: 'existing-token',
-      );
+    test(
+      'should update only headers when authToken is null in updateCredentials',
+      () {
+        final strategy = WebSocketSyncStrategy(
+          websocketUrl: 'ws://localhost:8080/test',
+          onBuildSyncFilter: (_) async => null,
+          onSyncCompleted: (_, _) async {},
+          authToken: 'existing-token',
+        );
 
-      strategy.updateCredentials(headers: {'New': 'header'});
+        strategy.updateCredentials(headers: {'New': 'header'});
 
-      expect(strategy.authToken, 'existing-token');
-      expect(strategy.headers, {'New': 'header'});
-    });
+        expect(strategy.authToken, 'existing-token');
+        expect(strategy.headers, {'New': 'header'});
+      },
+    );
 
     test('should return unmodifiable copy of headers', () {
       final strategy = WebSocketSyncStrategy(
@@ -194,9 +200,9 @@ void main() {
       // Attach a mock client
       final mockClient = MockLocalFirstClient();
       when(() => mockClient.reportConnectionState(any())).thenReturn(null);
-      when(() => mockClient.connectionChanges).thenAnswer(
-        (_) => Stream<bool>.value(false),
-      );
+      when(
+        () => mockClient.connectionChanges,
+      ).thenAnswer((_) => Stream<bool>.value(false));
       when(() => mockClient.latestConnectionState).thenReturn(null);
 
       strategy.attach(mockClient);

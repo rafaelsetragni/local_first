@@ -25,18 +25,22 @@ void main() {
       client = MockLocalFirstClient();
 
       when(() => client.reportConnectionState(any())).thenReturn(null);
-      when(() => client.connectionChanges).thenAnswer(
-        (_) => Stream<bool>.value(false),
-      );
+      when(
+        () => client.connectionChanges,
+      ).thenAnswer((_) => Stream<bool>.value(false));
       when(() => client.latestConnectionState).thenReturn(false);
       when(() => client.awaitInitialization).thenAnswer((_) async {});
-      when(() => client.pullChanges(
-            repositoryName: any(named: 'repositoryName'),
-            changes: any(named: 'changes'),
-          )).thenAnswer((_) async {});
-      when(() => client.getAllPendingEvents(
-            repositoryName: any(named: 'repositoryName'),
-          )).thenAnswer((_) async => []);
+      when(
+        () => client.pullChanges(
+          repositoryName: any(named: 'repositoryName'),
+          changes: any(named: 'changes'),
+        ),
+      ).thenAnswer((_) async {});
+      when(
+        () => client.getAllPendingEvents(
+          repositoryName: any(named: 'repositoryName'),
+        ),
+      ).thenAnswer((_) async => []);
     });
 
     test('should call onAuthenticationFailed when auth fails', () async {
@@ -47,7 +51,9 @@ void main() {
 
       var authCallCount = 0;
       when(() => mockChannel.ready).thenAnswer((_) async {});
-      when(() => mockChannel.stream).thenAnswer((_) => messageController.stream);
+      when(
+        () => mockChannel.stream,
+      ).thenAnswer((_) => messageController.stream);
       when(() => mockChannel.sink).thenReturn(mockSink);
       when(() => mockSink.add(any())).thenAnswer((invocation) {
         final message = invocation.positionalArguments[0] as String;
@@ -109,7 +115,9 @@ void main() {
       final mockSink = MockWebSocketSink();
 
       when(() => mockChannel.ready).thenAnswer((_) async {});
-      when(() => mockChannel.stream).thenAnswer((_) => messageController.stream);
+      when(
+        () => mockChannel.stream,
+      ).thenAnswer((_) => messageController.stream);
       when(() => mockChannel.sink).thenReturn(mockSink);
       when(() => mockSink.add(any())).thenAnswer((_) {
         // Simulate error on every auth attempt
@@ -148,7 +156,9 @@ void main() {
       final mockSink = MockWebSocketSink();
 
       when(() => mockChannel.ready).thenAnswer((_) async {});
-      when(() => mockChannel.stream).thenAnswer((_) => messageController.stream);
+      when(
+        () => mockChannel.stream,
+      ).thenAnswer((_) => messageController.stream);
       when(() => mockChannel.sink).thenReturn(mockSink);
       when(() => mockSink.add(any())).thenAnswer((_) {
         throw StateError('Connection lost');
@@ -187,7 +197,9 @@ void main() {
 
       var authCallCount = 0;
       when(() => mockChannel.ready).thenAnswer((_) async {});
-      when(() => mockChannel.stream).thenAnswer((_) => messageController.stream);
+      when(
+        () => mockChannel.stream,
+      ).thenAnswer((_) => messageController.stream);
       when(() => mockChannel.sink).thenReturn(mockSink);
       when(() => mockSink.add(any())).thenAnswer((invocation) {
         final message = invocation.positionalArguments[0] as String;

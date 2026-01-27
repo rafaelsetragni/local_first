@@ -143,7 +143,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
   /// }
   /// ```
   final Future<JsonMap<dynamic>?> Function(String repositoryName)
-      onBuildSyncFilter;
+  onBuildSyncFilter;
 
   /// Callback invoked when events are successfully received and applied.
   ///
@@ -174,7 +174,8 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
   final Future<void> Function(
     String repositoryName,
     List<JsonMap<dynamic>> events,
-  ) onSyncCompleted;
+  )
+  onSyncCompleted;
 
   WebSocketChannel? _channel;
   StreamSubscription? _messageSubscription;
@@ -203,9 +204,9 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
     String? authToken,
     this.onAuthenticationFailed,
     @visibleForTesting WebSocketChannel Function(Uri)? channelFactory,
-  })  : _headers = headers ?? {},
-        _authToken = authToken,
-        _channelFactory = channelFactory;
+  }) : _headers = headers ?? {},
+       _authToken = authToken,
+       _channelFactory = channelFactory;
 
   /// Current authentication token (read-only)
   String? get authToken => _authToken;
@@ -696,10 +697,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
             if (newCredentials.headers != null) {
               _headers = Map.from(newCredentials.headers!);
             }
-            dev.log(
-              'Credentials refreshed for next connection',
-              name: logTag,
-            );
+            dev.log('Credentials refreshed for next connection', name: logTag);
           }
         } catch (e, s) {
           dev.log(
@@ -878,13 +876,8 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
   void _handleConnectionLoss(String operation, [dynamic error]) {
     if (!_isConnected) return; // Already handling disconnection
 
-    dev.log(
-      'Connection lost during $operation',
-      name: logTag,
-      error: error,
-    );
+    dev.log('Connection lost during $operation', name: logTag, error: error);
     _disconnect();
     _scheduleReconnect();
   }
-
 }

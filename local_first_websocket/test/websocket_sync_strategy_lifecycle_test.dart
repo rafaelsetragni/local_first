@@ -26,9 +26,9 @@ void main() {
 
       final client = MockLocalFirstClient();
       when(() => client.reportConnectionState(any())).thenReturn(null);
-      when(() => client.connectionChanges).thenAnswer(
-        (_) => Stream<bool>.value(false),
-      );
+      when(
+        () => client.connectionChanges,
+      ).thenAnswer((_) => Stream<bool>.value(false));
       when(() => client.latestConnectionState).thenReturn(false);
       when(() => client.awaitInitialization).thenAnswer((_) async {});
 
@@ -55,9 +55,9 @@ void main() {
 
       final client = MockLocalFirstClient();
       when(() => client.reportConnectionState(any())).thenReturn(null);
-      when(() => client.connectionChanges).thenAnswer(
-        (_) => Stream<bool>.value(false),
-      );
+      when(
+        () => client.connectionChanges,
+      ).thenAnswer((_) => Stream<bool>.value(false));
       when(() => client.latestConnectionState).thenReturn(false);
 
       strategy.attach(client);
@@ -77,9 +77,9 @@ void main() {
 
       final client = MockLocalFirstClient();
       when(() => client.reportConnectionState(any())).thenReturn(null);
-      when(() => client.connectionChanges).thenAnswer(
-        (_) => Stream<bool>.value(false),
-      );
+      when(
+        () => client.connectionChanges,
+      ).thenAnswer((_) => Stream<bool>.value(false));
       when(() => client.latestConnectionState).thenReturn(false);
 
       strategy.attach(client);
@@ -101,9 +101,9 @@ void main() {
 
       final client = MockLocalFirstClient();
       when(() => client.reportConnectionState(any())).thenReturn(null);
-      when(() => client.connectionChanges).thenAnswer(
-        (_) => Stream<bool>.value(false),
-      );
+      when(
+        () => client.connectionChanges,
+      ).thenAnswer((_) => Stream<bool>.value(false));
       when(() => client.latestConnectionState).thenReturn(false);
 
       strategy.attach(client);
@@ -121,9 +121,9 @@ void main() {
 
       final client = MockLocalFirstClient();
       when(() => client.reportConnectionState(any())).thenReturn(null);
-      when(() => client.connectionChanges).thenAnswer(
-        (_) => Stream<bool>.value(false),
-      );
+      when(
+        () => client.connectionChanges,
+      ).thenAnswer((_) => Stream<bool>.value(false));
       when(() => client.latestConnectionState).thenReturn(false);
       when(() => client.awaitInitialization).thenAnswer((_) async {});
 
@@ -154,9 +154,9 @@ void main() {
 
       client = MockLocalFirstClient();
       when(() => client.reportConnectionState(any())).thenReturn(null);
-      when(() => client.connectionChanges).thenAnswer(
-        (_) => Stream<bool>.value(false),
-      );
+      when(
+        () => client.connectionChanges,
+      ).thenAnswer((_) => Stream<bool>.value(false));
       when(() => client.latestConnectionState).thenReturn(false);
 
       repo = MockLocalFirstRepository();
@@ -225,9 +225,9 @@ void main() {
       expect(
         () => WebSocketSyncStrategy(
           websocketUrl: 'ws://localhost:8080/test',
-        onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, _) async {},
-      ),
+          onBuildSyncFilter: (_) async => null,
+          onSyncCompleted: (_, _) async {},
+        ),
         returnsNormally,
       );
     });
@@ -236,9 +236,9 @@ void main() {
       expect(
         () => WebSocketSyncStrategy(
           websocketUrl: 'wss://example.com/sync',
-        onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, _) async {},
-      ),
+          onBuildSyncFilter: (_) async => null,
+          onSyncCompleted: (_, _) async {},
+        ),
         returnsNormally,
       );
     });
@@ -247,9 +247,9 @@ void main() {
       expect(
         () => WebSocketSyncStrategy(
           websocketUrl: 'ws://localhost:8080/sync?token=abc123',
-        onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, _) async {},
-      ),
+          onBuildSyncFilter: (_) async => null,
+          onSyncCompleted: (_, _) async {},
+        ),
         returnsNormally,
       );
     });
@@ -258,9 +258,9 @@ void main() {
       expect(
         () => WebSocketSyncStrategy(
           websocketUrl: 'ws://user:pass@localhost:8080/sync',
-        onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, _) async {},
-      ),
+          onBuildSyncFilter: (_) async => null,
+          onSyncCompleted: (_, _) async {},
+        ),
         returnsNormally,
       );
     });
@@ -323,14 +323,16 @@ void main() {
 
       client = MockLocalFirstClient();
       when(() => client.reportConnectionState(any())).thenReturn(null);
-      when(() => client.connectionChanges).thenAnswer(
-        (_) => Stream<bool>.value(false),
-      );
+      when(
+        () => client.connectionChanges,
+      ).thenAnswer((_) => Stream<bool>.value(false));
       when(() => client.latestConnectionState).thenReturn(false);
-      when(() => client.pullChanges(
-            repositoryName: any(named: 'repositoryName'),
-            changes: any(named: 'changes'),
-          )).thenAnswer((_) async {});
+      when(
+        () => client.pullChanges(
+          repositoryName: any(named: 'repositoryName'),
+          changes: any(named: 'changes'),
+        ),
+      ).thenAnswer((_) async {});
 
       strategy.attach(client);
     });
@@ -341,11 +343,7 @@ void main() {
 
     test('should handle null values in event data', () async {
       final changes = [
-        {
-          'id': 'test-1',
-          'name': null,
-          'value': null,
-        }
+        {'id': 'test-1', 'name': null, 'value': null},
       ];
 
       await strategy.pullChangesToLocal(
@@ -353,10 +351,9 @@ void main() {
         remoteChanges: changes,
       );
 
-      verify(() => client.pullChanges(
-            repositoryName: 'test_repo',
-            changes: changes,
-          )).called(1);
+      verify(
+        () => client.pullChanges(repositoryName: 'test_repo', changes: changes),
+      ).called(1);
     });
 
     test('should handle nested objects in event data', () async {
@@ -365,10 +362,10 @@ void main() {
           'id': 'test-1',
           'nested': {
             'level1': {
-              'level2': {'value': 'deep'}
-            }
-          }
-        }
+              'level2': {'value': 'deep'},
+            },
+          },
+        },
       ];
 
       await strategy.pullChangesToLocal(
@@ -376,10 +373,9 @@ void main() {
         remoteChanges: changes,
       );
 
-      verify(() => client.pullChanges(
-            repositoryName: 'test_repo',
-            changes: changes,
-          )).called(1);
+      verify(
+        () => client.pullChanges(repositoryName: 'test_repo', changes: changes),
+      ).called(1);
     });
 
     test('should handle arrays in event data', () async {
@@ -388,7 +384,7 @@ void main() {
           'id': 'test-1',
           'tags': ['tag1', 'tag2', 'tag3'],
           'numbers': [1, 2, 3, 4, 5],
-        }
+        },
       ];
 
       await strategy.pullChangesToLocal(
@@ -396,19 +392,15 @@ void main() {
         remoteChanges: changes,
       );
 
-      verify(() => client.pullChanges(
-            repositoryName: 'test_repo',
-            changes: changes,
-          )).called(1);
+      verify(
+        () => client.pullChanges(repositoryName: 'test_repo', changes: changes),
+      ).called(1);
     });
 
     test('should handle very large event data', () async {
       final largeString = 'x' * 10000;
       final changes = [
-        {
-          'id': 'test-1',
-          'largeField': largeString,
-        }
+        {'id': 'test-1', 'largeField': largeString},
       ];
 
       await strategy.pullChangesToLocal(
@@ -416,15 +408,14 @@ void main() {
         remoteChanges: changes,
       );
 
-      verify(() => client.pullChanges(
-            repositoryName: 'test_repo',
-            changes: changes,
-          )).called(1);
+      verify(
+        () => client.pullChanges(repositoryName: 'test_repo', changes: changes),
+      ).called(1);
     });
 
     test('should handle special characters in repository name', () async {
       final changes = [
-        {'id': 'test-1'}
+        {'id': 'test-1'},
       ];
 
       await strategy.pullChangesToLocal(
@@ -432,10 +423,12 @@ void main() {
         remoteChanges: changes,
       );
 
-      verify(() => client.pullChanges(
-            repositoryName: 'repo-with-dashes_and_underscores.dots',
-            changes: changes,
-          )).called(1);
+      verify(
+        () => client.pullChanges(
+          repositoryName: 'repo-with-dashes_and_underscores.dots',
+          changes: changes,
+        ),
+      ).called(1);
     });
 
     test('should handle Unicode characters in data', () async {
@@ -445,7 +438,7 @@ void main() {
           'name': '🚀 Rocket',
           'description': '你好世界',
           'emoji': '😀😃😄😁',
-        }
+        },
       ];
 
       await strategy.pullChangesToLocal(
@@ -453,10 +446,9 @@ void main() {
         remoteChanges: changes,
       );
 
-      verify(() => client.pullChanges(
-            repositoryName: 'test_repo',
-            changes: changes,
-          )).called(1);
+      verify(
+        () => client.pullChanges(repositoryName: 'test_repo', changes: changes),
+      ).called(1);
     });
   });
 }
