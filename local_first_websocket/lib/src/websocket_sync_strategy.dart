@@ -7,14 +7,41 @@ import 'package:local_first/local_first.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 /// Authentication credentials for WebSocket connection.
+///
+/// Used to authenticate with the WebSocket server during connection
+/// and to update credentials dynamically via [onAuthenticationFailed] callback.
+///
+/// **Example:**
+/// ```dart
+/// final credentials = AuthCredentials(
+///   authToken: 'jwt-token-here',
+///   headers: {
+///     'Authorization': 'Bearer jwt-token-here',
+///     'X-Custom-Header': 'custom-value',
+///   },
+/// );
+/// ```
 class AuthCredentials {
-  /// Optional authentication token
+  /// Optional authentication token sent to the server.
+  ///
+  /// This token is typically a JWT or API key used for authentication.
+  /// Can be null if authentication is done through headers only.
   final String? authToken;
 
-  /// Additional headers for authentication
+  /// Additional headers for authentication and request customization.
+  ///
+  /// Common use cases:
+  /// - `Authorization`: Bearer tokens, API keys
+  /// - `X-User-Id`: User identification
+  /// - `X-Client-Version`: App version for compatibility checks
+  ///
+  /// Can be null if authentication is done through [authToken] only.
   final JsonMap<String>? headers;
 
   /// Creates authentication credentials.
+  ///
+  /// At least one of [authToken] or [headers] should be provided for
+  /// authentication to work, unless the server allows anonymous connections.
   const AuthCredentials({this.authToken, this.headers});
 }
 
@@ -116,7 +143,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
   /// }
   /// ```
   final Future<JsonMap<dynamic>?> Function(String repositoryName)
-      onBuildSyncFilter;
+  onBuildSyncFilter;
 
   /// Callback invoked when events are successfully received and applied.
   ///
@@ -147,7 +174,8 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
   final Future<void> Function(
     String repositoryName,
     List<JsonMap<dynamic>> events,
-  ) onSyncCompleted;
+  )
+  onSyncCompleted;
 
   WebSocketChannel? _channel;
   StreamSubscription? _messageSubscription;
@@ -176,9 +204,9 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
     String? authToken,
     this.onAuthenticationFailed,
     @visibleForTesting WebSocketChannel Function(Uri)? channelFactory,
-  })  : _headers = headers ?? {},
-        _authToken = authToken,
-        _channelFactory = channelFactory;
+  }) : _headers = headers ?? {},
+       _authToken = authToken,
+       _channelFactory = channelFactory;
 
   /// Current authentication token (read-only)
   String? get authToken => _authToken;
@@ -519,7 +547,36 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
     }
   }
 
-  /// Implementation of push: sends local event to the server.
+  /// Pushes a local event to the remote server via WebSocket.
+  ///
+  /// This method is called automatically by the LocalFirst framework when
+  /// a local change needs to be synchronized to the server.
+  ///
+  /// **Parameters:**
+  /// - [localData]: The local event to push to the server
+  ///
+  /// **Returns:**
+  /// - [SyncStatus.pending]: Event sent successfully, waiting for server ACK
+  /// - [SyncStatus.failed]: Event failed to send and queue is disabled
+  ///
+  /// **Behavior:**
+  ///
+  /// When connected:
+  /// - Sends the event immediately via WebSocket
+  /// - Returns [SyncStatus.pending] until server acknowledges
+  ///
+  /// When disconnected:
+  /// - If [enablePendingQueue] is true: Queues event for later, returns [SyncStatus.pending]
+  /// - If [enablePendingQueue] is false: Returns [SyncStatus.failed]
+  ///
+  /// **Exceptions:**
+  ///
+  /// This method catches all exceptions internally and returns appropriate status:
+  /// - [StateError]: WebSocket connection lost during send
+  /// - Other exceptions: Unexpected errors during serialization or transmission
+  ///
+  /// Events that fail to send are added to the pending queue (if enabled) and
+  /// will be retried when connection is restored.
   @override
   Future<SyncStatus> onPushToRemote(LocalFirstEvent localData) async {
     if (!_isConnected) {
@@ -640,10 +697,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
             if (newCredentials.headers != null) {
               _headers = Map.from(newCredentials.headers!);
             }
-            dev.log(
-              'Credentials refreshed for next connection',
-              name: logTag,
-            );
+            dev.log('Credentials refreshed for next connection', name: logTag);
           }
         } catch (e, s) {
           dev.log(
@@ -822,13 +876,8 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
   void _handleConnectionLoss(String operation, [dynamic error]) {
     if (!_isConnected) return; // Already handling disconnection
 
-    dev.log(
-      'Connection lost during $operation',
-      name: logTag,
-      error: error,
-    );
+    dev.log('Connection lost during $operation', name: logTag, error: error);
     _disconnect();
     _scheduleReconnect();
   }
-
 }

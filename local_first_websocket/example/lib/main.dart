@@ -811,7 +811,7 @@ class RepositoryService {
       heartbeatInterval: Duration(seconds: 15),
       enablePendingQueue: false,
       onBuildSyncFilter: (_) async => null, // Don't pull - only receive pushes
-      onSyncCompleted: (_, __) async {}, // No-op - periodic handles state
+      onSyncCompleted: (_, success) async {}, // No-op - periodic handles state
     );
 
     // Initialize PeriodicSyncStrategy for consistency and offline sync

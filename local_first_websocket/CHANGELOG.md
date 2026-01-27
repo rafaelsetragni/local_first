@@ -1,3 +1,14 @@
+## 0.2.0
+
+* Fixed authentication flow in test suite
+* Improved test reliability by properly simulating server auth_success responses
+* Enhanced test coverage for connection and reconnection scenarios
+* Updated call count expectations to match actual authentication behavior
+* All 123 tests now passing with improved stability
+* Enhanced API documentation with comprehensive examples and usage guides
+* Added library-level documentation with WebSocket protocol specification
+* Improved documentation for all public classes and methods
+
 ## 0.1.0
 
 * Initial release

@@ -38,25 +38,31 @@ void main() {
       mockSink = MockWebSocketSink();
 
       when(() => client.reportConnectionState(any())).thenReturn(null);
-      when(() => client.connectionChanges).thenAnswer(
-        (_) => Stream<bool>.value(false),
-      );
+      when(
+        () => client.connectionChanges,
+      ).thenAnswer((_) => Stream<bool>.value(false));
       when(() => client.latestConnectionState).thenReturn(false);
       when(() => client.awaitInitialization).thenAnswer((_) async {});
-      when(() => client.pullChanges(
-            repositoryName: any(named: 'repositoryName'),
-            changes: any(named: 'changes'),
-          )).thenAnswer((_) async {});
-      when(() => client.getAllPendingEvents(
-            repositoryName: any(named: 'repositoryName'),
-          )).thenAnswer((_) async => []);
+      when(
+        () => client.pullChanges(
+          repositoryName: any(named: 'repositoryName'),
+          changes: any(named: 'changes'),
+        ),
+      ).thenAnswer((_) async {});
+      when(
+        () => client.getAllPendingEvents(
+          repositoryName: any(named: 'repositoryName'),
+        ),
+      ).thenAnswer((_) async => []);
 
       when(() => repo.name).thenReturn('test_repo');
       when(() => repo.getId(any())).thenReturn('test-id');
 
       // Mock WebSocketChannel behavior
       when(() => mockChannel.ready).thenAnswer((_) async {});
-      when(() => mockChannel.stream).thenAnswer((_) => messageController.stream);
+      when(
+        () => mockChannel.stream,
+      ).thenAnswer((_) => messageController.stream);
       when(() => mockChannel.sink).thenReturn(mockSink);
       when(() => mockSink.add(any())).thenAnswer((_) {});
       when(() => mockSink.close()).thenAnswer((_) async {});
@@ -125,16 +131,14 @@ void main() {
       await Future.delayed(Duration(milliseconds: 250));
 
       final captured = verify(() => mockSink.add(captureAny())).captured;
-      final pingMessages = captured
-          .where((msg) {
-            try {
-              final decoded = jsonDecode(msg as String);
-              return decoded['type'] == 'ping';
-            } catch (_) {
-              return false;
-            }
-          })
-          .toList();
+      final pingMessages = captured.where((msg) {
+        try {
+          final decoded = jsonDecode(msg as String);
+          return decoded['type'] == 'ping';
+        } catch (_) {
+          return false;
+        }
+      }).toList();
 
       expect(pingMessages.length, greaterThan(0));
 
@@ -161,18 +165,20 @@ void main() {
           {
             'eventId': 'event-1',
             'operation': 0,
-            'data': {'id': '1', 'value': 'test'}
-          }
+            'data': {'id': '1', 'value': 'test'},
+          },
         ],
       });
       messageController.add(eventsMessage);
 
       await Future.delayed(Duration(milliseconds: 50));
 
-      verify(() => client.pullChanges(
-            repositoryName: 'test_repo',
-            changes: any(named: 'changes'),
-          )).called(1);
+      verify(
+        () => client.pullChanges(
+          repositoryName: 'test_repo',
+          changes: any(named: 'changes'),
+        ),
+      ).called(1);
 
       strategy.dispose();
     });
@@ -197,7 +203,7 @@ void main() {
         'type': 'events',
         'repository': 'test_repo',
         'events': [
-          {'eventId': 'event-1', 'data': {}}
+          {'eventId': 'event-1', 'data': {}},
         ],
       });
       messageController.add(eventsMessage);
@@ -205,16 +211,14 @@ void main() {
       await Future.delayed(Duration(milliseconds: 50));
 
       final captured = verify(() => mockSink.add(captureAny())).captured;
-      final confirmations = captured
-          .where((msg) {
-            try {
-              final decoded = jsonDecode(msg as String);
-              return decoded['type'] == 'events_received';
-            } catch (_) {
-              return false;
-            }
-          })
-          .toList();
+      final confirmations = captured.where((msg) {
+        try {
+          final decoded = jsonDecode(msg as String);
+          return decoded['type'] == 'events_received';
+        } catch (_) {
+          return false;
+        }
+      }).toList();
 
       expect(confirmations, isNotEmpty);
       final confirmation = jsonDecode(confirmations.first as String);
@@ -241,15 +245,16 @@ void main() {
         'type': 'ack',
         'eventIds': ['event-1', 'event-2'],
         'repositories': {
-          'test_repo': ['event-1', 'event-2']
+          'test_repo': ['event-1', 'event-2'],
         },
       });
       messageController.add(ackMessage);
 
       await Future.delayed(Duration(milliseconds: 50));
 
-      verify(() => client.getAllPendingEvents(repositoryName: 'test_repo'))
-          .called(1);
+      verify(
+        () => client.getAllPendingEvents(repositoryName: 'test_repo'),
+      ).called(1);
 
       strategy.dispose();
     });
@@ -298,16 +303,14 @@ void main() {
 
       // Should respond with pong
       final captured = verify(() => mockSink.add(captureAny())).captured;
-      final pongMessages = captured
-          .where((msg) {
-            try {
-              final decoded = jsonDecode(msg as String);
-              return decoded['type'] == 'pong';
-            } catch (_) {
-              return false;
-            }
-          })
-          .toList();
+      final pongMessages = captured.where((msg) {
+        try {
+          final decoded = jsonDecode(msg as String);
+          return decoded['type'] == 'pong';
+        } catch (_) {
+          return false;
+        }
+      }).toList();
 
       expect(pongMessages, isNotEmpty);
 
@@ -327,10 +330,9 @@ void main() {
       await Future.delayed(Duration(milliseconds: 50));
 
       // Simulate sync_complete from server
-      messageController.add(jsonEncode({
-        'type': 'sync_complete',
-        'repository': 'test_repo',
-      }));
+      messageController.add(
+        jsonEncode({'type': 'sync_complete', 'repository': 'test_repo'}),
+      );
 
       await Future.delayed(Duration(milliseconds: 50));
 
@@ -353,10 +355,9 @@ void main() {
       await Future.delayed(Duration(milliseconds: 50));
 
       // Simulate error from server
-      messageController.add(jsonEncode({
-        'type': 'error',
-        'message': 'Test error',
-      }));
+      messageController.add(
+        jsonEncode({'type': 'error', 'message': 'Test error'}),
+      );
 
       await Future.delayed(Duration(milliseconds: 50));
 
@@ -379,10 +380,9 @@ void main() {
       await Future.delayed(Duration(milliseconds: 50));
 
       // Simulate unknown message type
-      messageController.add(jsonEncode({
-        'type': 'unknown_type',
-        'data': 'test',
-      }));
+      messageController.add(
+        jsonEncode({'type': 'unknown_type', 'data': 'test'}),
+      );
 
       await Future.delayed(Duration(milliseconds: 50));
 
@@ -415,16 +415,14 @@ void main() {
       await Future.delayed(Duration(milliseconds: 50));
 
       final captured = verify(() => mockSink.add(captureAny())).captured;
-      final requestMessages = captured
-          .where((msg) {
-            try {
-              final decoded = jsonDecode(msg as String);
-              return decoded['type'] == 'request_all_events';
-            } catch (_) {
-              return false;
-            }
-          })
-          .toList();
+      final requestMessages = captured.where((msg) {
+        try {
+          final decoded = jsonDecode(msg as String);
+          return decoded['type'] == 'request_all_events';
+        } catch (_) {
+          return false;
+        }
+      }).toList();
 
       expect(requestMessages, isNotEmpty);
 
@@ -483,16 +481,14 @@ void main() {
       await Future.delayed(Duration(milliseconds: 50));
 
       final captured = verify(() => mockSink.add(captureAny())).captured;
-      final authMessages = captured
-          .where((msg) {
-            try {
-              final decoded = jsonDecode(msg as String);
-              return decoded['type'] == 'auth';
-            } catch (_) {
-              return false;
-            }
-          })
-          .toList();
+      final authMessages = captured.where((msg) {
+        try {
+          final decoded = jsonDecode(msg as String);
+          return decoded['type'] == 'auth';
+        } catch (_) {
+          return false;
+        }
+      }).toList();
 
       expect(authMessages, isNotEmpty);
       final authMessage = jsonDecode(authMessages.first as String);
@@ -524,38 +520,39 @@ void main() {
       strategy.dispose();
     });
 
-    test('should send auth without token when no credentials provided', () async {
-      final strategy = WebSocketSyncStrategy(
-        websocketUrl: 'ws://localhost:8080/test',
-        onBuildSyncFilter: (_) async => null,
-        onSyncCompleted: (_, _) async {},
-        channelFactory: (_) => mockChannel,
-      );
-      strategy.attach(client);
+    test(
+      'should send auth without token when no credentials provided',
+      () async {
+        final strategy = WebSocketSyncStrategy(
+          websocketUrl: 'ws://localhost:8080/test',
+          onBuildSyncFilter: (_) async => null,
+          onSyncCompleted: (_, _) async {},
+          channelFactory: (_) => mockChannel,
+        );
+        strategy.attach(client);
 
-      await strategy.start();
-      await Future.delayed(Duration(milliseconds: 50));
+        await strategy.start();
+        await Future.delayed(Duration(milliseconds: 50));
 
-      final captured = verify(() => mockSink.add(captureAny())).captured;
-      final authMessages = captured
-          .where((msg) {
-            try {
-              final decoded = jsonDecode(msg as String);
-              return decoded['type'] == 'auth';
-            } catch (_) {
-              return false;
-            }
-          })
-          .toList();
+        final captured = verify(() => mockSink.add(captureAny())).captured;
+        final authMessages = captured.where((msg) {
+          try {
+            final decoded = jsonDecode(msg as String);
+            return decoded['type'] == 'auth';
+          } catch (_) {
+            return false;
+          }
+        }).toList();
 
-      // Authentication is always sent (server requires it), but without token
-      expect(authMessages, isNotEmpty);
-      final authMessage = jsonDecode(authMessages.first as String);
-      expect(authMessage['type'], 'auth');
-      expect(authMessage.containsKey('token'), isFalse);
+        // Authentication is always sent (server requires it), but without token
+        expect(authMessages, isNotEmpty);
+        final authMessage = jsonDecode(authMessages.first as String);
+        expect(authMessage['type'], 'auth');
+        expect(authMessage.containsKey('token'), isFalse);
 
-      strategy.dispose();
-    });
+        strategy.dispose();
+      },
+    );
 
     test('should handle events with null repository name', () async {
       final strategy = WebSocketSyncStrategy(
@@ -570,20 +567,24 @@ void main() {
       await Future.delayed(Duration(milliseconds: 50));
 
       // Simulate events with null repository
-      messageController.add(jsonEncode({
-        'type': 'events',
-        'repository': null,
-        'events': [
-          {'eventId': 'event-1', 'data': {}}
-        ],
-      }));
+      messageController.add(
+        jsonEncode({
+          'type': 'events',
+          'repository': null,
+          'events': [
+            {'eventId': 'event-1', 'data': {}},
+          ],
+        }),
+      );
 
       await Future.delayed(Duration(milliseconds: 50));
 
-      verifyNever(() => client.pullChanges(
-            repositoryName: any(named: 'repositoryName'),
-            changes: any(named: 'changes'),
-          ));
+      verifyNever(
+        () => client.pullChanges(
+          repositoryName: any(named: 'repositoryName'),
+          changes: any(named: 'changes'),
+        ),
+      );
 
       strategy.dispose();
     });
@@ -601,18 +602,18 @@ void main() {
       await Future.delayed(Duration(milliseconds: 50));
 
       // Simulate events with empty list
-      messageController.add(jsonEncode({
-        'type': 'events',
-        'repository': 'test_repo',
-        'events': [],
-      }));
+      messageController.add(
+        jsonEncode({'type': 'events', 'repository': 'test_repo', 'events': []}),
+      );
 
       await Future.delayed(Duration(milliseconds: 50));
 
-      verifyNever(() => client.pullChanges(
-            repositoryName: any(named: 'repositoryName'),
-            changes: any(named: 'changes'),
-          ));
+      verifyNever(
+        () => client.pullChanges(
+          repositoryName: any(named: 'repositoryName'),
+          changes: any(named: 'changes'),
+        ),
+      );
 
       strategy.dispose();
     });
@@ -630,10 +631,7 @@ void main() {
       await Future.delayed(Duration(milliseconds: 50));
 
       // Simulate ACK with null eventIds
-      messageController.add(jsonEncode({
-        'type': 'ack',
-        'eventIds': null,
-      }));
+      messageController.add(jsonEncode({'type': 'ack', 'eventIds': null}));
 
       await Future.delayed(Duration(milliseconds: 50));
 
@@ -656,10 +654,7 @@ void main() {
       await Future.delayed(Duration(milliseconds: 50));
 
       // Simulate ACK with empty eventIds
-      messageController.add(jsonEncode({
-        'type': 'ack',
-        'eventIds': [],
-      }));
+      messageController.add(jsonEncode({'type': 'ack', 'eventIds': []}));
 
       await Future.delayed(Duration(milliseconds: 50));
 

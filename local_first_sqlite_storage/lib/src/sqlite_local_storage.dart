@@ -282,7 +282,8 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     }
 
     final schema = _schemaFor(tableName);
-    final lastEventId = item[LocalFirstEvent.kLastEventId] ?? item['_lasteventId'];
+    final lastEventId =
+        item[LocalFirstEvent.kLastEventId] ?? item['_lasteventId'];
     final row = _encodeDataRow(schema, item, id, lastEventId as String?);
 
     await db.insert(

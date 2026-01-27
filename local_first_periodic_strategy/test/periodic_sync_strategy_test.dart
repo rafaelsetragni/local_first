@@ -230,9 +230,18 @@ void main() {
         await strategy.start();
 
         // start() awaits _performSync(), so sync is already complete
-        expect(fetchCalled, isTrue, reason: 'onFetchEvents should have been called');
+        expect(
+          fetchCalled,
+          isTrue,
+          reason: 'onFetchEvents should have been called',
+        );
         // pushAttempted will be false because _NoopStorage has no pending events
-        expect(pushAttempted, isFalse, reason: 'onPushEvents should NOT be called when there are no pending events');
+        expect(
+          pushAttempted,
+          isFalse,
+          reason:
+              'onPushEvents should NOT be called when there are no pending events',
+        );
 
         strategy.stop();
       });

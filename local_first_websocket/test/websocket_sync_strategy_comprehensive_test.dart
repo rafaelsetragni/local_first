@@ -28,14 +28,16 @@ void main() {
 
       client = MockLocalFirstClient();
       when(() => client.reportConnectionState(any())).thenReturn(null);
-      when(() => client.connectionChanges).thenAnswer(
-        (_) => Stream<bool>.value(false),
-      );
+      when(
+        () => client.connectionChanges,
+      ).thenAnswer((_) => Stream<bool>.value(false));
       when(() => client.latestConnectionState).thenReturn(false);
-      when(() => client.pullChanges(
-            repositoryName: any(named: 'repositoryName'),
-            changes: any(named: 'changes'),
-          )).thenAnswer((_) async {});
+      when(
+        () => client.pullChanges(
+          repositoryName: any(named: 'repositoryName'),
+          changes: any(named: 'changes'),
+        ),
+      ).thenAnswer((_) async {});
 
       strategy.attach(client);
     });
@@ -46,7 +48,7 @@ void main() {
 
     test('should call client.pullChanges with correct parameters', () async {
       final changes = [
-        {'id': '1', 'data': 'test'}
+        {'id': '1', 'data': 'test'},
       ];
 
       await strategy.pullChangesToLocal(
@@ -54,10 +56,9 @@ void main() {
         remoteChanges: changes,
       );
 
-      verify(() => client.pullChanges(
-            repositoryName: 'test_repo',
-            changes: changes,
-          )).called(1);
+      verify(
+        () => client.pullChanges(repositoryName: 'test_repo', changes: changes),
+      ).called(1);
     });
 
     test('should handle empty changes list', () async {
@@ -66,16 +67,15 @@ void main() {
         remoteChanges: [],
       );
 
-      verify(() => client.pullChanges(
-            repositoryName: 'test_repo',
-            changes: [],
-          )).called(1);
+      verify(
+        () => client.pullChanges(repositoryName: 'test_repo', changes: []),
+      ).called(1);
     });
 
     test('should extract DateTime timestamp', () async {
       final now = DateTime.now().toUtc();
       final changes = [
-        {'syncCreatedAt': now}
+        {'syncCreatedAt': now},
       ];
 
       await strategy.pullChangesToLocal(
@@ -83,16 +83,15 @@ void main() {
         remoteChanges: changes,
       );
 
-      verify(() => client.pullChanges(
-            repositoryName: 'test_repo',
-            changes: changes,
-          )).called(1);
+      verify(
+        () => client.pullChanges(repositoryName: 'test_repo', changes: changes),
+      ).called(1);
     });
 
     test('should extract string timestamp', () async {
       final now = DateTime.now().toUtc();
       final changes = [
-        {'syncCreatedAt': now.toIso8601String()}
+        {'syncCreatedAt': now.toIso8601String()},
       ];
 
       await strategy.pullChangesToLocal(
@@ -100,16 +99,15 @@ void main() {
         remoteChanges: changes,
       );
 
-      verify(() => client.pullChanges(
-            repositoryName: 'test_repo',
-            changes: changes,
-          )).called(1);
+      verify(
+        () => client.pullChanges(repositoryName: 'test_repo', changes: changes),
+      ).called(1);
     });
 
     test('should extract int timestamp', () async {
       final now = DateTime.now().toUtc();
       final changes = [
-        {'syncCreatedAt': now.millisecondsSinceEpoch}
+        {'syncCreatedAt': now.millisecondsSinceEpoch},
       ];
 
       await strategy.pullChangesToLocal(
@@ -117,15 +115,14 @@ void main() {
         remoteChanges: changes,
       );
 
-      verify(() => client.pullChanges(
-            repositoryName: 'test_repo',
-            changes: changes,
-          )).called(1);
+      verify(
+        () => client.pullChanges(repositoryName: 'test_repo', changes: changes),
+      ).called(1);
     });
 
     test('should handle invalid string timestamp', () async {
       final changes = [
-        {'syncCreatedAt': 'invalid-date'}
+        {'syncCreatedAt': 'invalid-date'},
       ];
 
       await strategy.pullChangesToLocal(
@@ -133,15 +130,14 @@ void main() {
         remoteChanges: changes,
       );
 
-      verify(() => client.pullChanges(
-            repositoryName: 'test_repo',
-            changes: changes,
-          )).called(1);
+      verify(
+        () => client.pullChanges(repositoryName: 'test_repo', changes: changes),
+      ).called(1);
     });
 
     test('should handle missing timestamp field', () async {
       final changes = [
-        {'data': 'test'}
+        {'data': 'test'},
       ];
 
       await strategy.pullChangesToLocal(
@@ -149,10 +145,9 @@ void main() {
         remoteChanges: changes,
       );
 
-      verify(() => client.pullChanges(
-            repositoryName: 'test_repo',
-            changes: changes,
-          )).called(1);
+      verify(
+        () => client.pullChanges(repositoryName: 'test_repo', changes: changes),
+      ).called(1);
     });
 
     test('should handle multiple events with different timestamps', () async {
@@ -170,10 +165,9 @@ void main() {
         remoteChanges: changes,
       );
 
-      verify(() => client.pullChanges(
-            repositoryName: 'test_repo',
-            changes: changes,
-          )).called(1);
+      verify(
+        () => client.pullChanges(repositoryName: 'test_repo', changes: changes),
+      ).called(1);
     });
   });
 
@@ -190,9 +184,9 @@ void main() {
 
       client = MockLocalFirstClient();
       when(() => client.reportConnectionState(any())).thenReturn(null);
-      when(() => client.connectionChanges).thenAnswer(
-        (_) => Stream<bool>.value(false),
-      );
+      when(
+        () => client.connectionChanges,
+      ).thenAnswer((_) => Stream<bool>.value(false));
       when(() => client.latestConnectionState).thenReturn(false);
 
       strategy.attach(client);
@@ -203,16 +197,18 @@ void main() {
     });
 
     test('should delegate to client.getAllPendingEvents', () async {
-      when(() => client.getAllPendingEvents(repositoryName: 'test_repo'))
-          .thenAnswer((_) async => []);
+      when(
+        () => client.getAllPendingEvents(repositoryName: 'test_repo'),
+      ).thenAnswer((_) async => []);
 
       final events = await strategy.getPendingEvents(
         repositoryName: 'test_repo',
       );
 
       expect(events, isEmpty);
-      verify(() => client.getAllPendingEvents(repositoryName: 'test_repo'))
-          .called(1);
+      verify(
+        () => client.getAllPendingEvents(repositoryName: 'test_repo'),
+      ).called(1);
     });
 
     test('should return events from client', () async {
@@ -225,8 +221,9 @@ void main() {
         needSync: true,
       );
 
-      when(() => client.getAllPendingEvents(repositoryName: 'test_repo'))
-          .thenAnswer((_) async => [event]);
+      when(
+        () => client.getAllPendingEvents(repositoryName: 'test_repo'),
+      ).thenAnswer((_) async => [event]);
 
       final events = await strategy.getPendingEvents(
         repositoryName: 'test_repo',
@@ -251,9 +248,9 @@ void main() {
 
       client = MockLocalFirstClient();
       when(() => client.reportConnectionState(any())).thenReturn(null);
-      when(() => client.connectionChanges).thenAnswer(
-        (_) => Stream<bool>.value(false),
-      );
+      when(
+        () => client.connectionChanges,
+      ).thenAnswer((_) => Stream<bool>.value(false));
       when(() => client.latestConnectionState).thenReturn(false);
 
       repo = MockLocalFirstRepository();
@@ -480,9 +477,9 @@ void main() {
 
       client = MockLocalFirstClient();
       when(() => client.reportConnectionState(any())).thenReturn(null);
-      when(() => client.connectionChanges).thenAnswer(
-        (_) => Stream<bool>.value(false),
-      );
+      when(
+        () => client.connectionChanges,
+      ).thenAnswer((_) => Stream<bool>.value(false));
       when(() => client.latestConnectionState).thenReturn(false);
 
       strategy.attach(client);
@@ -521,9 +518,9 @@ void main() {
 
       client = MockLocalFirstClient();
       when(() => client.reportConnectionState(any())).thenReturn(null);
-      when(() => client.connectionChanges).thenAnswer(
-        (_) => Stream<bool>.value(false),
-      );
+      when(
+        () => client.connectionChanges,
+      ).thenAnswer((_) => Stream<bool>.value(false));
       when(() => client.latestConnectionState).thenReturn(false);
 
       strategy.attach(client);
@@ -558,14 +555,16 @@ void main() {
 
       client = MockLocalFirstClient();
       when(() => client.reportConnectionState(any())).thenReturn(null);
-      when(() => client.connectionChanges).thenAnswer(
-        (_) => Stream<bool>.value(false),
-      );
+      when(
+        () => client.connectionChanges,
+      ).thenAnswer((_) => Stream<bool>.value(false));
       when(() => client.latestConnectionState).thenReturn(false);
-      when(() => client.pullChanges(
-            repositoryName: any(named: 'repositoryName'),
-            changes: any(named: 'changes'),
-          )).thenAnswer((_) async {});
+      when(
+        () => client.pullChanges(
+          repositoryName: any(named: 'repositoryName'),
+          changes: any(named: 'changes'),
+        ),
+      ).thenAnswer((_) async {});
 
       strategy.attach(client);
     });
@@ -582,11 +581,11 @@ void main() {
       final changes = [
         {
           LocalFirstEvent.kSyncCreatedAt: oldest.toIso8601String(),
-          'data': 'test1'
+          'data': 'test1',
         },
         {
           LocalFirstEvent.kSyncCreatedAt: middle.millisecondsSinceEpoch,
-          'data': 'test2'
+          'data': 'test2',
         },
         {LocalFirstEvent.kSyncCreatedAt: newest, 'data': 'test3'},
       ];
@@ -596,10 +595,9 @@ void main() {
         remoteChanges: changes,
       );
 
-      verify(() => client.pullChanges(
-            repositoryName: 'test_repo',
-            changes: changes,
-          )).called(1);
+      verify(
+        () => client.pullChanges(repositoryName: 'test_repo', changes: changes),
+      ).called(1);
     });
 
     test('should handle events with no valid timestamps', () async {
@@ -614,10 +612,9 @@ void main() {
         remoteChanges: changes,
       );
 
-      verify(() => client.pullChanges(
-            repositoryName: 'test_repo',
-            changes: changes,
-          )).called(1);
+      verify(
+        () => client.pullChanges(repositoryName: 'test_repo', changes: changes),
+      ).called(1);
     });
 
     test('should handle events with timestamps of different types', () async {
@@ -626,11 +623,11 @@ void main() {
         {LocalFirstEvent.kSyncCreatedAt: now, 'data': 'test1'},
         {
           LocalFirstEvent.kSyncCreatedAt: now.toIso8601String(),
-          'data': 'test2'
+          'data': 'test2',
         },
         {
           LocalFirstEvent.kSyncCreatedAt: now.millisecondsSinceEpoch,
-          'data': 'test3'
+          'data': 'test3',
         },
       ];
 
@@ -639,10 +636,9 @@ void main() {
         remoteChanges: changes,
       );
 
-      verify(() => client.pullChanges(
-            repositoryName: 'test_repo',
-            changes: changes,
-          )).called(1);
+      verify(
+        () => client.pullChanges(repositoryName: 'test_repo', changes: changes),
+      ).called(1);
     });
   });
 
@@ -659,14 +655,16 @@ void main() {
 
       client = MockLocalFirstClient();
       when(() => client.reportConnectionState(any())).thenReturn(null);
-      when(() => client.connectionChanges).thenAnswer(
-        (_) => Stream<bool>.value(false),
-      );
+      when(
+        () => client.connectionChanges,
+      ).thenAnswer((_) => Stream<bool>.value(false));
       when(() => client.latestConnectionState).thenReturn(false);
-      when(() => client.pullChanges(
-            repositoryName: any(named: 'repositoryName'),
-            changes: any(named: 'changes'),
-          )).thenAnswer((_) async {});
+      when(
+        () => client.pullChanges(
+          repositoryName: any(named: 'repositoryName'),
+          changes: any(named: 'changes'),
+        ),
+      ).thenAnswer((_) async {});
 
       strategy.attach(client);
     });
@@ -679,25 +677,29 @@ void main() {
       await strategy.pullChangesToLocal(
         repositoryName: 'users',
         remoteChanges: [
-          {'id': '1', 'name': 'User 1'}
+          {'id': '1', 'name': 'User 1'},
         ],
       );
 
       await strategy.pullChangesToLocal(
         repositoryName: 'todos',
         remoteChanges: [
-          {'id': '1', 'title': 'Todo 1'}
+          {'id': '1', 'title': 'Todo 1'},
         ],
       );
 
-      verify(() => client.pullChanges(
-            repositoryName: 'users',
-            changes: any(named: 'changes'),
-          )).called(1);
-      verify(() => client.pullChanges(
-            repositoryName: 'todos',
-            changes: any(named: 'changes'),
-          )).called(1);
+      verify(
+        () => client.pullChanges(
+          repositoryName: 'users',
+          changes: any(named: 'changes'),
+        ),
+      ).called(1);
+      verify(
+        () => client.pullChanges(
+          repositoryName: 'todos',
+          changes: any(named: 'changes'),
+        ),
+      ).called(1);
     });
 
     test('should track pending events for different repositories', () async {
