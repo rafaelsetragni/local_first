@@ -1,6 +1,6 @@
 name: local_first_periodic_strategy
 description: A reusable periodic synchronization strategy plugin for LocalFirst framework
-version: 1.0.0
+version: 0.1.0
 publish_to: 'none'
 resolution: workspace
 
