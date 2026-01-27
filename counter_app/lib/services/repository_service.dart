@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:developer' as dev;
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:local_first/local_first.dart';
 import 'package:local_first_websocket/local_first_websocket.dart';
@@ -26,6 +27,37 @@ class RepositoryService {
   static RepositoryService? _instance;
   factory RepositoryService() => _instance ??= RepositoryService._internal();
 
+  /// For testing only - allows injecting a mock instance
+  @visibleForTesting
+  static set instance(RepositoryService? testInstance) {
+    _instance = testInstance;
+  }
+
+  // Test-only constructor for dependency injection
+  @visibleForTesting
+  factory RepositoryService.test({
+    required LocalFirstRepository<UserModel> userRepo,
+    required LocalFirstRepository<CounterLogModel> counterLogRepo,
+    required LocalFirstRepository<SessionCounterModel> sessionCounterRepo,
+    required WebSocketSyncStrategy wsStrategy,
+    required PeriodicSyncStrategy periodicStrat,
+    http.Client? httpClient,
+    LocalFirstStorage? storage,
+    NavigatorService? navigator,
+  }) {
+    final service = RepositoryService._test(
+      userRepo: userRepo,
+      counterLogRepo: counterLogRepo,
+      sessionCounterRepo: sessionCounterRepo,
+      wsStrategy: wsStrategy,
+      periodicStrat: periodicStrat,
+    );
+    service._httpClient = httpClient ?? http.Client();
+    service._storage = storage;
+    service._navigatorService = navigator ?? NavigatorService();
+    return service;
+  }
+
   LocalFirstClient? localFirst;
   UserModel? authenticatedUser;
   String _currentNamespace = 'default';
@@ -33,12 +65,27 @@ class RepositoryService {
   final _sessionIdPrefix = '__session_id__';
   String? _currentSessionId;
   SyncStateManager? _syncStateManager;
+  http.Client _httpClient = http.Client();
+  LocalFirstStorage? _storage;
+  NavigatorService _navigatorService = NavigatorService();
 
   final LocalFirstRepository<UserModel> userRepository;
   final LocalFirstRepository<CounterLogModel> counterLogRepository;
   final LocalFirstRepository<SessionCounterModel> sessionCounterRepository;
   late final WebSocketSyncStrategy webSocketStrategy;
   late final PeriodicSyncStrategy periodicStrategy;
+
+  RepositoryService._test({
+    required LocalFirstRepository<UserModel> userRepo,
+    required LocalFirstRepository<CounterLogModel> counterLogRepo,
+    required LocalFirstRepository<SessionCounterModel> sessionCounterRepo,
+    required WebSocketSyncStrategy wsStrategy,
+    required PeriodicSyncStrategy periodicStrat,
+  })  : userRepository = userRepo,
+        counterLogRepository = counterLogRepo,
+        sessionCounterRepository = sessionCounterRepo,
+        webSocketStrategy = wsStrategy,
+        periodicStrategy = periodicStrat;
 
   RepositoryService._internal()
       : userRepository = buildUserRepository(),
@@ -98,7 +145,7 @@ class RepositoryService {
           ? Uri.parse('$baseHttpUrl/api/events/$repositoryName?seq=${filter['afterSequence']}')
           : Uri.parse('$baseHttpUrl/api/events/$repositoryName');
 
-      final response = await http.get(uri).timeout(const Duration(seconds: 5));
+      final response = await _httpClient.get(uri).timeout(const Duration(seconds: 5));
 
       if (response.statusCode != 200) {
         dev.log('Failed to fetch events: ${response.statusCode}', name: 'RepositoryService');
@@ -122,7 +169,7 @@ class RepositoryService {
     try {
       final eventList = events.map((e) => e.toJson()).toList();
 
-      final response = await http.post(
+      final response = await _httpClient.post(
         Uri.parse('$baseHttpUrl/api/events/$repositoryName/batch'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'events': eventList}),
@@ -203,7 +250,7 @@ class RepositoryService {
     try {
       // The API endpoint is GET /api/events/{repository}/byDataId/{dataId}
       // For user repository, we query by dataId which is the userId
-      final response = await http
+      final response = await _httpClient
           .get(Uri.parse('$baseHttpUrl/api/events/user/byDataId/$userId'))
           .timeout(const Duration(seconds: 5));
 
@@ -276,7 +323,7 @@ class RepositoryService {
     await localFirst?.startAllStrategies();
 
     // Navigate to home screen
-    NavigatorService().navigateToHome();
+    _navigatorService.navigateToHome();
   }
 
   /// Clears auth/session state and navigates back to sign-in.
@@ -286,7 +333,7 @@ class RepositoryService {
     _currentSessionId = null;
     await _switchUserDatabase('');
     await _setGlobalString(_lastUsernameKey, '');
-    NavigatorService().navigateToSignIn();
+    _navigatorService.navigateToSignIn();
   }
 
   /// Rehydrates a user by username (used during app restart).
@@ -478,4 +525,84 @@ class RepositoryService {
         );
     return 'user__$sanitized';
   }
+}
+
+/// Test helper class to expose private methods for unit testing
+@visibleForTesting
+class TestRepositoryServiceHelper {
+  final RepositoryService service;
+
+  TestRepositoryServiceHelper(this.service);
+
+  String sanitizeNamespace(String username) => service._sanitizeNamespace(username);
+
+  String generateSessionId(String username) => service._generateSessionId(username);
+
+  String sessionMetaKey(String username) => service._sessionMetaKey(username);
+
+  List<UserModel> usersFromEvents(List<LocalFirstEvent<UserModel>> events) =>
+      service._usersFromEvents(events);
+
+  List<CounterLogModel> logsFromEvents(List<LocalFirstEvent<CounterLogModel>> events) =>
+      service._logsFromEvents(events);
+
+  List<SessionCounterModel> sessionCountersFromEvents(
+    List<LocalFirstEvent<SessionCounterModel>> events,
+  ) =>
+      service._sessionCountersFromEvents(events);
+
+  Future<JsonMap<dynamic>?> buildSyncFilter(String repositoryName) =>
+      service._buildSyncFilter(repositoryName);
+
+  Future<List<JsonMap>> fetchEvents(String repositoryName) =>
+      service._fetchEvents(repositoryName);
+
+  Future<bool> pushEvents(String repositoryName, LocalFirstEvents events) =>
+      service._pushEvents(repositoryName, events);
+
+  Future<void> onSyncCompleted(String repositoryName, List<JsonMap<dynamic>> events) =>
+      service._onSyncCompleted(repositoryName, events);
+
+  Future<UserModel?> fetchRemoteUser(String userId) =>
+      service._fetchRemoteUser(userId);
+
+  Future<void> prepareSession(UserModel user) =>
+      service._prepareSession(user);
+
+  Future<SessionCounterModel> ensureSessionCounterForSession({
+    required String username,
+    required String sessionId,
+  }) =>
+      service._ensureSessionCounterForSession(
+        username: username,
+        sessionId: sessionId,
+      );
+
+  Future<String> getOrCreateSessionId(String username) =>
+      service._getOrCreateSessionId(username);
+
+  Future<void> persistLastUsername(String username) =>
+      service._persistLastUsername(username);
+
+  Future<String?> getGlobalString(String key) =>
+      service._getGlobalString(key);
+
+  Future<void> setGlobalString(String key, String value) =>
+      service._setGlobalString(key, value);
+
+  Future<T> withGlobalString<T>(Future<T> Function() action) =>
+      service._withGlobalString(action);
+
+  Future<void> switchUserDatabase(String username) =>
+      service._switchUserDatabase(username);
+
+  Future<void> createLogRegistry(int amount) =>
+      service._createLogRegistry(amount);
+
+  // Getters for accessing private fields
+  String? get currentSessionId => service._currentSessionId;
+
+  SyncStateManager? get syncStateManager => service._syncStateManager;
+
+  String get currentNamespace => service._currentNamespace;
 }
