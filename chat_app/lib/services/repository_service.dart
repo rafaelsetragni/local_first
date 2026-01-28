@@ -17,6 +17,7 @@ import '../models/chat_model.dart';
 import '../models/message_model.dart';
 import '../repositories/repositories.dart';
 import '../services/navigator_service.dart';
+import '../services/read_state_manager.dart';
 import '../services/sync_state_manager.dart';
 
 /// Central orchestrator for chat app using WebSocket and Periodic sync
@@ -37,6 +38,9 @@ class RepositoryService {
   String _currentNamespace = 'default';
   final _lastUsernameKey = '__last_username__';
   SyncStateManager? _syncStateManager;
+  ReadStateManager? _readStateManager;
+  String? _currentOpenChatId;
+  final _readStateChangedController = StreamController<void>.broadcast();
   final http.Client _httpClient = http.Client();
   final NavigatorService _navigatorService = NavigatorService();
 
@@ -203,6 +207,7 @@ class RepositoryService {
 
     // Initialize sync state manager after client is ready
     _syncStateManager = SyncStateManager(localFirst, () => _currentNamespace);
+    _readStateManager = ReadStateManager(localFirst, () => _currentNamespace);
 
     return await restoreLastUser();
   }
@@ -526,6 +531,9 @@ class RepositoryService {
 
       await chatRepository.upsert(updatedChat, needSync: true);
     }
+
+    // Mark chat as read after sending to prevent own message from counting as unread
+    await markChatAsRead(chatId);
   }
 
   /// Watches all users
@@ -551,5 +559,117 @@ class RepositoryService {
     await userRepository.upsert(updated, needSync: true);
     authenticatedUser = updated;
     return updated;
+  }
+
+  // ========== UNREAD COUNT OPERATIONS ==========
+
+  /// Sets the currently open chat ID (to exclude from unread counts)
+  void setCurrentOpenChat(String? chatId) {
+    _currentOpenChatId = chatId;
+  }
+
+  /// Marks a chat as read by setting lastReadAt to now
+  Future<void> markChatAsRead(String chatId) async {
+    final manager = _readStateManager;
+    if (manager == null) return;
+    await manager.markChatAsRead(chatId);
+    _readStateChangedController.add(null);
+  }
+
+  /// Gets the unread message count for a specific chat
+  Future<int> getUnreadCount(String chatId) async {
+    final manager = _readStateManager;
+    if (manager == null) return 0;
+
+    final lastReadAt = await manager.getLastReadAt(chatId);
+
+    final events = await messageRepository
+        .query()
+        .where(MessageFields.chatId, isEqualTo: chatId)
+        .getAll();
+
+    final messages = _messagesFromEvents(events);
+
+    if (lastReadAt == null) {
+      // Never read - all messages are unread
+      return messages.length;
+    }
+
+    // Count messages created after lastReadAt
+    return messages.where((m) => m.createdAt.isAfter(lastReadAt)).length;
+  }
+
+  /// Gets total unread count across all chats, optionally excluding a chat
+  Future<int> getTotalUnreadCount({String? excludeChatId}) async {
+    final chats = await chatRepository.query().getAll();
+    final chatModels = _chatsFromEvents(chats);
+
+    int total = 0;
+    for (final chat in chatModels) {
+      if (excludeChatId != null && chat.id == excludeChatId) continue;
+      total += await getUnreadCount(chat.id);
+    }
+    return total;
+  }
+
+  /// Gets unread counts for all chats as a map
+  Future<Map<String, int>> getUnreadCountsMap() async {
+    final chats = await chatRepository.query().getAll();
+    final chatModels = _chatsFromEvents(chats);
+
+    final counts = <String, int>{};
+    for (final chat in chatModels) {
+      counts[chat.id] = await getUnreadCount(chat.id);
+    }
+    return counts;
+  }
+
+  /// Watches unread counts for all chats
+  /// Returns a stream that emits whenever messages change or read state changes
+  Stream<Map<String, int>> watchUnreadCounts() {
+    final controller = StreamController<Map<String, int>>();
+
+    void refreshCounts() async {
+      if (!controller.isClosed) {
+        controller.add(await getUnreadCountsMap());
+      }
+    }
+
+    final messageSub = messageRepository.query().watch().listen((_) => refreshCounts());
+    final readStateSub = _readStateChangedController.stream.listen((_) => refreshCounts());
+
+    controller.onCancel = () {
+      messageSub.cancel();
+      readStateSub.cancel();
+    };
+
+    // Initial emit
+    refreshCounts();
+
+    return controller.stream;
+  }
+
+  /// Watches total unread count excluding current open chat
+  Stream<int> watchTotalUnreadCount() {
+    final controller = StreamController<int>();
+
+    void refreshCount() async {
+      if (!controller.isClosed) {
+        controller.add(await getTotalUnreadCount(excludeChatId: _currentOpenChatId));
+      }
+    }
+
+    final messageSub = messageRepository.query().watch().listen((_) => refreshCount());
+    final readStateSub = _readStateChangedController.stream.listen((_) => refreshCount());
+
+    controller.onCancel = () {
+      messageSub.cancel();
+      readStateSub.cancel();
+    };
+
+    // Initial emit
+    refreshCount();
+
+    return controller.stream;
   }
 }

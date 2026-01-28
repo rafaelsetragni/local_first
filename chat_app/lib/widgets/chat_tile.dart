@@ -8,11 +8,13 @@ import 'avatar_preview.dart';
 class ChatTile extends StatelessWidget {
   final ChatModel chat;
   final VoidCallback onTap;
+  final int unreadCount;
 
   const ChatTile({
     super.key,
     required this.chat,
     required this.onTap,
+    this.unreadCount = 0,
   });
 
   @override
@@ -50,16 +52,53 @@ class ChatTile extends StatelessWidget {
           fontSize: 13,
         ),
       ),
-      trailing: chat.lastMessageAt != null
-          ? Text(
-              _formatTimestamp(chat.lastMessageAt!),
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
-                fontSize: 12,
-              ),
-            )
-          : null,
+      trailing: _buildTrailing(context),
       onTap: onTap,
+    );
+  }
+
+  /// Builds the trailing widget with timestamp and unread badge
+  Widget? _buildTrailing(BuildContext context) {
+    final hasTimestamp = chat.lastMessageAt != null;
+    final hasUnread = unreadCount > 0;
+
+    if (!hasTimestamp && !hasUnread) return null;
+
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (hasTimestamp)
+          Text(
+            _formatTimestamp(chat.lastMessageAt!),
+            style: TextStyle(
+              color: hasUnread
+                  ? Theme.of(context).colorScheme.primary
+                  : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
+              fontSize: 12,
+              fontWeight: hasUnread ? FontWeight.w600 : FontWeight.normal,
+            ),
+          ),
+        if (hasUnread) ...[
+          const SizedBox(height: 4),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.primary,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              unreadCount > 99 ? '99+' : unreadCount.toString(),
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onPrimary,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ],
     );
   }
 

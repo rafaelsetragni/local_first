@@ -1,6 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:implicitly_animated_reorderable_list/implicitly_animated_reorderable_list.dart';
-import 'package:implicitly_animated_reorderable_list/transitions.dart';
+import 'package:implicitly_animated_reorderable_list_2/implicitly_animated_reorderable_list_2.dart';
+import 'package:implicitly_animated_reorderable_list_2/transitions.dart';
 
 import '../models/chat_model.dart';
 import '../services/repository_service.dart';
@@ -19,6 +21,24 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final _repositoryService = RepositoryService();
+  Map<String, int> _unreadCounts = {};
+  StreamSubscription<Map<String, int>>? _unreadSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _unreadSubscription = _repositoryService.watchUnreadCounts().listen((counts) {
+      if (mounted) {
+        setState(() => _unreadCounts = counts);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _unreadSubscription?.cancel();
+    super.dispose();
+  }
 
   /// Opens dialog to update the current user's avatar URL.
   Future<void> _onAvatarTap(BuildContext context, String currentAvatar) async {
@@ -179,6 +199,7 @@ class _HomePageState extends State<HomePage> {
                   ),
                   child: ChatTile(
                     chat: chat,
+                    unreadCount: _unreadCounts[chat.id] ?? 0,
                     onTap: () {
                       Navigator.of(context).push(
                         MaterialPageRoute(

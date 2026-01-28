@@ -36,12 +36,14 @@ class _ChatPageState extends State<ChatPage> {
   StreamSubscription<ChatModel?>? _chatSubscription;
   StreamSubscription<List<MessageModel>>? _newMessagesSubscription;
   StreamSubscription<List<UserModel>>? _usersSubscription;
+  StreamSubscription<int>? _unreadSubscription;
 
   // State data
   late ChatModel _currentChat;
   List<MessageModel> _messages = [];
   Map<String, String> _avatarMap = {};
   bool _isLoading = true;
+  int _totalUnreadCount = 0;
 
   // Pagination state
   bool _hasMore = true;
@@ -53,6 +55,10 @@ class _ChatPageState extends State<ChatPage> {
     _currentChat = widget.chat;
     _scrollController.addListener(_onScroll);
     _setupSubscriptions();
+
+    // Mark this chat as the current open chat and mark as read
+    _repositoryService.setCurrentOpenChat(widget.chat.id);
+    _repositoryService.markChatAsRead(widget.chat.id);
   }
 
   void _setupSubscriptions() {
@@ -73,6 +79,15 @@ class _ChatPageState extends State<ChatPage> {
           avatarMap[user.username] = user.avatarUrl ?? '';
         }
         setState(() => _avatarMap = avatarMap);
+      }
+    });
+
+    // Total unread subscription (excluding current chat via setCurrentOpenChat)
+    _unreadSubscription = _repositoryService
+        .watchTotalUnreadCount()
+        .listen((count) {
+      if (mounted) {
+        setState(() => _totalUnreadCount = count);
       }
     });
 
@@ -123,6 +138,8 @@ class _ChatPageState extends State<ChatPage> {
             }
           }
         });
+        // Mark chat as read when new messages arrive while viewing
+        _repositoryService.markChatAsRead(widget.chat.id);
       }
     });
   }
@@ -173,14 +190,44 @@ class _ChatPageState extends State<ChatPage> {
 
   @override
   void dispose() {
+    _repositoryService.setCurrentOpenChat(null);
     _scrollController.removeListener(_onScroll);
     _chatSubscription?.cancel();
     _newMessagesSubscription?.cancel();
     _usersSubscription?.cancel();
+    _unreadSubscription?.cancel();
     _messageController.dispose();
     _scrollController.dispose();
     _messageFocusNode.dispose();
     super.dispose();
+  }
+
+  /// Builds the leading widget with back button and optional unread badge
+  Widget _buildLeadingWithBadge(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const BackButton(),
+        if (_totalUnreadCount > 0) ...[
+          const SizedBox(width: 4),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.primary,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              _totalUnreadCount > 99 ? '99+' : _totalUnreadCount.toString(),
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onPrimary,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
   }
 
   /// Opens dialog to update the chat's avatar URL.
@@ -197,6 +244,8 @@ class _ChatPageState extends State<ChatPage> {
     return ConnectionStatusBar(
       child: Scaffold(
         appBar: AppBar(
+        leading: _buildLeadingWithBadge(context),
+        leadingWidth: _totalUnreadCount > 0 ? 72 : null,
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
