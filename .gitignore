@@ -9,8 +9,8 @@ pubspec.lock
 pubspec_overrides.yaml
 build/
 
-coverage/lcov.info
+# Coverage
+coverage/
 
-local_first/coverage/lcov.info
-
-local_first_websocket/coverage/html/
+# Server logs
+server/*.log

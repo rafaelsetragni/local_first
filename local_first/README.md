@@ -10,36 +10,54 @@
 
 <br>
 
-Local-first data layer for Flutter apps that keeps your data available offline and synchronizes when the network returns. The goal is to provide a lightweight, pluggable engine that works with common local stores (Hive, SQLite, etc.) and can sync to any backend through custom strategies.
+Local-first data layer for Flutter applications that keeps your data available offline and synchronizes data on live using multiple strategies when the network returns.
 
-Data tables are hydrated from the event stream, and the plugins remain compatible with pre-existing data tables—you don’t need to drop or recreate existing records to adopt local_first.
+![Live Demo](https://live-update-demo.rafaelsetra.workers.dev/)
+
+This solution is 100% self hosted and low bandwith. It can be customized combining the usage of multiple packages, such as:
+
+- [`local_first`](https://pub.dev/packages/local_first): core client, repositories, in memory storages, sync contracts and common utilities.
+- [`local_first_hive_storage`](https://pub.dev/packages/local_first_hive_storage): Hive adapter (schema-less boxes).
+- [`local_first_sqlite_storage`](https://pub.dev/packages/local_first_sqlite_storage): SQLite adapter (structured tables with indexes).
+- [`local_first_periodic_strategy`](https://pub.dev/packages/local_first_periodic_strategy): Periodic data sync strategy for robust periodic fetches.
+- [`local_first_websocket`](https://pub.dev/packages/local_first_websocket): Websocket data sync strategy for live communication.
+
 
 > Status: early preview. The package is in active development (final stages) and the public API may change before the first stable release. Use the examples below as guidance for the intended design.
 
-![Demo](https://live-update-demo.rafaelsetra.workers.dev/)
-
 ## Why local_first?
 
-- Local-first by design: build apps that keep ownership/control of data without relying on third-party services.
-- Fast, responsive apps that read/write locally first and sync in the background.
-- Works without a network connection; queues changes and resolves conflicts when back online.
-- Storage-agnostic: start with our Hive, SQLite, config-only SharedPreferences adapter, or your preferred custom database implementation. Data tables hydrate from events and stay compatible with existing tables—no rebuilds required.
-- Backend-agnostic: create your sync strategies, so you can integrate with your existent REST, gRPC, WebSockets, etc.
-- Minimal boilerplate: declare the storage, register your models with repositories, and start syncing.
+Local-first strategy allows your remote devices to work independently of the network connection and, at the same time, allows those devices to seamlessly synchronize with the remote when the connection is available. This turns your application:
 
-## Local-first principle
+1. **Always available and ready for usage:** even with no network connection—networks can drop at any moment, even inside signal-shadow zones.
+
+2. **Fast synchronization between devices:** synchronization flows continuously without requiring long, heavy processes.
+
+3. **Backend-agnostic:** integrate it easily with any backend technology, even pre-existing ones.
+
+4. **Minimum boilerplate:** all synchronization intelligence is handled by the package so you focus on your business logic.
+
+## Local-first principles
 
 Local-first apps give users instant feedback by reading and writing to the device first, even with no network. The sync layer runs in the background: when connectivity returns, queued changes are pushed and remote updates are pulled. Your UI never blocks on the server; the storage delegate is the primary interface your repositories talk to.
 
 ## Source of truth
 
-During a session, the local database is the working source of truth. Remote systems are reconciled via pull/push cycles driven by your sync strategy. Namespacing (e.g., per user) lets you isolate data domains so a sign-in swap is just a `useNamespace` call on storage and config.
+During a session, the local database is the active source of truth. Remote systems are reconciled via pull/push cycles orchestrated by your sync strategy, and per-user namespacing works like internal and independent databases, keeping data domains isolated.
 
-The event table is the single source of truth. Every change is captured as an event (`event_id` + `created_at`, both UUID v7-based) and pushed to the backend; child apps pull those events to converge on eventual consistency. Multiple sync strategies can run concurrently, and idempotency is guaranteed by event identifiers so duplicates are ignored rather than reprocessed. Storage plugins hydrate the data tables from events, but they remain compatible with pre-existing data tables: the event stream drives state forward without requiring you to drop or recreate existing records.
+![Source of truth cycle](../assets/local_first-data-flow.png)
+
+The events table is the canonical history. Every mutation becomes an event (`event_id` + `created_at`, both UUID v7-based), which is pushed upstream; downstream clients pull those events to converge on eventual consistency. Multiple sync strategies can run in parallel, and idempotency is enforced by event identifiers so duplicates are ignored, not reapplied.
+
+The data tables store the current materialized state derived from that event stream. Storage plugins hydrate them from the normalized event history while remaining compatible with any existing schema, so you never need to drop or recreate tables—just replay the events and let the data tables stay responsive for local reads/writes.
 
 ## Conflict resolution
 
-Plan your data model to avoid hotspots: prefer append-only logs, split records so multiple writers don’t touch the same row, and keep timestamps in UTC. If concurrent edits still happen, plug in resolution rules per repository—last-write-wins, timestamp comparison, or custom merge callbacks—to decide which state should prevail when syncing.
+Plan your data model to avoid hotspots: prefer append-only logs, split records so multiple writers don’t touch the same row, and keep timestamps in UTC. The best strategy is to design your model so conflicts simply cannot happen.
+
+For example, the bundled [counter_app demo](../counter_app) feels like a single shared counter to the user, but it is implemented as the sum of independent per-user/device registers. Each namespace owns its own row, syncs independently, and the UI simply aggregates those values. Because no global row is rewritten, there is nothing to conflict against, and the sync layer never has to resolve concurrent writes.
+
+If concurrent edits still happen, plug in resolution rules per repository—last-write-wins, timestamp comparison, or custom merge callbacks—to decide which state should prevail when syncing.
 
 ### Conflict resolution modes
 
@@ -131,14 +149,14 @@ class Todo {
   final bool completed;
   final DateTime updatedAt;
 
-  JsonMaptoJson() => {
+  JsonMap toJson() => {
         'id': id,
         'title': title,
         'completed': completed,
         'updated_at': updatedAt.toUtc().toIso8601String(),
       };
 
-  factory Todo.fromJson(JsonMapjson) => Todo(
+  factory Todo.fromJson(JsonMap json) => Todo(
         id: json['id'] as String,
         title: json['title'] as String,
         completed: json['completed'] as bool? ?? false,
@@ -156,7 +174,10 @@ final todoRepository = LocalFirstRepository<Todo>.create(
   getId: (todo) => todo.id,
   toJson: (todo) => todo.toJson(),
   fromJson: Todo.fromJson,
-  onConflict: Todo.resolveConflict,
+  onConflictEvent: (local, remote) {
+    final resolved = Todo.resolveConflict(local.data, remote.data);
+    return identical(resolved, local.data) ? local : remote;
+  },
 );
 
 Future<void> main() async {
@@ -238,11 +259,14 @@ flutter run
 
 ## Roadmap
 
-- [X] Implement Hive and SQLite storage adapters via add-on packages.
-- [ ] Provide REST and WebSocket sync strategies via add-on packages.
-- [ ] Background sync helpers for Android/iOS via add-on packages.
+- [X] Simple chat application example at repository.
+- [X] Simple global concurrent counter application example at repository.
+- [X] Implement SQLite storage adapters via add-on packages.
+- [X] Implement Hive storage adapters via add-on packages.
+- [X] Provide Periodic REST and WebSocket sync strategies via add-on packages.
 - [X] End-to-end sample app with authentication.
 - [X] Comprehensive docs and testing utilities (models now use `LocalFirstModel` mixin; full test coverage added).
+- [ ] Background sync helpers for Android/iOS via add-on packages.
 
 ## Contributing
 
