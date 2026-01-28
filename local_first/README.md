@@ -14,7 +14,11 @@ Local-first data layer for Flutter applications that keeps your data available o
 
 ![Live Demo](https://bit.ly/3Z5gQ4G)
 
-This solution is 100% self hosted and low bandwith. It can be customized combining the usage of multiple packages, such as:
+**Example apps:**
+- [counter_app](https://github.com/rafaelsetragni/local_first/tree/development/counter_app) - Real-time shared counter with multi-user sync
+- [chat_app](https://github.com/rafaelsetragni/local_first/tree/development/chat_app) - Real-time chat with WebSocket + Periodic dual sync strategy
+
+This solution is ***100% self hosted and low bandwith***. It can be customized combining the usage of multiple packages, such as:
 
 - [`local_first`](https://pub.dev/packages/local_first): core client, repositories, in memory storages, sync contracts and common utilities.
 - [`local_first_hive_storage`](https://pub.dev/packages/local_first_hive_storage): Hive adapter (schema-less boxes).
@@ -45,7 +49,7 @@ Local-first apps give users instant feedback by reading and writing to the devic
 
 During a session, the local database is the active source of truth. Remote systems are reconciled via pull/push cycles orchestrated by your sync strategy, and per-user namespacing works like internal and independent databases, keeping data domains isolated.
 
-![Source of truth cycle](../assets/local_first-data-flow.png)
+![Source of truth cycle](https://raw.githubusercontent.com/rafaelsetragni/local_first/refs/heads/development/assets/local_first-data-flow.png)
 
 The events table is the canonical history. Every mutation becomes an event (`event_id` + `created_at`, both UUID v7-based), which is pushed upstream; downstream clients pull those events to converge on eventual consistency. Multiple sync strategies can run in parallel, and idempotency is enforced by event identifiers so duplicates are ignored, not reapplied.
 
@@ -55,7 +59,7 @@ The data tables store the current materialized state derived from that event str
 
 Plan your data model to avoid hotspots: prefer append-only logs, split records so multiple writers don’t touch the same row, and keep timestamps in UTC. The best strategy is to design your model so conflicts simply cannot happen.
 
-For example, the bundled [counter_app demo](../counter_app) feels like a single shared counter to the user, but it is implemented as the sum of independent per-user/device registers. Each namespace owns its own row, syncs independently, and the UI simply aggregates those values. Because no global row is rewritten, there is nothing to conflict against, and the sync layer never has to resolve concurrent writes.
+For example, the bundled [counter_app demo](https://github.com/rafaelsetragni/local_first/tree/development/counter_app) feels like a single shared counter to the user, but it is implemented as the sum of independent per-user/device registers. Each namespace owns its own row, syncs independently, and the UI simply aggregates those values. Because no global row is rewritten, there is nothing to conflict against, and the sync layer never has to resolve concurrent writes.
 
 If concurrent edits still happen, plug in resolution rules per repository—last-write-wins, timestamp comparison, or custom merge callbacks—to decide which state should prevail when syncing.
 
@@ -85,18 +89,28 @@ final todoRepository = LocalFirstRepository<Todo>.create(
 
 Keep a remote cursor per repository (commonly `server_sequence` or `server_created_at`) so pulls fetch only new/changed events. Store this cursor in config/meta storage and advance it after each successful pull; this keeps sync idempotent and efficient when talking to any backend API.
 
-## Example app overview
+## Example apps overview
 
-The bundled demo is a multi-user, namespaced counter with user profiles and session counters. It shows repositories talking to storage, config/meta reads/writes, and a sync strategy exchanging events with a mock backend. Use it as a blueprint for wiring your own models and strategies.
+The repository includes two complete demo apps:
+
+- **[counter_app](https://github.com/rafaelsetragni/local_first/tree/development/counter_app)**: A multi-user, namespaced counter with user profiles and session counters. Shows repositories talking to storage, config/meta reads/writes, and a sync strategy exchanging events with a backend.
+- **[chat_app](https://github.com/rafaelsetragni/local_first/tree/development/chat_app)**: A real-time chat application with rooms, messages, and user authentication. Demonstrates message pagination, conflict resolution, and dual sync strategy (WebSocket + Periodic).
+
+Use them as blueprints for wiring your own models and strategies.
 
 ## Running the examples
 
-Each adapter ships the same demo. Choose the storage you want to explore and run:
+Each package ships a demo app. Choose the one you want to explore and run:
 
-- `local_first/example` (in-memory for dev)
-- `local_first_hive_storage/example` (Hive storage)
-- `local_first_sqlite_storage/example` (SQLite storage)
-- `local_first_shared_preferences/example` (config-only storage)
+**Storage adapters:**
+- [`local_first/example`](https://github.com/rafaelsetragni/local_first/tree/development/local_first/example) (in-memory for dev)
+- [`local_first_hive_storage/example`](https://github.com/rafaelsetragni/local_first/tree/development/local_first_hive_storage/example) (Hive storage)
+- [`local_first_sqlite_storage/example`](https://github.com/rafaelsetragni/local_first/tree/development/local_first_sqlite_storage/example) (SQLite storage)
+- [`local_first_shared_preferences/example`](https://github.com/rafaelsetragni/local_first/tree/development/local_first_shared_preferences/example) (config-only storage)
+
+**Sync strategies:**
+- [`local_first_periodic_strategy/example`](https://github.com/rafaelsetragni/local_first/tree/development/local_first_periodic_strategy/example) (periodic REST sync)
+- [`local_first_websocket/example`](https://github.com/rafaelsetragni/local_first/tree/development/local_first_websocket/example) (real-time WebSocket sync)
 
 From inside the chosen folder: `flutter run`.
 
@@ -111,14 +125,21 @@ From inside the chosen folder: `flutter run`.
 
 ## Installation
 
-Add the dependency to your `pubspec.yaml`:
+Add the core package and the adapters you need to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  local_first: ^0.6.0
-  local_first_hive_storage: ^0.2.0  # optional
-  local_first_sqlite_storage: ^0.2.0 # optional
-  local_first_shared_preferences: ^0.1.0 # optional (config storage only)
+  # Core package (required)
+  local_first: ^0.7.0
+
+  # Storage adapters (choose one or more)
+  local_first_hive_storage: ^0.2.0       # schema-less key/value storage
+  local_first_sqlite_storage: ^0.3.0     # structured tables with indexes
+  local_first_shared_preferences: ^0.1.0 # config-only key/value storage
+
+  # Sync strategies (choose one or more)
+  local_first_periodic_strategy: ^0.1.0  # periodic REST sync
+  local_first_websocket: ^0.2.0          # real-time WebSocket sync
 ```
 
 Then install it with:
@@ -236,9 +257,12 @@ final client = LocalFirstClient(
 );
 ```
 
-## Example app
+## Example apps
 
-A starter Flutter app lives in `example/` and showcases the local-first flow to increment or decrement a global shared counter (per-user namespaces, repositories, and a Mongo sync mock).
+Two complete Flutter apps demonstrate the local-first architecture:
+
+- **[counter_app](https://github.com/rafaelsetragni/local_first/tree/development/counter_app)**: Multi-user shared counter showcasing real-time sync with WebSocket + Periodic strategies
+- **[chat_app](https://github.com/rafaelsetragni/local_first/tree/development/chat_app)**: Real-time chat application with message pagination, user authentication, and dual sync strategy
 
 ```bash
 # Clone and fetch deps
@@ -246,15 +270,15 @@ git clone https://github.com/rafaelsetragni/local_first.git
 cd local_first
 flutter pub get
 
-# Run the sample
-cd example
+# Run the counter example
+cd counter_app
 flutter pub get
 flutter run
 
-# (Optional) Start the Mongo mock used by the sync strategy.
-# docker run -d --name mongo_local -p 27017:27017 \\
-#   -e MONGO_INITDB_ROOT_USERNAME=admin \\
-#   -e MONGO_INITDB_ROOT_PASSWORD=admin mongo:7
+# Or run the chat example
+cd chat_app
+flutter pub get
+flutter run
 ```
 
 ## Roadmap

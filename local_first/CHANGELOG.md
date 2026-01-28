@@ -1,3 +1,10 @@
+## 0.7.2
+
+- Updated README with absolute GitHub URLs for proper rendering on pub.dev
+- Added sync strategy packages to Installation section (periodic and websocket)
+- Reorganized Running examples section with storage adapters and sync strategies categories
+- Updated package versions in Installation documentation
+
 ## 0.7.1
 
 - Added chat app example with real-time messaging using dual sync strategy (WebSocket + Periodic)
