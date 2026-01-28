@@ -5,6 +5,11 @@ import 'dart:io';
 
 import 'package:mongo_dart/mongo_dart.dart';
 
+// mongo_dart query selector builder - use getter to always get fresh instance
+// IMPORTANT: SelectorBuilder is mutable and accumulates state between calls
+// Using a getter ensures each query starts with a clean slate
+SelectorBuilder get where => SelectorBuilder();
+
 /// Hybrid WebSocket + REST API server for local_first synchronization.
 ///
 /// This server handles:
@@ -178,7 +183,7 @@ class WebSocketSyncServer {
     final db = _db;
     if (db == null) return;
 
-    final repos = ['user', 'counter_log', 'session_counter'];
+    final repos = ['user', 'counter_log', 'session_counter', 'chat', 'message'];
 
     for (final repoName in repos) {
       final collection = db.collection(repoName);
@@ -356,6 +361,7 @@ class WebSocketSyncServer {
   void _sendError(HttpResponse response, int statusCode, String message) {
     try {
       response.statusCode = statusCode;
+      response.headers.contentType = ContentType.json;
       response.write(jsonEncode({'error': message, 'statusCode': statusCode}));
       response.close();
     } catch (e) {
@@ -486,6 +492,7 @@ class WebSocketSyncServer {
       }
 
       response.statusCode = HttpStatus.ok;
+      response.headers.contentType = ContentType.json;
       response.write(
         jsonEncode({
           'repository': repository,
@@ -535,6 +542,7 @@ class WebSocketSyncServer {
       event.remove('_id');
 
       response.statusCode = HttpStatus.ok;
+      response.headers.contentType = ContentType.json;
       response.write(jsonEncode({'repository': repository, 'event': event}));
       await response.close();
     } catch (e) {
@@ -577,6 +585,7 @@ class WebSocketSyncServer {
       event.remove('_id');
 
       response.statusCode = HttpStatus.ok;
+      response.headers.contentType = ContentType.json;
       response.write(jsonEncode({'repository': repository, 'event': event}));
       await response.close();
     } catch (e) {
@@ -701,18 +710,21 @@ class WebSocketSyncServer {
 
     final countersCollection = db.collection('_sequence_counters');
 
-    // Use 'repository' field instead of '_id' to avoid ObjectId casting issues
-    // MongoDB automatically treats '_id' fields as ObjectIds, causing type cast errors
-    final result = await countersCollection.findAndModify(
-      query: where.eq('repository', repositoryName),
-      update: {
+    // Use raw map for MongoDB update operators - more reliable than ModifierBuilder
+    await countersCollection.updateOne(
+      where.eq('repository', repositoryName),
+      {
         r'$inc': {'sequence': 1},
+        r'$setOnInsert': {'repository': repositoryName},
       },
-      returnNew: true,
       upsert: true,
     );
 
-    return result?['sequence'] as int? ?? 1;
+    final doc = await countersCollection.findOne(
+      where.eq('repository', repositoryName),
+    );
+
+    return doc?['sequence'] as int? ?? 1;
   }
 
   /// Pushes an event to MongoDB.
@@ -877,7 +889,7 @@ class WebSocketSyncServer {
 
   /// Fetches all events from all repositories.
   Future<Map<String, List<Map<String, dynamic>>>> fetchAllEvents() async {
-    final repos = ['user', 'counter_log', 'session_counter'];
+    final repos = ['user', 'counter_log', 'session_counter', 'chat', 'message'];
     final result = <String, List<Map<String, dynamic>>>{};
 
     for (final repo in repos) {
@@ -948,7 +960,7 @@ class WebSocketSyncServer {
 /// Represents a connected WebSocket client.
 class ConnectedClient {
   static const logTag = 'ConnectedClient';
-  static const _pingInterval = Duration(seconds: 3);
+  static const _pingInterval = Duration(seconds: 30);
   static const _pongTimeout = Duration(seconds: 10);
 
   final WebSocket webSocket;

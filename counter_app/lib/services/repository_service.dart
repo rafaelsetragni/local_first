@@ -42,7 +42,6 @@ class RepositoryService {
     required WebSocketSyncStrategy wsStrategy,
     required PeriodicSyncStrategy periodicStrat,
     http.Client? httpClient,
-    LocalFirstStorage? storage,
     NavigatorService? navigator,
   }) {
     final service = RepositoryService._test(
@@ -53,7 +52,6 @@ class RepositoryService {
       periodicStrat: periodicStrat,
     );
     service._httpClient = httpClient ?? http.Client();
-    service._storage = storage;
     service._navigatorService = navigator ?? NavigatorService();
     return service;
   }
@@ -66,7 +64,6 @@ class RepositoryService {
   String? _currentSessionId;
   SyncStateManager? _syncStateManager;
   http.Client _httpClient = http.Client();
-  LocalFirstStorage? _storage;
   NavigatorService _navigatorService = NavigatorService();
 
   final LocalFirstRepository<UserModel> userRepository;
@@ -81,31 +78,31 @@ class RepositoryService {
     required LocalFirstRepository<SessionCounterModel> sessionCounterRepo,
     required WebSocketSyncStrategy wsStrategy,
     required PeriodicSyncStrategy periodicStrat,
-  })  : userRepository = userRepo,
-        counterLogRepository = counterLogRepo,
-        sessionCounterRepository = sessionCounterRepo,
-        webSocketStrategy = wsStrategy,
-        periodicStrategy = periodicStrat;
+  }) : userRepository = userRepo,
+       counterLogRepository = counterLogRepo,
+       sessionCounterRepository = sessionCounterRepo,
+       webSocketStrategy = wsStrategy,
+       periodicStrategy = periodicStrat;
 
   RepositoryService._internal()
-      : userRepository = buildUserRepository(),
-        counterLogRepository = buildCounterLogRepository(),
-        sessionCounterRepository = buildSessionCounterRepository() {
+    : userRepository = buildUserRepository(),
+      counterLogRepository = buildCounterLogRepository(),
+      sessionCounterRepository = buildSessionCounterRepository() {
     // Initialize WebSocketSyncStrategy for real-time push notifications
     // Pending queue disabled - let periodic strategy handle offline events
     webSocketStrategy = WebSocketSyncStrategy(
       websocketUrl: websocketUrl,
       reconnectDelay: Duration(milliseconds: 1500),
-      heartbeatInterval: Duration(seconds: 15),
+      heartbeatInterval: Duration(seconds: 60),
       enablePendingQueue: false,
       onBuildSyncFilter: (_) async => null, // Don't pull - only receive pushes
-      onSyncCompleted: (_, __) async {}, // No-op - periodic handles state
+      onSyncCompleted: (_, _) async {}, // No-op - periodic handles state
     );
 
     // Initialize PeriodicSyncStrategy for consistency and offline sync
     // Uses server sequence to fetch missed events
     periodicStrategy = PeriodicSyncStrategy(
-      syncInterval: Duration(seconds: 10),
+      syncInterval: Duration(seconds: 30),
       repositoryNames: [
         RepositoryNames.user,
         RepositoryNames.counterLog,
@@ -142,47 +139,74 @@ class RepositoryService {
     try {
       final filter = await _buildSyncFilter(repositoryName);
       final uri = filter != null && filter.containsKey('afterSequence')
-          ? Uri.parse('$baseHttpUrl/api/events/$repositoryName?seq=${filter['afterSequence']}')
+          ? Uri.parse(
+              '$baseHttpUrl/api/events/$repositoryName?seq=${filter['afterSequence']}',
+            )
           : Uri.parse('$baseHttpUrl/api/events/$repositoryName');
 
-      final response = await _httpClient.get(uri).timeout(const Duration(seconds: 5));
+      final response = await _httpClient
+          .get(uri)
+          .timeout(const Duration(seconds: 5));
 
       if (response.statusCode != 200) {
-        dev.log('Failed to fetch events: ${response.statusCode}', name: 'RepositoryService');
+        dev.log(
+          'Failed to fetch events: ${response.statusCode}',
+          name: 'RepositoryService',
+        );
         return [];
       }
 
       final data = jsonDecode(response.body) as Map<String, dynamic>;
-      final events = (data['events'] as List<dynamic>?)?.cast<Map<String, dynamic>>() ?? [];
+      final events =
+          (data['events'] as List<dynamic>?)?.cast<Map<String, dynamic>>() ??
+          [];
 
       return events;
     } catch (e, s) {
-      dev.log('Error fetching events', name: 'RepositoryService', error: e, stackTrace: s);
+      dev.log(
+        'Error fetching events',
+        name: 'RepositoryService',
+        error: e,
+        stackTrace: s,
+      );
       return [];
     }
   }
 
   /// Pushes local events to REST API for periodic sync
-  Future<bool> _pushEvents(String repositoryName, LocalFirstEvents events) async {
+  Future<bool> _pushEvents(
+    String repositoryName,
+    LocalFirstEvents events,
+  ) async {
     if (events.isEmpty) return true;
 
     try {
       final eventList = events.map((e) => e.toJson()).toList();
 
-      final response = await _httpClient.post(
-        Uri.parse('$baseHttpUrl/api/events/$repositoryName/batch'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'events': eventList}),
-      ).timeout(const Duration(seconds: 10));
+      final response = await _httpClient
+          .post(
+            Uri.parse('$baseHttpUrl/api/events/$repositoryName/batch'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'events': eventList}),
+          )
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode != 201) {
-        dev.log('Failed to push events: ${response.statusCode}', name: 'RepositoryService');
+        dev.log(
+          'Failed to push events: ${response.statusCode}',
+          name: 'RepositoryService',
+        );
         return false;
       }
 
       return true;
     } catch (e, s) {
-      dev.log('Error pushing events', name: 'RepositoryService', error: e, stackTrace: s);
+      dev.log(
+        'Error pushing events',
+        name: 'RepositoryService',
+        error: e,
+        stackTrace: s,
+      );
       return false;
     }
   }
@@ -226,23 +250,24 @@ class RepositoryService {
   }
 
   List<UserModel> _usersFromEvents(List<LocalFirstEvent<UserModel>> events) =>
-      events.whereType<LocalFirstStateEvent<UserModel>>().map((e) => e.data).toList();
+      events
+          .whereType<LocalFirstStateEvent<UserModel>>()
+          .map((e) => e.data)
+          .toList();
 
   List<CounterLogModel> _logsFromEvents(
     List<LocalFirstEvent<CounterLogModel>> events,
-  ) =>
-      events
-          .whereType<LocalFirstStateEvent<CounterLogModel>>()
-          .map((e) => e.data)
-          .toList();
+  ) => events
+      .whereType<LocalFirstStateEvent<CounterLogModel>>()
+      .map((e) => e.data)
+      .toList();
 
   List<SessionCounterModel> _sessionCountersFromEvents(
     List<LocalFirstEvent<SessionCounterModel>> events,
-  ) =>
-      events
-          .whereType<LocalFirstStateEvent<SessionCounterModel>>()
-          .map((e) => e.data)
-          .toList();
+  ) => events
+      .whereType<LocalFirstStateEvent<SessionCounterModel>>()
+      .map((e) => e.data)
+      .toList();
 
   /// Fetches a user from the remote server by userId.
   /// Returns UserModel if user exists, null if not (404), throws on connection error.
@@ -394,7 +419,10 @@ class RepositoryService {
 
   String _generateSessionId(String username) {
     final random = Random();
-    final randomBits = random.nextInt(0x7fffffff).toRadixString(16).padLeft(8, '0');
+    final randomBits = random
+        .nextInt(0x7fffffff)
+        .toRadixString(16)
+        .padLeft(8, '0');
     final timestamp = DateTime.now().millisecondsSinceEpoch.toRadixString(16);
     return 'sess_${_sanitizeNamespace(username)}_${timestamp}_$randomBits';
   }
@@ -440,24 +468,31 @@ class RepositoryService {
   Future<List<UserModel>> getUsers() async =>
       _usersFromEvents(await userRepository.query().getAll());
 
-  Stream<List<CounterLogModel>> watchLogs({int limit = 5}) => counterLogRepository
-      .query()
-      .orderBy(CommonFields.createdAt, descending: true)
-      .limitTo(min(limit, 5))
-      .watch()
-      .map(_logsFromEvents);
+  Stream<List<CounterLogModel>> watchLogs({int limit = 5}) =>
+      counterLogRepository
+          .query()
+          .orderBy(CommonFields.createdAt, descending: true)
+          .limitTo(min(limit, 5))
+          .watch()
+          .map(_logsFromEvents);
 
   Stream<int> watchCounter() => sessionCounterRepository
       .query()
       .watch()
       .map(_sessionCountersFromEvents)
-      .map((sessions) => sessions.fold<int>(0, (sum, counter) => sum + counter.count));
+      .map(
+        (sessions) =>
+            sessions.fold<int>(0, (sum, counter) => sum + counter.count),
+      );
 
   Stream<List<CounterLogModel>> watchRecentLogs({int limit = 5}) =>
       watchLogs(limit: min(limit, 5));
 
-  Stream<List<UserModel>> watchUsers() =>
-      userRepository.query().orderBy(CommonFields.username).watch().map(_usersFromEvents);
+  Stream<List<UserModel>> watchUsers() => userRepository
+      .query()
+      .orderBy(CommonFields.username)
+      .watch()
+      .map(_usersFromEvents);
 
   Future<UserModel> updateAvatarUrl(String avatarUrl) async {
     final user = authenticatedUser;
@@ -520,9 +555,9 @@ class RepositoryService {
   String _sanitizeNamespace(String username) {
     if (username.isEmpty) return 'default';
     final sanitized = username.toLowerCase().replaceAll(
-          RegExp(r'[^a-z0-9_-]'),
-          '_',
-        );
+      RegExp(r'[^a-z0-9_-]'),
+      '_',
+    );
     return 'user__$sanitized';
   }
 }
@@ -534,22 +569,24 @@ class TestRepositoryServiceHelper {
 
   TestRepositoryServiceHelper(this.service);
 
-  String sanitizeNamespace(String username) => service._sanitizeNamespace(username);
+  String sanitizeNamespace(String username) =>
+      service._sanitizeNamespace(username);
 
-  String generateSessionId(String username) => service._generateSessionId(username);
+  String generateSessionId(String username) =>
+      service._generateSessionId(username);
 
   String sessionMetaKey(String username) => service._sessionMetaKey(username);
 
   List<UserModel> usersFromEvents(List<LocalFirstEvent<UserModel>> events) =>
       service._usersFromEvents(events);
 
-  List<CounterLogModel> logsFromEvents(List<LocalFirstEvent<CounterLogModel>> events) =>
-      service._logsFromEvents(events);
+  List<CounterLogModel> logsFromEvents(
+    List<LocalFirstEvent<CounterLogModel>> events,
+  ) => service._logsFromEvents(events);
 
   List<SessionCounterModel> sessionCountersFromEvents(
     List<LocalFirstEvent<SessionCounterModel>> events,
-  ) =>
-      service._sessionCountersFromEvents(events);
+  ) => service._sessionCountersFromEvents(events);
 
   Future<JsonMap<dynamic>?> buildSyncFilter(String repositoryName) =>
       service._buildSyncFilter(repositoryName);
@@ -560,23 +597,23 @@ class TestRepositoryServiceHelper {
   Future<bool> pushEvents(String repositoryName, LocalFirstEvents events) =>
       service._pushEvents(repositoryName, events);
 
-  Future<void> onSyncCompleted(String repositoryName, List<JsonMap<dynamic>> events) =>
-      service._onSyncCompleted(repositoryName, events);
+  Future<void> onSyncCompleted(
+    String repositoryName,
+    List<JsonMap<dynamic>> events,
+  ) => service._onSyncCompleted(repositoryName, events);
 
   Future<UserModel?> fetchRemoteUser(String userId) =>
       service._fetchRemoteUser(userId);
 
-  Future<void> prepareSession(UserModel user) =>
-      service._prepareSession(user);
+  Future<void> prepareSession(UserModel user) => service._prepareSession(user);
 
   Future<SessionCounterModel> ensureSessionCounterForSession({
     required String username,
     required String sessionId,
-  }) =>
-      service._ensureSessionCounterForSession(
-        username: username,
-        sessionId: sessionId,
-      );
+  }) => service._ensureSessionCounterForSession(
+    username: username,
+    sessionId: sessionId,
+  );
 
   Future<String> getOrCreateSessionId(String username) =>
       service._getOrCreateSessionId(username);
@@ -584,8 +621,7 @@ class TestRepositoryServiceHelper {
   Future<void> persistLastUsername(String username) =>
       service._persistLastUsername(username);
 
-  Future<String?> getGlobalString(String key) =>
-      service._getGlobalString(key);
+  Future<String?> getGlobalString(String key) => service._getGlobalString(key);
 
   Future<void> setGlobalString(String key, String value) =>
       service._setGlobalString(key, value);
