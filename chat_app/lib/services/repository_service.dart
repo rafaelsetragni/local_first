@@ -383,6 +383,14 @@ class RepositoryService {
 
   // ========== CHAT OPERATIONS ==========
 
+  /// Gets all chats ordered by most recent activity (updatedAt)
+  Future<List<ChatModel>> getChats() async {
+    final events = await chatRepository.query()
+        .orderBy(CommonFields.updatedAt, descending: true)
+        .getAll();
+    return _chatsFromEvents(events);
+  }
+
   /// Watches all chats ordered by most recent activity (updatedAt)
   Stream<List<ChatModel>> watchChats() {
     return chatRepository.query()
@@ -600,75 +608,127 @@ class RepositoryService {
   }
 
   /// Gets total unread count across all chats, optionally excluding a chat
+  /// Processes all chats in parallel for better performance
   Future<int> getTotalUnreadCount({String? excludeChatId}) async {
     final chats = await chatRepository.query().getAll();
     final chatModels = _chatsFromEvents(chats);
 
-    int total = 0;
-    for (final chat in chatModels) {
-      if (excludeChatId != null && chat.id == excludeChatId) continue;
-      total += await getUnreadCount(chat.id);
-    }
-    return total;
+    // Filter out excluded chat and process in parallel
+    final chatsToCount = excludeChatId != null
+        ? chatModels.where((chat) => chat.id != excludeChatId)
+        : chatModels;
+
+    final futures = chatsToCount.map((chat) => getUnreadCount(chat.id));
+    final counts = await Future.wait(futures);
+
+    return counts.fold<int>(0, (sum, count) => sum + count);
   }
 
   /// Gets unread counts for all chats as a map
+  /// Processes all chats in parallel for better performance
   Future<Map<String, int>> getUnreadCountsMap() async {
     final chats = await chatRepository.query().getAll();
     final chatModels = _chatsFromEvents(chats);
 
-    final counts = <String, int>{};
-    for (final chat in chatModels) {
-      counts[chat.id] = await getUnreadCount(chat.id);
-    }
-    return counts;
+    // Process all chats in parallel
+    final futures = chatModels.map((chat) async {
+      final count = await getUnreadCount(chat.id);
+      return MapEntry(chat.id, count);
+    });
+
+    final entries = await Future.wait(futures);
+    return Map.fromEntries(entries);
   }
 
   /// Watches unread counts for all chats
   /// Returns a stream that emits whenever messages change or read state changes
+  /// Uses debouncing to coalesce rapid updates into a single emission
   Stream<Map<String, int>> watchUnreadCounts() {
     final controller = StreamController<Map<String, int>>();
+    Timer? debounceTimer;
+    bool isRefreshing = false;
 
     void refreshCounts() async {
-      if (!controller.isClosed) {
-        controller.add(await getUnreadCountsMap());
-      }
+      // Cancel any pending debounce
+      debounceTimer?.cancel();
+
+      // Debounce: wait 50ms before actually refreshing
+      debounceTimer = Timer(const Duration(milliseconds: 50), () async {
+        if (controller.isClosed || isRefreshing) return;
+
+        isRefreshing = true;
+        try {
+          final counts = await getUnreadCountsMap();
+          if (!controller.isClosed) {
+            controller.add(counts);
+          }
+        } finally {
+          isRefreshing = false;
+        }
+      });
     }
 
     final messageSub = messageRepository.query().watch().listen((_) => refreshCounts());
     final readStateSub = _readStateChangedController.stream.listen((_) => refreshCounts());
 
     controller.onCancel = () {
+      debounceTimer?.cancel();
       messageSub.cancel();
       readStateSub.cancel();
     };
 
-    // Initial emit
-    refreshCounts();
+    // Initial emit (immediate, no debounce)
+    getUnreadCountsMap().then((counts) {
+      if (!controller.isClosed) {
+        controller.add(counts);
+      }
+    });
 
     return controller.stream;
   }
 
   /// Watches total unread count excluding current open chat
+  /// Uses debouncing to coalesce rapid updates into a single emission
   Stream<int> watchTotalUnreadCount() {
     final controller = StreamController<int>();
+    Timer? debounceTimer;
+    bool isRefreshing = false;
 
     void refreshCount() async {
-      if (!controller.isClosed) {
-        controller.add(await getTotalUnreadCount(excludeChatId: _currentOpenChatId));
-      }
+      // Cancel any pending debounce
+      debounceTimer?.cancel();
+
+      // Debounce: wait 50ms before actually refreshing
+      debounceTimer = Timer(const Duration(milliseconds: 50), () async {
+        if (controller.isClosed || isRefreshing) return;
+
+        isRefreshing = true;
+        try {
+          final count = await getTotalUnreadCount(excludeChatId: _currentOpenChatId);
+          if (!controller.isClosed) {
+            controller.add(count);
+          }
+        } finally {
+          isRefreshing = false;
+        }
+      });
     }
 
     final messageSub = messageRepository.query().watch().listen((_) => refreshCount());
     final readStateSub = _readStateChangedController.stream.listen((_) => refreshCount());
 
     controller.onCancel = () {
+      debounceTimer?.cancel();
       messageSub.cancel();
       readStateSub.cancel();
     };
 
-    // Initial emit
-    refreshCount();
+    // Initial emit (immediate, no debounce)
+    getTotalUnreadCount(excludeChatId: _currentOpenChatId).then((count) {
+      if (!controller.isClosed) {
+        controller.add(count);
+      }
+    });
 
     return controller.stream;
   }

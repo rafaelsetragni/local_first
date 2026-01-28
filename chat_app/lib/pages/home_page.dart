@@ -9,6 +9,7 @@ import '../services/repository_service.dart';
 import '../widgets/avatar_preview.dart';
 import '../widgets/chat_tile.dart';
 import '../widgets/connection_status_bar.dart';
+import '../widgets/unread_counts_provider.dart';
 import 'chat_page.dart';
 
 /// Home page displaying a list of all available chats
@@ -21,22 +22,59 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final _repositoryService = RepositoryService();
-  Map<String, int> _unreadCounts = {};
-  StreamSubscription<Map<String, int>>? _unreadSubscription;
+
+  // Stream subscriptions
+  StreamSubscription<List<ChatModel>>? _chatsSubscription;
+
+  // State data
+  List<ChatModel> _chats = [];
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    _unreadSubscription = _repositoryService.watchUnreadCounts().listen((counts) {
+    _loadInitialChats();
+  }
+
+  Future<void> _loadInitialChats() async {
+    try {
+      // Load initial chats
+      final chats = await _repositoryService.getChats();
       if (mounted) {
-        setState(() => _unreadCounts = counts);
+        setState(() {
+          _chats = chats;
+          _isLoading = false;
+        });
+
+        // Start watching for updates after initial load
+        _setupChatsSubscription();
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  void _setupChatsSubscription() {
+    _chatsSubscription = _repositoryService.watchChats().listen((chats) {
+      if (mounted && !_listsEqual(_chats, chats)) {
+        setState(() => _chats = chats);
       }
     });
   }
 
+  bool _listsEqual(List<ChatModel> a, List<ChatModel> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
   @override
   void dispose() {
-    _unreadSubscription?.cancel();
+    _chatsSubscription?.cancel();
     super.dispose();
   }
 
@@ -54,171 +92,160 @@ class _HomePageState extends State<HomePage> {
 
     return ConnectionStatusBar(
       child: Scaffold(
-      appBar: AppBar(
-        title: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (user != null) ...[
-              GestureDetector(
-                onTap: () => _onAvatarTap(context, user.avatarUrl ?? ''),
-                child: AvatarPreview(
-                  avatarUrl: user.avatarUrl ?? '',
-                  radius: 16,
-                ),
-              ),
-              const SizedBox(width: 12),
-            ],
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text('Local First Chat'),
-                if (user != null)
-                  Text(
-                    user.username,
-                    style: Theme.of(context).textTheme.labelSmall,
+        appBar: AppBar(
+          title: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (user != null) ...[
+                GestureDetector(
+                  onTap: () => _onAvatarTap(context, user.avatarUrl ?? ''),
+                  child: AvatarPreview(
+                    avatarUrl: user.avatarUrl ?? '',
+                    radius: 16,
                   ),
+                ),
+                const SizedBox(width: 12),
               ],
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (user != null)
+                    Text(
+                      'Welcome, ${user.username}',
+                      style: Theme.of(context).textTheme.labelSmall,
+                    ),
+                  const Text('Local First Chat'),
+                ],
+              ),
+            ],
+          ),
+          actions: [
+            // WebSocket connection indicator
+            StreamBuilder<bool>(
+              stream: _repositoryService.connectionState,
+              initialData: _repositoryService.isConnected,
+              builder: (context, snapshot) {
+                final isConnected = snapshot.data ?? false;
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Icon(
+                    isConnected ? Icons.cloud_done : Icons.cloud_off,
+                    color: isConnected ? Colors.green : Colors.grey,
+                    size: 20,
+                  ),
+                );
+              },
+            ),
+            // Logout button
+            IconButton(
+              icon: const Icon(Icons.logout),
+              onPressed: () async {
+                final confirmed = await _showConfirmDialog(
+                  context,
+                  'Sign Out',
+                  'Are you sure you want to sign out?',
+                );
+                if (confirmed == true && context.mounted) {
+                  await _repositoryService.signOut();
+                }
+              },
             ),
           ],
         ),
-        actions: [
-          // WebSocket connection indicator
-          StreamBuilder<bool>(
-            stream: _repositoryService.connectionState,
-            initialData: _repositoryService.isConnected,
-            builder: (context, snapshot) {
-              final isConnected = snapshot.data ?? false;
-              return Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: Icon(
-                  isConnected ? Icons.cloud_done : Icons.cloud_off,
-                  color: isConnected ? Colors.green : Colors.grey,
-                  size: 20,
-                ),
-              );
-            },
-          ),
-          // Logout button
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () async {
-              final confirmed = await _showConfirmDialog(
-                context,
-                'Sign Out',
-                'Are you sure you want to sign out?',
-              );
-              if (confirmed == true && context.mounted) {
-                await _repositoryService.signOut();
-              }
-            },
-          ),
-        ],
-      ),
-      body: StreamBuilder<List<ChatModel>>(
-        stream: _repositoryService.watchChats(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          if (snapshot.hasError) {
-            return Center(
-              child: Text('Error: ${snapshot.error}'),
-            );
-          }
-
-          final chats = snapshot.data ?? [];
-
-          if (chats.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.chat_bubble_outline,
-                    size: 64,
-                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.3),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'No chats yet',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
-                        ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Tap the + button to create a chat',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
-                        ),
-                  ),
-                ],
-              ),
-            );
-          }
-
-          return ImplicitlyAnimatedList<ChatModel>(
-            items: chats,
-            areItemsTheSame: (a, b) => a.id == b.id,
-            itemBuilder: (context, animation, chat, index) {
-              return SizeFadeTransition(
-                sizeFraction: 0.7,
-                curve: Curves.easeInOut,
-                animation: animation,
-                child: Dismissible(
-                  key: Key(chat.id),
-                  direction: DismissDirection.endToStart,
-                  confirmDismiss: (direction) async {
-                    return await _showConfirmDialog(
-                      context,
-                      'Delete Chat',
-                      'Are you sure you want to delete "${chat.name}"?',
-                    );
-                  },
-                  onDismissed: (direction) async {
-                    await _repositoryService.deleteChat(chat.id);
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('${chat.name} deleted'),
-                          duration: const Duration(seconds: 2),
-                        ),
-                      );
-                    }
-                  },
-                  background: Container(
-                    color: Colors.red,
-                    alignment: Alignment.centerRight,
-                    padding: const EdgeInsets.only(right: 20),
-                    child: const Icon(
-                      Icons.delete,
-                      color: Colors.white,
-                    ),
-                  ),
-                  child: ChatTile(
-                    chat: chat,
-                    unreadCount: _unreadCounts[chat.id] ?? 0,
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (context) => ChatPage(chat: chat),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              );
-            },
-          );
-        },
-      ),
+        body: UnreadCountsProvider(
+          child: _buildChatsList(context),
+        ),
         floatingActionButton: FloatingActionButton(
           onPressed: () => _showCreateChatDialog(context),
           child: const Icon(Icons.add),
         ),
       ),
+    );
+  }
+
+  Widget _buildChatsList(BuildContext context) {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_chats.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.chat_bubble_outline,
+              size: 64,
+              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.3),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'No chats yet',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+                  ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Tap the + button to create a chat',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
+                  ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return ImplicitlyAnimatedList<ChatModel>(
+      items: _chats,
+      areItemsTheSame: (a, b) => a.id == b.id,
+      itemBuilder: (context, animation, chat, index) {
+        return SizeFadeTransition(
+          sizeFraction: 0.7,
+          curve: Curves.easeInOut,
+          animation: animation,
+          child: Dismissible(
+            key: Key(chat.id),
+            direction: DismissDirection.endToStart,
+            confirmDismiss: (direction) async {
+              return await _showConfirmDialog(
+                context,
+                'Delete Chat',
+                'Are you sure you want to delete "${chat.name}"?',
+              );
+            },
+            onDismissed: (direction) async {
+              await _repositoryService.deleteChat(chat.id);
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('${chat.name} deleted'),
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+              }
+            },
+            background: Container(
+              color: Colors.red,
+              alignment: Alignment.centerRight,
+              padding: const EdgeInsets.only(right: 20),
+              child: const Icon(Icons.delete, color: Colors.white),
+            ),
+            child: ChatTile(
+              chat: chat,
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (context) => ChatPage(chat: chat),
+                  ),
+                );
+              },
+            ),
+          ),
+        );
+      },
     );
   }
 

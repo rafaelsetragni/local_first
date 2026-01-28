@@ -3,18 +3,18 @@ import 'package:intl/intl.dart';
 
 import '../models/chat_model.dart';
 import 'avatar_preview.dart';
+import 'unread_badge.dart';
+import 'unread_counts_provider.dart';
 
 /// A list tile widget that displays a chat room summary
 class ChatTile extends StatelessWidget {
   final ChatModel chat;
   final VoidCallback onTap;
-  final int unreadCount;
 
   const ChatTile({
     super.key,
     required this.chat,
     required this.onTap,
-    this.unreadCount = 0,
   });
 
   @override
@@ -60,9 +60,6 @@ class ChatTile extends StatelessWidget {
   /// Builds the trailing widget with timestamp and unread badge
   Widget? _buildTrailing(BuildContext context) {
     final hasTimestamp = chat.lastMessageAt != null;
-    final hasUnread = unreadCount > 0;
-
-    if (!hasTimestamp && !hasUnread) return null;
 
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -70,34 +67,9 @@ class ChatTile extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         if (hasTimestamp)
-          Text(
-            _formatTimestamp(chat.lastMessageAt!),
-            style: TextStyle(
-              color: hasUnread
-                  ? Theme.of(context).colorScheme.primary
-                  : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
-              fontSize: 12,
-              fontWeight: hasUnread ? FontWeight.w600 : FontWeight.normal,
-            ),
-          ),
-        if (hasUnread) ...[
-          const SizedBox(height: 4),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.primary,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Text(
-              unreadCount > 99 ? '99+' : unreadCount.toString(),
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onPrimary,
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ],
+          _TimestampText(chatId: chat.id, timestamp: chat.lastMessageAt!),
+        const SizedBox(height: 4),
+        UnreadBadge(chatId: chat.id),
       ],
     );
   }
@@ -108,6 +80,36 @@ class ChatTile extends StatelessWidget {
       return '${chat.lastMessageSender}: ${chat.lastMessageText}';
     }
     return 'Created by ${chat.createdBy}';
+  }
+}
+
+/// A timestamp text widget that styles itself based on unread count.
+///
+/// This widget reads from UnreadCountsProvider, so it only rebuilds
+/// when the provider's data changes, without managing its own subscription.
+class _TimestampText extends StatelessWidget {
+  final String chatId;
+  final DateTime timestamp;
+
+  const _TimestampText({
+    required this.chatId,
+    required this.timestamp,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final hasUnread = UnreadCountsProvider.getCount(context, chatId) > 0;
+
+    return Text(
+      _formatTimestamp(timestamp),
+      style: TextStyle(
+        color: hasUnread
+            ? Theme.of(context).colorScheme.primary
+            : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
+        fontSize: 12,
+        fontWeight: hasUnread ? FontWeight.w600 : FontWeight.normal,
+      ),
+    );
   }
 
   /// Formats timestamp to show time if today, or date if older
