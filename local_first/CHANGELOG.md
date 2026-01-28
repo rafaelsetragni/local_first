@@ -1,3 +1,10 @@
+## 0.7.1
+
+- Added chat app example with real-time messaging using dual sync strategy (WebSocket + Periodic)
+- Enhanced documentation with data flow diagram and fixed pub.dev package links
+- Improved code examples in README with corrected syntax and API usage
+- Tuned counter app sync intervals for better performance (60s heartbeat, 30s periodic)
+
 ## 0.7.0
 
 - Added comprehensive counter app example demonstrating real-time WebSocket synchronization
