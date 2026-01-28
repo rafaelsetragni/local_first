@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+
+import '../models/chat_model.dart';
+import '../pages/chat_page.dart';
 import '../pages/home_page.dart';
 import '../pages/sign_in_page.dart';
 
@@ -30,4 +33,5 @@ class NavigatorService {
 
   void navigateToHome() => pushReplacement(const HomePage());
   void navigateToSignIn() => pushReplacement(const SignInPage());
+  void navigateToChat(ChatModel chat) => push(ChatPage(chat: chat));
 }

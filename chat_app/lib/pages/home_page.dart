@@ -5,12 +5,12 @@ import 'package:implicitly_animated_reorderable_list_2/implicitly_animated_reord
 import 'package:implicitly_animated_reorderable_list_2/transitions.dart';
 
 import '../models/chat_model.dart';
+import '../services/navigator_service.dart';
 import '../services/repository_service.dart';
 import '../widgets/avatar_preview.dart';
 import '../widgets/chat_tile.dart';
 import '../widgets/connection_status_bar.dart';
 import '../widgets/unread_counts_provider.dart';
-import 'chat_page.dart';
 
 /// Home page displaying a list of all available chats
 class HomePage extends StatefulWidget {
@@ -235,13 +235,7 @@ class _HomePageState extends State<HomePage> {
             ),
             child: ChatTile(
               chat: chat,
-              onTap: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (context) => ChatPage(chat: chat),
-                  ),
-                );
-              },
+              onTap: () => NavigatorService().navigateToChat(chat),
             ),
           ),
         );
