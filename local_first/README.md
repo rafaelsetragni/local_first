@@ -12,7 +12,7 @@
 
 Local-first data layer for Flutter applications that keeps your data available offline and synchronizes data on live using multiple strategies when the network returns.
 
-![Live Demo](https://live-update-demo.rafaelsetra.workers.dev/)
+![Live Demo](https://bit.ly/3Z5gQ4G)
 
 This solution is 100% self hosted and low bandwith. It can be customized combining the usage of multiple packages, such as:
 
