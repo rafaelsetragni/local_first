@@ -33,6 +33,29 @@ class RepositoryService {
     _instance = testInstance;
   }
 
+  // Test-only constructor for dependency injection
+  @visibleForTesting
+  factory RepositoryService.test({
+    required LocalFirstRepository<UserModel> userRepo,
+    required LocalFirstRepository<ChatModel> chatRepo,
+    required LocalFirstRepository<MessageModel> messageRepo,
+    required WebSocketSyncStrategy wsStrategy,
+    required PeriodicSyncStrategy periodicStrat,
+    http.Client? httpClient,
+    NavigatorService? navigator,
+  }) {
+    final service = RepositoryService._test(
+      userRepo: userRepo,
+      chatRepo: chatRepo,
+      messageRepo: messageRepo,
+      wsStrategy: wsStrategy,
+      periodicStrat: periodicStrat,
+    );
+    service._httpClient = httpClient ?? http.Client();
+    service._navigatorService = navigator ?? NavigatorService();
+    return service;
+  }
+
   LocalFirstClient? localFirst;
   UserModel? authenticatedUser;
   String _currentNamespace = 'default';
@@ -43,14 +66,26 @@ class RepositoryService {
   String? _currentOpenChatId;
   Set<String> _hiddenChatIds = {};
   final _readStateChangedController = StreamController<void>.broadcast();
-  final http.Client _httpClient = http.Client();
-  final NavigatorService _navigatorService = NavigatorService();
+  http.Client _httpClient = http.Client();
+  NavigatorService _navigatorService = NavigatorService();
 
   final LocalFirstRepository<UserModel> userRepository;
   final LocalFirstRepository<ChatModel> chatRepository;
   final LocalFirstRepository<MessageModel> messageRepository;
   late final WebSocketSyncStrategy webSocketStrategy;
   late final PeriodicSyncStrategy periodicStrategy;
+
+  RepositoryService._test({
+    required LocalFirstRepository<UserModel> userRepo,
+    required LocalFirstRepository<ChatModel> chatRepo,
+    required LocalFirstRepository<MessageModel> messageRepo,
+    required WebSocketSyncStrategy wsStrategy,
+    required PeriodicSyncStrategy periodicStrat,
+  })  : userRepository = userRepo,
+        chatRepository = chatRepo,
+        messageRepository = messageRepo,
+        webSocketStrategy = wsStrategy,
+        periodicStrategy = periodicStrat;
 
   RepositoryService._internal()
       : userRepository = buildUserRepository(),
@@ -840,4 +875,80 @@ class RepositoryService {
 
     return controller.stream;
   }
+}
+
+/// Test helper class to expose private methods for unit testing
+@visibleForTesting
+class TestRepositoryServiceHelper {
+  final RepositoryService service;
+
+  TestRepositoryServiceHelper(this.service);
+
+  String sanitizeNamespace(String username) =>
+      service._sanitizeNamespace(username);
+
+  List<UserModel> usersFromEvents(List<LocalFirstEvent<UserModel>> events) =>
+      service._usersFromEvents(events);
+
+  List<ChatModel> chatsFromEvents(List<LocalFirstEvent<ChatModel>> events) =>
+      service._chatsFromEvents(events);
+
+  List<MessageModel> messagesFromEvents(
+    List<LocalFirstEvent<MessageModel>> events,
+  ) =>
+      service._messagesFromEvents(events);
+
+  Future<JsonMap<dynamic>?> buildSyncFilter(String repositoryName) =>
+      service._buildSyncFilter(repositoryName);
+
+  Future<List<JsonMap>> fetchEvents(String repositoryName) =>
+      service._fetchEvents(repositoryName);
+
+  Future<bool> pushEvents(String repositoryName, LocalFirstEvents events) =>
+      service._pushEvents(repositoryName, events);
+
+  Future<void> onSyncCompleted(
+    String repositoryName,
+    List<JsonMap<dynamic>> events,
+  ) =>
+      service._onSyncCompleted(repositoryName, events);
+
+  Future<UserModel?> fetchRemoteUser(String userId) =>
+      service._fetchRemoteUser(userId);
+
+  Future<void> persistLastUsername(String username) =>
+      service._persistLastUsername(username);
+
+  Future<String?> getGlobalString(String key) => service._getGlobalString(key);
+
+  Future<void> setGlobalString(String key, String value) =>
+      service._setGlobalString(key, value);
+
+  Future<T> withGlobalString<T>(Future<T> Function() action) =>
+      service._withGlobalString(action);
+
+  Future<void> switchUserDatabase(String userId) =>
+      service._switchUserDatabase(userId);
+
+  Future<void> loadHiddenChatIds() => service._loadHiddenChatIds();
+
+  Future<void> saveHiddenChatIds() => service._saveHiddenChatIds();
+
+  Future<void> hideChat(String chatId) => service._hideChat(chatId);
+
+  bool isChatHidden(String chatId) => service._isChatHidden(chatId);
+
+  // Getters for accessing private fields
+  SyncStateManager? get syncStateManager => service._syncStateManager;
+
+  ReadStateManager? get readStateManager => service._readStateManager;
+
+  String get currentNamespace => service._currentNamespace;
+
+  String? get currentOpenChatId => service._currentOpenChatId;
+
+  Set<String> get hiddenChatIds => service._hiddenChatIds;
+
+  StreamController<void> get readStateChangedController =>
+      service._readStateChangedController;
 }

@@ -206,6 +206,7 @@ class _HomePageState extends State<HomePage> {
     }
 
     return ListView.builder(
+      padding: const EdgeInsets.only(bottom: 80),
       itemCount: _chats.length,
       itemBuilder: (context, index) {
         final chat = _chats[index];
