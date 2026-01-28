@@ -19,6 +19,11 @@ class MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // System messages are displayed centered without avatar
+    if (message.isSystemMessage) {
+      return _buildSystemMessage(context);
+    }
+
     final avatar = Padding(
       padding: const EdgeInsets.only(top: 8.0),
       child: AvatarPreview(avatarUrl: avatarUrl, radius: 16),
@@ -89,6 +94,31 @@ class MessageBubble extends StatelessWidget {
             : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: isOwnMessage ? [bubble, avatar] : [avatar, bubble],
+      ),
+    );
+  }
+
+  /// Builds a centered system message bubble
+  Widget _buildSystemMessage(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Text(
+            message.text,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13,
+              fontStyle: FontStyle.italic,
+              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
+            ),
+          ),
+        ),
       ),
     );
   }

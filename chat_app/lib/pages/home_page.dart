@@ -1,8 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:implicitly_animated_reorderable_list_2/implicitly_animated_reorderable_list_2.dart';
-import 'package:implicitly_animated_reorderable_list_2/transitions.dart';
 
 import '../models/chat_model.dart';
 import '../services/navigator_service.dart';
@@ -29,6 +27,9 @@ class _HomePageState extends State<HomePage> {
   // State data
   List<ChatModel> _chats = [];
   bool _isLoading = true;
+
+  // Track dismissed chats to prevent them from reappearing via stream updates
+  final Set<String> _dismissedChatIds = {};
 
   @override
   void initState() {
@@ -58,8 +59,14 @@ class _HomePageState extends State<HomePage> {
 
   void _setupChatsSubscription() {
     _chatsSubscription = _repositoryService.watchChats().listen((chats) {
-      if (mounted && !_listsEqual(_chats, chats)) {
-        setState(() => _chats = chats);
+      if (mounted) {
+        // Filter out dismissed chats to prevent Dismissible error
+        final filteredChats = chats
+            .where((chat) => !_dismissedChatIds.contains(chat.id))
+            .toList();
+        if (!_listsEqual(_chats, filteredChats)) {
+          setState(() => _chats = filteredChats);
+        }
       }
     });
   }
@@ -198,45 +205,82 @@ class _HomePageState extends State<HomePage> {
       );
     }
 
-    return ImplicitlyAnimatedList<ChatModel>(
-      items: _chats,
-      areItemsTheSame: (a, b) => a.id == b.id,
-      itemBuilder: (context, animation, chat, index) {
-        return SizeFadeTransition(
-          sizeFraction: 0.7,
-          curve: Curves.easeInOut,
-          animation: animation,
-          child: Dismissible(
-            key: Key(chat.id),
-            direction: DismissDirection.endToStart,
-            confirmDismiss: (direction) async {
+    return ListView.builder(
+      itemCount: _chats.length,
+      itemBuilder: (context, index) {
+        final chat = _chats[index];
+        return Dismissible(
+          key: Key(chat.id),
+          direction: DismissDirection.endToStart,
+          confirmDismiss: (direction) async {
+            // Different confirmation message for closed vs active chats
+            if (chat.isClosed) {
               return await _showConfirmDialog(
                 context,
-                'Delete Chat',
-                'Are you sure you want to delete "${chat.name}"?',
+                'Remove Chat',
+                'Remove "${chat.name}" from your chat list? This only affects your device.',
               );
-            },
-            onDismissed: (direction) async {
-              await _repositoryService.deleteChat(chat.id);
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('${chat.name} deleted'),
-                    duration: const Duration(seconds: 2),
-                  ),
-                );
-              }
-            },
-            background: Container(
-              color: Colors.red,
-              alignment: Alignment.centerRight,
-              padding: const EdgeInsets.only(right: 20),
-              child: const Icon(Icons.delete, color: Colors.white),
+            } else {
+              return await _showConfirmDialog(
+                context,
+                'Close Chat',
+                'Close "${chat.name}"? All participants will see this chat as closed.',
+              );
+            }
+          },
+          onDismissed: (direction) {
+            // Immediately remove from local list to prevent Dismissible error
+            final isClosed = chat.isClosed;
+            final chatName = chat.name;
+            final chatId = chat.id;
+
+            // Track dismissed chat to prevent stream updates from re-adding it
+            _dismissedChatIds.add(chatId);
+
+            setState(() {
+              _chats.removeWhere((c) => c.id == chatId);
+            });
+
+            // Then perform async repository operations
+            // Keep chatId in dismissed set to prevent race conditions with sync
+            if (isClosed) {
+              // Local-only deletion for already closed chats
+              _repositoryService.deleteLocalChat(chatId).then((_) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('$chatName removed'),
+                      duration: const Duration(seconds: 2),
+                    ),
+                  );
+                }
+              });
+            } else {
+              // Close chat (sends system message, syncs to all)
+              _repositoryService.closeChat(chatId).then((_) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('$chatName closed'),
+                      duration: const Duration(seconds: 2),
+                    ),
+                  );
+                }
+              });
+            }
+          },
+          background: Container(
+            color: chat.isClosed ? Colors.grey : Colors.red,
+            alignment: Alignment.centerRight,
+            padding: const EdgeInsets.only(right: 20),
+            child: Icon(
+              chat.isClosed ? Icons.remove_circle_outline : Icons.close,
+              color: Colors.white,
             ),
-            child: ChatTile(
-              chat: chat,
-              onTap: () => NavigatorService().navigateToChat(chat),
-            ),
+          ),
+          child: ChatTile(
+            chat: chat,
+            onTap: () => NavigatorService().navigateToChat(chat),
           ),
         );
       },

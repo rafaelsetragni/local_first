@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../models/chat_model.dart';
+import '../models/message_model.dart';
 import 'avatar_preview.dart';
 import 'unread_badge.dart';
 import 'unread_counts_provider.dart';
@@ -77,6 +78,10 @@ class ChatTile extends StatelessWidget {
   /// Builds the subtitle text showing last message or creation info
   String _buildSubtitle() {
     if (chat.lastMessageText != null && chat.lastMessageSender != null) {
+      // System messages don't show sender prefix
+      if (chat.lastMessageSender == MessageModel.systemSenderId) {
+        return chat.lastMessageText!;
+      }
       return '${chat.lastMessageSender}: ${chat.lastMessageText}';
     }
     return 'Created by ${chat.createdBy}';

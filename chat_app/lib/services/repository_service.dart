@@ -37,9 +37,11 @@ class RepositoryService {
   UserModel? authenticatedUser;
   String _currentNamespace = 'default';
   final _lastUsernameKey = '__last_username__';
+  final _hiddenChatsKey = '__hidden_chats__';
   SyncStateManager? _syncStateManager;
   ReadStateManager? _readStateManager;
   String? _currentOpenChatId;
+  Set<String> _hiddenChatIds = {};
   final _readStateChangedController = StreamController<void>.broadcast();
   final http.Client _httpClient = http.Client();
   final NavigatorService _navigatorService = NavigatorService();
@@ -369,6 +371,9 @@ class RepositoryService {
 
     _currentNamespace = namespace;
     await db.localStorage.useNamespace(namespace);
+
+    // Load hidden chat IDs for this user
+    await _loadHiddenChatIds();
   }
 
   /// Sanitizes username for use as database namespace
@@ -381,22 +386,66 @@ class RepositoryService {
     return 'user_$sanitized';
   }
 
+  // ========== HIDDEN CHATS MANAGEMENT ==========
+
+  /// Loads hidden chat IDs from persistent storage
+  Future<void> _loadHiddenChatIds() async {
+    final client = localFirst;
+    if (client == null) return;
+
+    final json = await client.getConfigValue(_hiddenChatsKey);
+    if (json == null || json.isEmpty) {
+      _hiddenChatIds = {};
+      return;
+    }
+
+    try {
+      final List<dynamic> ids = jsonDecode(json);
+      _hiddenChatIds = ids.cast<String>().toSet();
+    } catch (e) {
+      dev.log('Failed to load hidden chat IDs: $e', name: tag);
+      _hiddenChatIds = {};
+    }
+  }
+
+  /// Saves hidden chat IDs to persistent storage
+  Future<void> _saveHiddenChatIds() async {
+    final client = localFirst;
+    if (client == null) return;
+
+    final json = jsonEncode(_hiddenChatIds.toList());
+    await client.setConfigValue(_hiddenChatsKey, json);
+  }
+
+  /// Adds a chat ID to the hidden list and persists it
+  Future<void> _hideChat(String chatId) async {
+    _hiddenChatIds.add(chatId);
+    await _saveHiddenChatIds();
+  }
+
+  /// Checks if a chat is hidden
+  bool _isChatHidden(String chatId) => _hiddenChatIds.contains(chatId);
+
   // ========== CHAT OPERATIONS ==========
 
   /// Gets all chats ordered by most recent activity (updatedAt)
+  /// Filters out hidden chats that the user has removed locally
   Future<List<ChatModel>> getChats() async {
     final events = await chatRepository.query()
         .orderBy(CommonFields.updatedAt, descending: true)
         .getAll();
-    return _chatsFromEvents(events);
+    final chats = _chatsFromEvents(events);
+    return chats.where((chat) => !_isChatHidden(chat.id)).toList();
   }
 
   /// Watches all chats ordered by most recent activity (updatedAt)
+  /// Filters out hidden chats that the user has removed locally
   Stream<List<ChatModel>> watchChats() {
     return chatRepository.query()
         .orderBy(CommonFields.updatedAt, descending: true)
         .watch()
-        .map(_chatsFromEvents);
+        .map(_chatsFromEvents)
+        .map((chats) => chats.where((chat) => !_isChatHidden(chat.id)).toList());
   }
 
   /// Watches a specific chat by ID
@@ -423,9 +472,62 @@ class RepositoryService {
     await chatRepository.upsert(chat, needSync: true);
   }
 
-  /// Deletes a chat
-  Future<void> deleteChat(String chatId) async {
-    await chatRepository.delete(chatId, needSync: true);
+  /// Closes a chat by marking it as closed and sending a system message.
+  /// The chat is removed from the closing user's device but synced to others.
+  /// Other users will see a system message and can delete their local copy.
+  Future<void> closeChat(String chatId) async {
+    final user = authenticatedUser;
+    if (user == null) throw Exception('User not authenticated');
+
+    // Get the current chat
+    final chatResults = await chatRepository.query()
+        .where(chatRepository.idFieldName, isEqualTo: chatId)
+        .getAll();
+
+    if (chatResults.isEmpty) {
+      throw Exception('Chat not found');
+    }
+
+    final chatEvent = chatResults.first as LocalFirstStateEvent<ChatModel>;
+    final chat = chatEvent.data;
+
+    // Don't close an already closed chat
+    if (chat.isClosed) {
+      throw Exception('Chat is already closed');
+    }
+
+    final now = DateTime.now().toUtc();
+
+    // Send a system message about the closure
+    final systemMessage = MessageModel.system(
+      chatId: chatId,
+      text: 'Chat closed by ${user.username}',
+      createdAt: now,
+    );
+    await messageRepository.upsert(systemMessage, needSync: true);
+
+    // Update the chat to mark it as closed (synced to all users)
+    final closedChat = chat.copyWith(
+      closedBy: user.username,
+      updatedAt: now,
+      lastMessageAt: now,
+      lastMessageText: systemMessage.text,
+      lastMessageSender: systemMessage.senderId,
+    );
+    await chatRepository.upsert(closedChat, needSync: true);
+
+    // Remove the chat from this user's local device (not synced)
+    await deleteLocalChat(chatId);
+  }
+
+  /// Deletes a chat locally without syncing.
+  /// Used for removing closed chats from local storage.
+  /// Also adds the chat to the hidden list to prevent it from reappearing on sync.
+  /// Cleans up read state for the chat.
+  Future<void> deleteLocalChat(String chatId) async {
+    await _hideChat(chatId);
+    await _readStateManager?.deleteReadState(chatId);
+    await chatRepository.delete(chatId, needSync: false);
   }
 
   /// Updates chat avatar
@@ -609,14 +711,17 @@ class RepositoryService {
 
   /// Gets total unread count across all chats, optionally excluding a chat
   /// Processes all chats in parallel for better performance
+  /// Excludes hidden chats from the count
   Future<int> getTotalUnreadCount({String? excludeChatId}) async {
     final chats = await chatRepository.query().getAll();
     final chatModels = _chatsFromEvents(chats);
 
-    // Filter out excluded chat and process in parallel
-    final chatsToCount = excludeChatId != null
-        ? chatModels.where((chat) => chat.id != excludeChatId)
-        : chatModels;
+    // Filter out excluded chat, hidden chats, and process in parallel
+    final chatsToCount = chatModels.where((chat) {
+      if (_isChatHidden(chat.id)) return false;
+      if (excludeChatId != null && chat.id == excludeChatId) return false;
+      return true;
+    });
 
     final futures = chatsToCount.map((chat) => getUnreadCount(chat.id));
     final counts = await Future.wait(futures);
@@ -626,12 +731,15 @@ class RepositoryService {
 
   /// Gets unread counts for all chats as a map
   /// Processes all chats in parallel for better performance
+  /// Excludes hidden chats from the count
   Future<Map<String, int>> getUnreadCountsMap() async {
     final chats = await chatRepository.query().getAll();
     final chatModels = _chatsFromEvents(chats);
 
-    // Process all chats in parallel
-    final futures = chatModels.map((chat) async {
+    // Filter out hidden chats and process in parallel
+    final visibleChats = chatModels.where((chat) => !_isChatHidden(chat.id));
+
+    final futures = visibleChats.map((chat) async {
       final count = await getUnreadCount(chat.id);
       return MapEntry(chat.id, count);
     });

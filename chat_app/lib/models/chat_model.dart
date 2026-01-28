@@ -1,3 +1,5 @@
+import 'package:local_first/local_first.dart';
+
 import 'field_names.dart';
 
 /// Represents a chat room/conversation in the application
@@ -11,6 +13,7 @@ class ChatModel {
   final DateTime? lastMessageAt;
   final String? lastMessageText;
   final String? lastMessageSender;
+  final String? closedBy;
 
   ChatModel._({
     required this.id,
@@ -22,9 +25,13 @@ class ChatModel {
     this.lastMessageAt,
     this.lastMessageText,
     this.lastMessageSender,
+    this.closedBy,
   });
 
-  /// Factory constructor with optional ID generation from sanitized name
+  /// Returns true if this chat has been closed
+  bool get isClosed => closedBy != null;
+
+  /// Factory constructor with optional ID generation using UUID V7
   factory ChatModel({
     String? id,
     required String name,
@@ -35,12 +42,12 @@ class ChatModel {
     DateTime? lastMessageAt,
     String? lastMessageText,
     String? lastMessageSender,
+    String? closedBy,
   }) {
     final now = DateTime.now().toUtc();
-    final sanitizedId = id ?? _sanitizeId(name);
 
     return ChatModel._(
-      id: sanitizedId,
+      id: id ?? IdUtil.uuidV7(),
       name: name,
       createdBy: createdBy,
       avatarUrl: avatarUrl,
@@ -49,12 +56,8 @@ class ChatModel {
       lastMessageAt: lastMessageAt,
       lastMessageText: lastMessageText,
       lastMessageSender: lastMessageSender,
+      closedBy: closedBy,
     );
-  }
-
-  /// Sanitize string to be used as ID (lowercase, trim, replace spaces with underscores)
-  static String _sanitizeId(String text) {
-    return text.toLowerCase().trim().replaceAll(RegExp(r'\s+'), '_');
   }
 
   /// Convert model to JSON map
@@ -71,23 +74,58 @@ class ChatModel {
       if (lastMessageText != null) ChatFields.lastMessageText: lastMessageText,
       if (lastMessageSender != null)
         ChatFields.lastMessageSender: lastMessageSender,
+      if (closedBy != null) ChatFields.closedBy: closedBy,
     };
   }
 
   /// Create model from JSON map
   factory ChatModel.fromJson(Map<String, dynamic> json) {
+    final id = json[CommonFields.id] as String;
+    final now = DateTime.now().toUtc();
     return ChatModel._(
-      id: json[CommonFields.id] as String,
-      name: json[ChatFields.name] as String,
-      createdBy: json[ChatFields.createdBy] as String,
+      id: id,
+      name: json[ChatFields.name] as String? ?? id,
+      createdBy: json[ChatFields.createdBy] as String? ?? 'unknown',
       avatarUrl: json[ChatFields.avatarUrl] as String?,
-      createdAt: DateTime.parse(json[CommonFields.createdAt] as String),
-      updatedAt: DateTime.parse(json[CommonFields.updatedAt] as String),
+      createdAt: json[CommonFields.createdAt] != null
+          ? DateTime.parse(json[CommonFields.createdAt] as String)
+          : now,
+      updatedAt: json[CommonFields.updatedAt] != null
+          ? DateTime.parse(json[CommonFields.updatedAt] as String)
+          : now,
       lastMessageAt: json[ChatFields.lastMessageAt] != null
           ? DateTime.parse(json[ChatFields.lastMessageAt] as String)
           : null,
       lastMessageText: json[ChatFields.lastMessageText] as String?,
       lastMessageSender: json[ChatFields.lastMessageSender] as String?,
+      closedBy: json[ChatFields.closedBy] as String?,
+    );
+  }
+
+  /// Creates a copy of this chat with optional field overrides
+  ChatModel copyWith({
+    String? id,
+    String? name,
+    String? createdBy,
+    String? avatarUrl,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    DateTime? lastMessageAt,
+    String? lastMessageText,
+    String? lastMessageSender,
+    String? closedBy,
+  }) {
+    return ChatModel._(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      createdBy: createdBy ?? this.createdBy,
+      avatarUrl: avatarUrl ?? this.avatarUrl,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      lastMessageAt: lastMessageAt ?? this.lastMessageAt,
+      lastMessageText: lastMessageText ?? this.lastMessageText,
+      lastMessageSender: lastMessageSender ?? this.lastMessageSender,
+      closedBy: closedBy ?? this.closedBy,
     );
   }
 
@@ -131,11 +169,15 @@ class ChatModel {
     // Merge avatarUrl: prefer non-null value, or use preferred
     final mergedAvatarUrl = preferred.avatarUrl ?? fallback.avatarUrl;
 
+    // Merge closedBy: once closed, stay closed (prefer the one that has closedBy)
+    final mergedClosedBy = preferred.closedBy ?? fallback.closedBy;
+
     // Only create new object if merge changed something
     if (mergedLastMessageAt == preferred.lastMessageAt &&
         mergedLastMessageText == preferred.lastMessageText &&
         mergedLastMessageSender == preferred.lastMessageSender &&
-        mergedAvatarUrl == preferred.avatarUrl) {
+        mergedAvatarUrl == preferred.avatarUrl &&
+        mergedClosedBy == preferred.closedBy) {
       return preferred;
     }
 
@@ -150,6 +192,7 @@ class ChatModel {
       lastMessageAt: mergedLastMessageAt,
       lastMessageText: mergedLastMessageText,
       lastMessageSender: mergedLastMessageSender,
+      closedBy: mergedClosedBy,
     );
   }
 
@@ -157,7 +200,8 @@ class ChatModel {
   String toString() {
     return 'ChatModel(id: $id, name: $name, createdBy: $createdBy, '
         'avatarUrl: $avatarUrl, lastMessageAt: $lastMessageAt, '
-        'lastMessageText: $lastMessageText, lastMessageSender: $lastMessageSender)';
+        'lastMessageText: $lastMessageText, lastMessageSender: $lastMessageSender, '
+        'closedBy: $closedBy)';
   }
 
   @override
@@ -172,7 +216,8 @@ class ChatModel {
         other.updatedAt == updatedAt &&
         other.lastMessageAt == lastMessageAt &&
         other.lastMessageText == lastMessageText &&
-        other.lastMessageSender == lastMessageSender;
+        other.lastMessageSender == lastMessageSender &&
+        other.closedBy == closedBy;
   }
 
   @override
@@ -187,6 +232,7 @@ class ChatModel {
       lastMessageAt,
       lastMessageText,
       lastMessageSender,
+      closedBy,
     );
   }
 }

@@ -204,28 +204,30 @@ class _ChatPageState extends State<ChatPage> {
 
   /// Builds the leading widget with back button and optional unread badge
   Widget _buildLeadingWithBadge(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
+    return Stack(
+      clipBehavior: Clip.none,
       children: [
         const BackButton(),
-        if (_totalUnreadCount > 0) ...[
-          const SizedBox(width: 4),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.primary,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Text(
-              _totalUnreadCount > 99 ? '99+' : _totalUnreadCount.toString(),
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onPrimary,
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
+        if (_totalUnreadCount > 0)
+          Positioned(
+            right: 0,
+            top: 4,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primary,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                _totalUnreadCount > 99 ? '99+' : _totalUnreadCount.toString(),
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onPrimary,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
           ),
-        ],
       ],
     );
   }
@@ -245,7 +247,6 @@ class _ChatPageState extends State<ChatPage> {
       child: Scaffold(
         appBar: AppBar(
         leading: _buildLeadingWithBadge(context),
-        leadingWidth: _totalUnreadCount > 0 ? 72 : null,
         title: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -362,6 +363,39 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Widget _buildMessageInput(BuildContext context) {
+    // Show closed chat indicator instead of input field
+    if (_currentChat.isClosed) {
+      return Container(
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        ),
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          top: 12,
+          bottom: MediaQuery.viewPaddingOf(context).bottom + 12,
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.lock_outline,
+              size: 18,
+              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'This chat has been closed',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Container(
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,

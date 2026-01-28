@@ -35,4 +35,11 @@ class ReadStateManager {
   Future<void> markChatAsRead(String chatId) async {
     await saveLastReadAt(chatId, DateTime.now().toUtc());
   }
+
+  /// Deletes the read state for a chat (used when chat is deleted locally)
+  /// Sets to empty string since LocalFirstClient doesn't have a remove method
+  Future<void> deleteReadState(String chatId) async {
+    final key = _buildLastReadKey(chatId);
+    await client.setConfigValue(key, '');
+  }
 }

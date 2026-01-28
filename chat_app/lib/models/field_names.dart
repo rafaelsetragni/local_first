@@ -26,6 +26,7 @@ class ChatFields {
   static const lastMessageAt = 'last_message_at';
   static const lastMessageText = 'last_message_text';
   static const lastMessageSender = 'last_message_sender';
+  static const closedBy = 'closed_by';
 }
 
 /// Fields specific to MessageModel
@@ -33,4 +34,5 @@ class MessageFields {
   static const chatId = 'chat_id';
   static const senderId = 'sender_id';
   static const text = 'text';
+  static const isSystemMessage = 'is_system_message';
 }

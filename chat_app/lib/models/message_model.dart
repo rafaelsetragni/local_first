@@ -1,3 +1,5 @@
+import 'package:local_first/local_first.dart';
+
 import 'field_names.dart';
 
 /// Represents a message within a chat room
@@ -8,6 +10,10 @@ class MessageModel {
   final String text;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final bool isSystemMessage;
+
+  /// Sender ID used for system messages
+  static const systemSenderId = '_system_';
 
   MessageModel._({
     required this.id,
@@ -16,9 +22,10 @@ class MessageModel {
     required this.text,
     required this.createdAt,
     required this.updatedAt,
+    this.isSystemMessage = false,
   });
 
-  /// Factory constructor with optional ID generation from senderId and timestamp
+  /// Factory constructor with optional ID generation using UUID V7
   factory MessageModel({
     String? id,
     required String chatId,
@@ -26,19 +33,39 @@ class MessageModel {
     required String text,
     DateTime? createdAt,
     DateTime? updatedAt,
+    bool isSystemMessage = false,
   }) {
     final now = DateTime.now().toUtc();
     final timestamp = createdAt ?? now;
-    final generatedId =
-        id ?? '${senderId}_${timestamp.millisecondsSinceEpoch}';
 
     return MessageModel._(
-      id: generatedId,
+      id: id ?? IdUtil.uuidV7(),
       chatId: chatId,
       senderId: senderId,
       text: text,
       createdAt: timestamp,
       updatedAt: updatedAt ?? now,
+      isSystemMessage: isSystemMessage,
+    );
+  }
+
+  /// Creates a system message for the chat
+  factory MessageModel.system({
+    required String chatId,
+    required String text,
+    DateTime? createdAt,
+  }) {
+    final now = DateTime.now().toUtc();
+    final timestamp = createdAt ?? now;
+
+    return MessageModel._(
+      id: IdUtil.uuidV7(),
+      chatId: chatId,
+      senderId: systemSenderId,
+      text: text,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      isSystemMessage: true,
     );
   }
 
@@ -51,6 +78,7 @@ class MessageModel {
       MessageFields.text: text,
       CommonFields.createdAt: createdAt.toIso8601String(),
       CommonFields.updatedAt: updatedAt.toIso8601String(),
+      if (isSystemMessage) MessageFields.isSystemMessage: isSystemMessage,
     };
   }
 
@@ -63,6 +91,7 @@ class MessageModel {
       text: json[MessageFields.text] as String,
       createdAt: DateTime.parse(json[CommonFields.createdAt] as String),
       updatedAt: DateTime.parse(json[CommonFields.updatedAt] as String),
+      isSystemMessage: json[MessageFields.isSystemMessage] as bool? ?? false,
     );
   }
 
@@ -80,8 +109,9 @@ class MessageModel {
 
   @override
   String toString() {
+    final prefix = isSystemMessage ? '[SYSTEM] ' : '';
     return 'MessageModel(id: $id, chatId: $chatId, senderId: $senderId, '
-        'text: "${text.length > 20 ? '${text.substring(0, 20)}...' : text}")';
+        'text: "$prefix${text.length > 20 ? '${text.substring(0, 20)}...' : text}")';
   }
 
   @override
@@ -93,7 +123,8 @@ class MessageModel {
         other.senderId == senderId &&
         other.text == text &&
         other.createdAt == createdAt &&
-        other.updatedAt == updatedAt;
+        other.updatedAt == updatedAt &&
+        other.isSystemMessage == isSystemMessage;
   }
 
   @override
@@ -105,6 +136,7 @@ class MessageModel {
       text,
       createdAt,
       updatedAt,
+      isSystemMessage,
     );
   }
 }
