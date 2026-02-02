@@ -126,12 +126,12 @@ void main() {
     }) {
       final id = eventId ?? 'evt-$dataId';
       return storage.insertEvent('users', {
-        'eventId': id,
-        'dataId': dataId,
-        'syncStatus': status.index,
-        'operation': op.index,
-        'createdAt': createdAt ?? DateTime.now().millisecondsSinceEpoch,
-      }, 'eventId');
+        LocalFirstEvent.kEventId: id,
+        LocalFirstEvent.kDataId: dataId,
+        LocalFirstEvent.kSyncStatus: status.index,
+        LocalFirstEvent.kOperation: op.index,
+        LocalFirstEvent.kSyncCreatedAt: createdAt ?? DateTime.now().millisecondsSinceEpoch,
+      }, LocalFirstEvent.kEventId);
     }
 
     test('throws when used before initialization', () async {
@@ -183,17 +183,17 @@ void main() {
         eventId: 'evt-ev1',
       );
       final event = await storage.getEventById('users', 'evt-ev1');
-      expect(event?['eventId'], 'evt-ev1');
+      expect(event?[LocalFirstEvent.kEventId], 'evt-ev1');
       expect(event?['id'], 'ev1');
     });
 
     test('updateEvent throws when dataId is not a string', () async {
       await expectLater(
         storage.updateEvent('users', 'evt', {
-          'dataId': 123,
-          'syncStatus': 1,
-          'operation': 1,
-          'createdAt': 1,
+          LocalFirstEvent.kDataId: 123,
+          LocalFirstEvent.kSyncStatus: 1,
+          LocalFirstEvent.kOperation: 1,
+          LocalFirstEvent.kSyncCreatedAt: 1,
         }),
         throwsA(isA<ArgumentError>()),
       );
@@ -219,11 +219,11 @@ void main() {
       await db.execute('ALTER TABLE users__events ADD COLUMN id TEXT');
       await db.insert('users__events', {
         'id': 'evt-legacy',
-        'eventId': 'evt-legacy',
-        'dataId': 'legacy',
-        'syncStatus': 0,
-        'operation': SyncOperation.insert.index,
-        'createdAt': 1,
+        LocalFirstEvent.kEventId: 'evt-legacy',
+        LocalFirstEvent.kDataId: 'legacy',
+        LocalFirstEvent.kSyncStatus: 0,
+        LocalFirstEvent.kOperation: SyncOperation.insert.index,
+        LocalFirstEvent.kSyncCreatedAt: 1,
       });
       await storage.deleteEvent('users', 'evt-legacy');
     });
@@ -411,14 +411,14 @@ void main() {
 
     test('insertEvent validates ids', () async {
       await expectLater(
-        storage.insertEvent('users', {'eventId': 1, 'dataId': 'a'}, 'eventId'),
+        storage.insertEvent('users', {LocalFirstEvent.kEventId: 1, LocalFirstEvent.kDataId: 'a'}, LocalFirstEvent.kEventId),
         throwsA(isA<ArgumentError>()),
       );
       await expectLater(
         storage.insertEvent('users', {
-          'eventId': 'evt',
-          'dataId': 123,
-        }, 'eventId'),
+          LocalFirstEvent.kEventId: 'evt',
+          LocalFirstEvent.kDataId: 123,
+        }, LocalFirstEvent.kEventId),
         throwsA(isA<ArgumentError>()),
       );
     });
@@ -571,17 +571,17 @@ void main() {
     test('decodeJoinedRow fills id from dataId', () {
       final helper = TestHelperSqliteLocalFirstStorage(storage);
       final decoded = helper.decodeJoinedRow({
-        'data': '{}',
-        'dataId': 'abc',
-        'eventId': 'evt',
-        'syncStatus': 1,
-        'operation': 2,
-        'createdAt': 3,
+        LocalFirstEvent.kData: '{}',
+        LocalFirstEvent.kDataId: 'abc',
+        LocalFirstEvent.kEventId: 'evt',
+        LocalFirstEvent.kSyncStatus: 1,
+        LocalFirstEvent.kOperation: 2,
+        LocalFirstEvent.kSyncCreatedAt: 3,
       });
       expect(decoded['id'], 'abc');
-      expect(decoded['dataId'], 'abc');
-      expect(decoded['eventId'], 'evt');
-      expect(decoded['syncStatus'], 1);
+      expect(decoded[LocalFirstEvent.kDataId], 'abc');
+      expect(decoded[LocalFirstEvent.kEventId], 'evt');
+      expect(decoded[LocalFirstEvent.kSyncStatus], 1);
     });
 
     test('filters and sorts using schema columns', () async {
@@ -758,11 +758,11 @@ void main() {
         'age': 31,
       });
       await storage.updateEvent('users', 'evt-update', {
-        'eventId': 'evt-update',
-        'dataId': 'merge',
-        'syncStatus': SyncStatus.ok.index,
-        'operation': SyncOperation.update.index,
-        'createdAt': DateTime.now().millisecondsSinceEpoch,
+        LocalFirstEvent.kEventId: 'evt-update',
+        LocalFirstEvent.kDataId: 'merge',
+        LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
+        LocalFirstEvent.kOperation: SyncOperation.update.index,
+        LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
       });
 
       final merged = await storage.getById('users', 'merge');
@@ -1234,17 +1234,17 @@ void main() {
           'id': userId,
           'username': 'testuser',
           'age': 25,
-          '_lasteventId': eventId,
+          LocalFirstEvent.kLastEventId: eventId,
         }, 'id');
 
         // Insert event row
         await storage.insertEvent('users', {
-          'eventId': eventId,
-          'dataId': userId,
-          'syncStatus': SyncStatus.pending.index,
-          'operation': SyncOperation.insert.index,
-          'createdAt': DateTime.now().millisecondsSinceEpoch,
-        }, 'eventId');
+          LocalFirstEvent.kEventId: eventId,
+          LocalFirstEvent.kDataId: userId,
+          LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+          LocalFirstEvent.kOperation: SyncOperation.insert.index,
+          LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+        }, LocalFirstEvent.kEventId);
 
         // Query should return the inserted data
         final results = await storage.query(buildQuery());
@@ -1266,30 +1266,30 @@ void main() {
           'id': userId,
           'username': 'oldname',
           'age': 20,
-          '_lasteventId': insertEventId,
+          LocalFirstEvent.kLastEventId: insertEventId,
         }, 'id');
         await storage.insertEvent('users', {
-          'eventId': insertEventId,
-          'dataId': userId,
-          'syncStatus': SyncStatus.ok.index,
-          'operation': SyncOperation.insert.index,
-          'createdAt': DateTime.now().millisecondsSinceEpoch,
-        }, 'eventId');
+          LocalFirstEvent.kEventId: insertEventId,
+          LocalFirstEvent.kDataId: userId,
+          LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
+          LocalFirstEvent.kOperation: SyncOperation.insert.index,
+          LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+        }, LocalFirstEvent.kEventId);
 
         // Update
         await storage.update('users', userId, {
           'id': userId,
           'username': 'newname',
           'age': 21,
-          '_lasteventId': updateEventId,
+          LocalFirstEvent.kLastEventId: updateEventId,
         });
         await storage.insertEvent('users', {
-          'eventId': updateEventId,
-          'dataId': userId,
-          'syncStatus': SyncStatus.pending.index,
-          'operation': SyncOperation.update.index,
-          'createdAt': DateTime.now().millisecondsSinceEpoch,
-        }, 'eventId');
+          LocalFirstEvent.kEventId: updateEventId,
+          LocalFirstEvent.kDataId: userId,
+          LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+          LocalFirstEvent.kOperation: SyncOperation.update.index,
+          LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+        }, LocalFirstEvent.kEventId);
 
         // Query should return updated data
         final results = await storage.query(buildQuery());
@@ -1310,16 +1310,16 @@ void main() {
             'id': userId,
             'username': 'user$i',
             'age': 20 + i,
-            '_lasteventId': eventId,
+            LocalFirstEvent.kLastEventId: eventId,
           }, 'id');
 
           await storage.insertEvent('users', {
-            'eventId': eventId,
-            'dataId': userId,
-            'syncStatus': SyncStatus.ok.index,
-            'operation': SyncOperation.insert.index,
-            'createdAt': DateTime.now().millisecondsSinceEpoch,
-          }, 'eventId');
+            LocalFirstEvent.kEventId: eventId,
+            LocalFirstEvent.kDataId: userId,
+            LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
+            LocalFirstEvent.kOperation: SyncOperation.insert.index,
+            LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+          }, LocalFirstEvent.kEventId);
         }
 
         // Query should return all 5 users
@@ -1342,7 +1342,7 @@ void main() {
           'id': 'orphan',
           'username': 'orphanuser',
           'age': 99,
-          '_lasteventId': 'nonexistent-event-id',
+          LocalFirstEvent.kLastEventId: 'nonexistent-event-id',
         }, 'id');
 
         // Query should skip this row (no valid event)
@@ -1361,13 +1361,13 @@ void main() {
           'id': userId,
           'username': 'baduser',
           'age': 30,
-          '_lasteventId': 'bad-evt',
+          LocalFirstEvent.kLastEventId: 'bad-evt',
         }, 'id');
 
         // Insert malformed event (missing required fields)
         await db.insert('users__events', {
-          'eventId': 'bad-evt',
-          'dataId': userId,
+          LocalFirstEvent.kEventId: 'bad-evt',
+          LocalFirstEvent.kDataId: userId,
           // Missing syncStatus, operation, createdAt
         });
 
@@ -1386,15 +1386,15 @@ void main() {
           'id': userId,
           'username': 'watchuser',
           'age': 27,
-          '_lasteventId': eventId,
+          LocalFirstEvent.kLastEventId: eventId,
         }, 'id');
         await storage.insertEvent('users', {
-          'eventId': eventId,
-          'dataId': userId,
-          'syncStatus': SyncStatus.ok.index,
-          'operation': SyncOperation.insert.index,
-          'createdAt': DateTime.now().millisecondsSinceEpoch,
-        }, 'eventId');
+          LocalFirstEvent.kEventId: eventId,
+          LocalFirstEvent.kDataId: userId,
+          LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
+          LocalFirstEvent.kOperation: SyncOperation.insert.index,
+          LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+        }, LocalFirstEvent.kEventId);
 
         // Now start watching - should emit existing data on onListen
         final stream = storage.watchQuery(buildQuery());
@@ -1416,16 +1416,16 @@ void main() {
             'id': userId,
             'username': 'filteruser$i',
             'age': age,
-            '_lasteventId': eventId,
+            LocalFirstEvent.kLastEventId: eventId,
           }, 'id');
 
           await storage.insertEvent('users', {
-            'eventId': eventId,
-            'dataId': userId,
-            'syncStatus': SyncStatus.ok.index,
-            'operation': SyncOperation.insert.index,
-            'createdAt': DateTime.now().millisecondsSinceEpoch,
-          }, 'eventId');
+            LocalFirstEvent.kEventId: eventId,
+            LocalFirstEvent.kDataId: userId,
+            LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
+            LocalFirstEvent.kOperation: SyncOperation.insert.index,
+            LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+          }, LocalFirstEvent.kEventId);
         }
 
         // Query with filter: age > 15
@@ -1458,16 +1458,16 @@ void main() {
             'id': id,
             'username': username,
             'age': age,
-            '_lasteventId': eventId,
+            LocalFirstEvent.kLastEventId: eventId,
           }, 'id');
 
           await storage.insertEvent('users', {
-            'eventId': eventId,
-            'dataId': id,
-            'syncStatus': SyncStatus.ok.index,
-            'operation': SyncOperation.insert.index,
-            'createdAt': DateTime.now().millisecondsSinceEpoch,
-          }, 'eventId');
+            LocalFirstEvent.kEventId: eventId,
+            LocalFirstEvent.kDataId: id,
+            LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
+            LocalFirstEvent.kOperation: SyncOperation.insert.index,
+            LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+          }, LocalFirstEvent.kEventId);
         }
 
         // Query with age ascending
@@ -1493,16 +1493,16 @@ void main() {
             'id': userId,
             'username': 'pageuser$i',
             'age': i,
-            '_lasteventId': eventId,
+            LocalFirstEvent.kLastEventId: eventId,
           }, 'id');
 
           await storage.insertEvent('users', {
-            'eventId': eventId,
-            'dataId': userId,
-            'syncStatus': SyncStatus.ok.index,
-            'operation': SyncOperation.insert.index,
-            'createdAt': DateTime.now().millisecondsSinceEpoch,
-          }, 'eventId');
+            LocalFirstEvent.kEventId: eventId,
+            LocalFirstEvent.kDataId: userId,
+            LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
+            LocalFirstEvent.kOperation: SyncOperation.insert.index,
+            LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+          }, LocalFirstEvent.kEventId);
         }
 
         // Query with limit 2, offset 1, sorted by age
@@ -1533,15 +1533,15 @@ void main() {
           'id': userId,
           'username': 'typeuser',
           'age': 28,
-          '_lasteventId': eventId,
+          LocalFirstEvent.kLastEventId: eventId,
         }, 'id');
         await storage.insertEvent('users', {
-          'eventId': eventId,
-          'dataId': userId,
-          'syncStatus': SyncStatus.ok.index,
-          'operation': SyncOperation.insert.index,
-          'createdAt': DateTime.now().millisecondsSinceEpoch,
-        }, 'eventId');
+          LocalFirstEvent.kEventId: eventId,
+          LocalFirstEvent.kDataId: userId,
+          LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
+          LocalFirstEvent.kOperation: SyncOperation.insert.index,
+          LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+        }, LocalFirstEvent.kEventId);
 
         // Create stream with explicit type
         final stream = storage.watchQuery<DummyModel>(buildQuery());
@@ -1586,15 +1586,15 @@ void main() {
           'id': 'u1',
           'username': 'user1',
           'age': 25,
-          '_lasteventId': 'evt-u1',
+          LocalFirstEvent.kLastEventId: 'evt-u1',
         }, 'id');
         await storage.insertEvent('users', {
-          'eventId': 'evt-u1',
-          'dataId': 'u1',
-          'syncStatus': SyncStatus.ok.index,
-          'operation': SyncOperation.insert.index,
-          'createdAt': DateTime.now().millisecondsSinceEpoch,
-        }, 'eventId');
+          LocalFirstEvent.kEventId: 'evt-u1',
+          LocalFirstEvent.kDataId: 'u1',
+          LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
+          LocalFirstEvent.kOperation: SyncOperation.insert.index,
+          LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+        }, LocalFirstEvent.kEventId);
 
         // Create two streams with same query
         final stream1 = storage.watchQuery<DummyModel>(buildQuery());
@@ -1653,15 +1653,15 @@ void main() {
           'id': 'notify-user',
           'username': 'notifyuser',
           'age': 30,
-          '_lasteventId': 'evt-notify',
+          LocalFirstEvent.kLastEventId: 'evt-notify',
         }, 'id');
         await storage.insertEvent('users', {
-          'eventId': 'evt-notify',
-          'dataId': 'notify-user',
-          'syncStatus': SyncStatus.ok.index,
-          'operation': SyncOperation.insert.index,
-          'createdAt': DateTime.now().millisecondsSinceEpoch,
-        }, 'eventId');
+          LocalFirstEvent.kEventId: 'evt-notify',
+          LocalFirstEvent.kDataId: 'notify-user',
+          LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
+          LocalFirstEvent.kOperation: SyncOperation.insert.index,
+          LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+        }, LocalFirstEvent.kEventId);
 
         // Wait for notification
         await Future.delayed(Duration(milliseconds: 100));
@@ -1684,15 +1684,15 @@ void main() {
           'id': 'update-user',
           'username': 'before',
           'age': 20,
-          '_lasteventId': 'evt-insert',
+          LocalFirstEvent.kLastEventId: 'evt-insert',
         }, 'id');
         await storage.insertEvent('users', {
-          'eventId': 'evt-insert',
-          'dataId': 'update-user',
-          'syncStatus': SyncStatus.ok.index,
-          'operation': SyncOperation.insert.index,
-          'createdAt': DateTime.now().millisecondsSinceEpoch,
-        }, 'eventId');
+          LocalFirstEvent.kEventId: 'evt-insert',
+          LocalFirstEvent.kDataId: 'update-user',
+          LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
+          LocalFirstEvent.kOperation: SyncOperation.insert.index,
+          LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+        }, LocalFirstEvent.kEventId);
 
         // Start watching
         final stream = storage.watchQuery<DummyModel>(buildQuery());
@@ -1716,15 +1716,15 @@ void main() {
           'id': 'update-user',
           'username': 'after',
           'age': 21,
-          '_lasteventId': 'evt-update',
+          LocalFirstEvent.kLastEventId: 'evt-update',
         });
         await storage.insertEvent('users', {
-          'eventId': 'evt-update',
-          'dataId': 'update-user',
-          'syncStatus': SyncStatus.ok.index,
-          'operation': SyncOperation.update.index,
-          'createdAt': DateTime.now().millisecondsSinceEpoch,
-        }, 'eventId');
+          LocalFirstEvent.kEventId: 'evt-update',
+          LocalFirstEvent.kDataId: 'update-user',
+          LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
+          LocalFirstEvent.kOperation: SyncOperation.update.index,
+          LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+        }, LocalFirstEvent.kEventId);
 
         await Future.delayed(Duration(milliseconds: 100));
 
@@ -1754,17 +1754,17 @@ void main() {
           'id': userId,
           'username': 'newuser',
           'age': 25,
-          '_lasteventId': eventId,
+          LocalFirstEvent.kLastEventId: eventId,
         }, 'id');
 
         // Insert corresponding event
         await storage.insertEvent('users', {
-          'eventId': eventId,
-          'dataId': userId,
-          'syncStatus': SyncStatus.ok.index,
-          'operation': SyncOperation.insert.index,
-          'createdAt': DateTime.now().millisecondsSinceEpoch,
-        }, 'eventId');
+          LocalFirstEvent.kEventId: eventId,
+          LocalFirstEvent.kDataId: userId,
+          LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
+          LocalFirstEvent.kOperation: SyncOperation.insert.index,
+          LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+        }, LocalFirstEvent.kEventId);
 
         // Query should return the upserted data
         final results = await storage.query(buildQuery());
@@ -1788,15 +1788,15 @@ void main() {
             'id': userId,
             'username': 'original',
             'age': 20,
-            '_lasteventId': insertEventId,
+            LocalFirstEvent.kLastEventId: insertEventId,
           }, 'id');
           await storage.insertEvent('users', {
-            'eventId': insertEventId,
-            'dataId': userId,
-            'syncStatus': SyncStatus.ok.index,
-            'operation': SyncOperation.insert.index,
-            'createdAt': DateTime.now().millisecondsSinceEpoch,
-          }, 'eventId');
+            LocalFirstEvent.kEventId: insertEventId,
+            LocalFirstEvent.kDataId: userId,
+            LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
+            LocalFirstEvent.kOperation: SyncOperation.insert.index,
+            LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+          }, LocalFirstEvent.kEventId);
 
           // Verify initial state
           var results = await storage.query(buildQuery());
@@ -1810,15 +1810,15 @@ void main() {
             'id': userId,
             'username': 'updated',
             'age': 30,
-            '_lasteventId': updateEventId,
+            LocalFirstEvent.kLastEventId: updateEventId,
           });
           await storage.insertEvent('users', {
-            'eventId': updateEventId,
-            'dataId': userId,
-            'syncStatus': SyncStatus.ok.index,
-            'operation': SyncOperation.update.index,
-            'createdAt': DateTime.now().millisecondsSinceEpoch,
-          }, 'eventId');
+            LocalFirstEvent.kEventId: updateEventId,
+            LocalFirstEvent.kDataId: userId,
+            LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
+            LocalFirstEvent.kOperation: SyncOperation.update.index,
+            LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+          }, LocalFirstEvent.kEventId);
 
           // Query should return the updated data
           results = await storage.query(buildQuery());
@@ -1840,16 +1840,16 @@ void main() {
             'id': userId,
             'username': 'user$i',
             'age': 20 + i,
-            '_lasteventId': eventId,
+            LocalFirstEvent.kLastEventId: eventId,
           }, 'id');
 
           await storage.insertEvent('users', {
-            'eventId': eventId,
-            'dataId': userId,
-            'syncStatus': SyncStatus.ok.index,
-            'operation': SyncOperation.insert.index,
-            'createdAt': DateTime.now().millisecondsSinceEpoch,
-          }, 'eventId');
+            LocalFirstEvent.kEventId: eventId,
+            LocalFirstEvent.kDataId: userId,
+            LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
+            LocalFirstEvent.kOperation: SyncOperation.insert.index,
+            LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+          }, LocalFirstEvent.kEventId);
         }
 
         // Query should return all 3 users
@@ -1882,15 +1882,15 @@ void main() {
           'id': userId,
           'username': 'watchuser',
           'age': 35,
-          '_lasteventId': eventId,
+          LocalFirstEvent.kLastEventId: eventId,
         }, 'id');
         await storage.insertEvent('users', {
-          'eventId': eventId,
-          'dataId': userId,
-          'syncStatus': SyncStatus.ok.index,
-          'operation': SyncOperation.insert.index,
-          'createdAt': DateTime.now().millisecondsSinceEpoch,
-        }, 'eventId');
+          LocalFirstEvent.kEventId: eventId,
+          LocalFirstEvent.kDataId: userId,
+          LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
+          LocalFirstEvent.kOperation: SyncOperation.insert.index,
+          LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+        }, LocalFirstEvent.kEventId);
 
         // Wait for notification
         await Future.delayed(Duration(milliseconds: 100));
@@ -1915,15 +1915,15 @@ void main() {
           'id': userId,
           'username': 'before',
           'age': 40,
-          '_lasteventId': insertEventId,
+          LocalFirstEvent.kLastEventId: insertEventId,
         }, 'id');
         await storage.insertEvent('users', {
-          'eventId': insertEventId,
-          'dataId': userId,
-          'syncStatus': SyncStatus.ok.index,
-          'operation': SyncOperation.insert.index,
-          'createdAt': DateTime.now().millisecondsSinceEpoch,
-        }, 'eventId');
+          LocalFirstEvent.kEventId: insertEventId,
+          LocalFirstEvent.kDataId: userId,
+          LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
+          LocalFirstEvent.kOperation: SyncOperation.insert.index,
+          LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+        }, LocalFirstEvent.kEventId);
 
         // Start watching
         final stream = storage.watchQuery<DummyModel>(buildQuery());
@@ -1940,15 +1940,15 @@ void main() {
           'id': userId,
           'username': 'after',
           'age': 45,
-          '_lasteventId': updateEventId,
+          LocalFirstEvent.kLastEventId: updateEventId,
         });
         await storage.insertEvent('users', {
-          'eventId': updateEventId,
-          'dataId': userId,
-          'syncStatus': SyncStatus.ok.index,
-          'operation': SyncOperation.update.index,
-          'createdAt': DateTime.now().millisecondsSinceEpoch,
-        }, 'eventId');
+          LocalFirstEvent.kEventId: updateEventId,
+          LocalFirstEvent.kDataId: userId,
+          LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
+          LocalFirstEvent.kOperation: SyncOperation.update.index,
+          LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+        }, LocalFirstEvent.kEventId);
 
         // Wait for notification
         await Future.delayed(Duration(milliseconds: 100));
@@ -1976,16 +1976,16 @@ void main() {
             'id': userId,
             'username': 'filteruser$i',
             'age': i * 10, // 10, 20, 30, 40, 50
-            '_lasteventId': eventId,
+            LocalFirstEvent.kLastEventId: eventId,
           }, 'id');
 
           await storage.insertEvent('users', {
-            'eventId': eventId,
-            'dataId': userId,
-            'syncStatus': SyncStatus.ok.index,
-            'operation': SyncOperation.insert.index,
-            'createdAt': DateTime.now().millisecondsSinceEpoch,
-          }, 'eventId');
+            LocalFirstEvent.kEventId: eventId,
+            LocalFirstEvent.kDataId: userId,
+            LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
+            LocalFirstEvent.kOperation: SyncOperation.insert.index,
+            LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+          }, LocalFirstEvent.kEventId);
         }
 
         // Query with filter: age >= 30
@@ -2020,16 +2020,16 @@ void main() {
             'id': id,
             'username': username,
             'age': age,
-            '_lasteventId': eventId,
+            LocalFirstEvent.kLastEventId: eventId,
           }, 'id');
 
           await storage.insertEvent('users', {
-            'eventId': eventId,
-            'dataId': id,
-            'syncStatus': SyncStatus.ok.index,
-            'operation': SyncOperation.insert.index,
-            'createdAt': DateTime.now().millisecondsSinceEpoch,
-          }, 'eventId');
+            LocalFirstEvent.kEventId: eventId,
+            LocalFirstEvent.kDataId: id,
+            LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
+            LocalFirstEvent.kOperation: SyncOperation.insert.index,
+            LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+          }, LocalFirstEvent.kEventId);
         }
 
         // Query with sort by age ascending
@@ -2057,7 +2057,7 @@ void main() {
             'id': userId,
             'username': 'orphanuser',
             'age': 50,
-            '_lasteventId': eventId, // Event doesn't exist yet
+            LocalFirstEvent.kLastEventId: eventId, // Event doesn't exist yet
           }, 'id');
 
           // Query without the missing event should return empty
@@ -2078,7 +2078,7 @@ void main() {
           'id': userId,
           'username': 'delayeduser',
           'age': 60,
-          '_lasteventId': eventId,
+          LocalFirstEvent.kLastEventId: eventId,
         }, 'id');
 
         // Query should be empty (no event yet)
@@ -2091,12 +2091,12 @@ void main() {
 
         // Step 2: Now insert the event
         await storage.insertEvent('users', {
-          'eventId': eventId,
-          'dataId': userId,
-          'syncStatus': SyncStatus.ok.index,
-          'operation': SyncOperation.insert.index,
-          'createdAt': DateTime.now().millisecondsSinceEpoch,
-        }, 'eventId');
+          LocalFirstEvent.kEventId: eventId,
+          LocalFirstEvent.kDataId: userId,
+          LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
+          LocalFirstEvent.kOperation: SyncOperation.insert.index,
+          LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+        }, LocalFirstEvent.kEventId);
 
         // Query should now return the data
         results = await storage.query(buildQuery());

@@ -186,7 +186,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
       final raw = await _readBoxValue(box, key);
       if (raw == null) continue;
       final merged = await _attachEventMetadata(tableName, raw);
-      if (merged['operation'] == SyncOperation.delete.index) continue;
+      if (merged[LocalFirstEvent.kOperation] == SyncOperation.delete.index) continue;
       items.add(merged);
     }
     return items;
@@ -206,9 +206,9 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     for (final key in keys) {
       final meta = await _readBoxValue(eventBox, key);
       if (meta == null) continue;
-      final dataId = meta['dataId'] as String?;
+      final dataId = meta[LocalFirstEvent.kDataId] as String?;
       final data = dataId != null ? await _readBoxValue(dataBox, dataId) : null;
-      items.add(_mergeEventWithData(meta, data, lastEventId: meta['eventId']));
+      items.add(_mergeEventWithData(meta, data, lastEventId: meta[LocalFirstEvent.kEventId]));
     }
     return items;
   }
@@ -225,7 +225,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
       final rawItem = await _readBoxValue(box, id);
       if (rawItem == null) return null;
       final merged = await _attachEventMetadata(tableName, rawItem);
-      if (merged['operation'] == SyncOperation.delete.index) return null;
+      if (merged[LocalFirstEvent.kOperation] == SyncOperation.delete.index) return null;
       return merged;
     });
   }
@@ -241,10 +241,10 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     return _getBox(tableName, isEvent: true).then((eventBox) async {
       final meta = await _readBoxValue(eventBox, id);
       if (meta == null) return null;
-      final dataId = meta['dataId'] as String?;
+      final dataId = meta[LocalFirstEvent.kDataId] as String?;
       final dataBox = await _getBox(tableName);
       final data = dataId != null ? await _readBoxValue(dataBox, dataId) : null;
-      return _mergeEventWithData(meta, data, lastEventId: meta['eventId']);
+      return _mergeEventWithData(meta, data, lastEventId: meta[LocalFirstEvent.kEventId]);
     });
   }
 
@@ -286,11 +286,11 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
     final id = item[idField] as String;
     final meta = {
-      'eventId': id,
-      'dataId': item['dataId'],
-      'syncStatus': item['syncStatus'],
-      'operation': item['operation'],
-      'createdAt': item['createdAt'],
+      LocalFirstEvent.kEventId: id,
+      LocalFirstEvent.kDataId: item[LocalFirstEvent.kDataId],
+      LocalFirstEvent.kSyncStatus: item[LocalFirstEvent.kSyncStatus],
+      LocalFirstEvent.kOperation: item[LocalFirstEvent.kOperation],
+      LocalFirstEvent.kSyncCreatedAt: item[LocalFirstEvent.kSyncCreatedAt],
     };
     await box.put(id, meta);
   }
@@ -326,11 +326,11 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     final box = await _getBox(tableName, isEvent: true);
 
     final meta = {
-      'eventId': id,
-      'dataId': item['dataId'] ?? id,
-      'syncStatus': item['syncStatus'],
-      'operation': item['operation'],
-      'createdAt': item['createdAt'],
+      LocalFirstEvent.kEventId: id,
+      LocalFirstEvent.kDataId: item[LocalFirstEvent.kDataId] ?? id,
+      LocalFirstEvent.kSyncStatus: item[LocalFirstEvent.kSyncStatus],
+      LocalFirstEvent.kOperation: item[LocalFirstEvent.kOperation],
+      LocalFirstEvent.kSyncCreatedAt: item[LocalFirstEvent.kSyncCreatedAt],
     };
     await box.put(id, meta);
   }
@@ -662,7 +662,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
       final item = await _attachEventMetadata(query.repositoryName, rawItem);
       if (!query.includeDeleted &&
-          item['operation'] == SyncOperation.delete.index) {
+          item[LocalFirstEvent.kOperation] == SyncOperation.delete.index) {
         continue;
       }
 
@@ -686,7 +686,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
         final rawEvent = await _readBoxValue(eventBox, key);
         if (rawEvent == null) continue;
         if (!_hasRequiredEventFields(rawEvent)) continue;
-        if (rawEvent['operation'] != SyncOperation.delete.index) continue;
+        if (rawEvent[LocalFirstEvent.kOperation] != SyncOperation.delete.index) continue;
         results.add(rawEvent);
       }
     }
