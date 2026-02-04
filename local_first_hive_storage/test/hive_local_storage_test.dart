@@ -65,10 +65,10 @@ void main() {
       if (event is LocalFirstStateEvent<_TestModel>) {
         await storage.insert(table, {
           ...event.data.toJson(),
-          '_lasteventId': event.eventId,
+          LocalFirstEvent.kLastEventId: event.eventId,
         }, 'id');
       }
-      await storage.insertEvent(table, event.toLocalStorageJson(), 'eventId');
+      await storage.insertEvent(table, event.toLocalStorageJson(), LocalFirstEvent.kEventId);
     }
 
     setUp(() async {
@@ -196,9 +196,9 @@ void main() {
 
     test('updateEvent should backfill dataId when missing', () async {
       await storage.updateEvent('users', 'evt-up', {
-        'syncStatus': SyncStatus.pending.index,
-        'operation': SyncOperation.insert.index,
-        'createdAt': DateTime.now().millisecondsSinceEpoch,
+        LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+        LocalFirstEvent.kOperation: SyncOperation.insert.index,
+        LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
       });
 
       final fetched = await storage.getEventById('users', 'evt-up');
@@ -267,19 +267,19 @@ void main() {
         LocalFirstEvent.kLastEventId: 'evt-b',
       }, 'id');
       await storage.insertEvent('users', {
-        'eventId': 'evt-a',
-        'dataId': '1',
-        'syncStatus': SyncStatus.pending.index,
-        'operation': SyncOperation.insert.index,
-        'createdAt': 1,
-      }, 'eventId');
+        LocalFirstEvent.kEventId: 'evt-a',
+        LocalFirstEvent.kDataId: '1',
+        LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+        LocalFirstEvent.kOperation: SyncOperation.insert.index,
+        LocalFirstEvent.kSyncCreatedAt: 1,
+      }, LocalFirstEvent.kEventId);
       await storage.insertEvent('users', {
-        'eventId': 'evt-b',
-        'dataId': '2',
-        'syncStatus': SyncStatus.pending.index,
-        'operation': SyncOperation.insert.index,
-        'createdAt': 2,
-      }, 'eventId');
+        LocalFirstEvent.kEventId: 'evt-b',
+        LocalFirstEvent.kDataId: '2',
+        LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+        LocalFirstEvent.kOperation: SyncOperation.insert.index,
+        LocalFirstEvent.kSyncCreatedAt: 2,
+      }, LocalFirstEvent.kEventId);
 
       final sorted = await storage.query(
         buildQuery(
@@ -373,33 +373,33 @@ void main() {
 
     test('deleteEvent removes event', () async {
       await storage.insertEvent('users', {
-        'eventId': 'evt-del',
-        'dataId': 'del',
-        'syncStatus': SyncStatus.pending.index,
-        'operation': SyncOperation.insert.index,
-        'createdAt': 1,
-      }, 'eventId');
+        LocalFirstEvent.kEventId: 'evt-del',
+        LocalFirstEvent.kDataId: 'del',
+        LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+        LocalFirstEvent.kOperation: SyncOperation.insert.index,
+        LocalFirstEvent.kSyncCreatedAt: 1,
+      }, LocalFirstEvent.kEventId);
       await storage.deleteEvent('users', 'evt-del');
 
       final events = await storage.getAllEvents('users');
-      expect(events.where((e) => e['eventId'] == 'evt-del'), isEmpty);
+      expect(events.where((e) => e[LocalFirstEvent.kEventId] == 'evt-del'), isEmpty);
     });
 
     test('deleteAllEvents clears event boxes', () async {
       await storage.insertEvent('users', {
-        'eventId': 'evt-1',
-        'dataId': '1',
-        'syncStatus': SyncStatus.pending.index,
-        'operation': SyncOperation.insert.index,
-        'createdAt': 1,
-      }, 'eventId');
+        LocalFirstEvent.kEventId: 'evt-1',
+        LocalFirstEvent.kDataId: '1',
+        LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+        LocalFirstEvent.kOperation: SyncOperation.insert.index,
+        LocalFirstEvent.kSyncCreatedAt: 1,
+      }, LocalFirstEvent.kEventId);
       await storage.insertEvent('users', {
-        'eventId': 'evt-2',
-        'dataId': '2',
-        'syncStatus': SyncStatus.pending.index,
-        'operation': SyncOperation.delete.index,
-        'createdAt': 2,
-      }, 'eventId');
+        LocalFirstEvent.kEventId: 'evt-2',
+        LocalFirstEvent.kDataId: '2',
+        LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+        LocalFirstEvent.kOperation: SyncOperation.delete.index,
+        LocalFirstEvent.kSyncCreatedAt: 2,
+      }, LocalFirstEvent.kEventId);
 
       await storage.deleteAllEvents('users');
 
@@ -515,10 +515,10 @@ void main() {
         // First event returns null, second is malformed delete without dataId.
         when(() => eventBox.get('e-null')).thenReturn(null);
         when(() => eventBox.get('e-bad')).thenReturn({
-          'eventId': 'e-bad',
-          'operation': SyncOperation.delete.index,
-          'syncStatus': SyncStatus.pending.index,
-          'createdAt': DateTime.now().millisecondsSinceEpoch,
+          LocalFirstEvent.kEventId: 'e-bad',
+          LocalFirstEvent.kOperation: SyncOperation.delete.index,
+          LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+          LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
           // Missing dataId to trigger FormatException inside fromLocalStorage.
         });
 

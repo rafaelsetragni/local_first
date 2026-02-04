@@ -186,11 +186,11 @@ void main() {
           final repo = _dummyRepo();
           final now = DateTime.now().toUtc().millisecondsSinceEpoch;
           final json = {
-            'eventId': 'evt-1',
-            'dataId': '1',
-            'syncStatus': SyncStatus.ok.index,
-            'operation': SyncOperation.insert.index,
-            'createdAt': now,
+            LocalFirstEvent.kEventId: 'evt-1',
+            LocalFirstEvent.kDataId: '1',
+            LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
+            LocalFirstEvent.kOperation: SyncOperation.insert.index,
+            LocalFirstEvent.kSyncCreatedAt: now,
             'id': '1',
           };
 
@@ -223,10 +223,10 @@ void main() {
             () => LocalFirstEvent<_DummyModel>.fromLocalStorage(
               repository: repo,
               json: {
-                'eventId': 'evt-del',
-                'syncStatus': SyncStatus.pending.index,
-                'operation': SyncOperation.delete.index,
-                'createdAt': now,
+                LocalFirstEvent.kEventId: 'evt-del',
+                LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+                LocalFirstEvent.kOperation: SyncOperation.delete.index,
+                LocalFirstEvent.kSyncCreatedAt: now,
               },
             ),
             throwsFormatException,
@@ -238,11 +238,11 @@ void main() {
           final repo = _dummyRepo();
           final now = DateTime.now().toUtc().millisecondsSinceEpoch;
           final json = {
-            'eventId': 'evt-1',
-            'dataId': '1',
-            'syncStatus': SyncStatus.pending.index,
-            'operation': SyncOperation.update.index,
-            'createdAt': now,
+            LocalFirstEvent.kEventId: 'evt-1',
+            LocalFirstEvent.kDataId: '1',
+            LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+            LocalFirstEvent.kOperation: SyncOperation.update.index,
+            LocalFirstEvent.kSyncCreatedAt: now,
             'id': '1',
           };
 
@@ -263,11 +263,11 @@ void main() {
         test('should build event with correct sync defaults', () {
           final repo = _dummyRepo();
           final json = {
-            'eventId': 'evt-remote',
-            'operation': SyncOperation.insert.index,
-            'createdAt': DateTime.now().toUtc().millisecondsSinceEpoch,
-            'dataId': '1',
-            'data': {'id': '1'},
+            LocalFirstEvent.kEventId: 'evt-remote',
+            LocalFirstEvent.kOperation: SyncOperation.insert.index,
+            LocalFirstEvent.kSyncCreatedAt: DateTime.now().toUtc().millisecondsSinceEpoch,
+            LocalFirstEvent.kDataId: '1',
+            LocalFirstEvent.kData: {'id': '1'},
           };
 
           final event = LocalFirstEvent.fromRemoteJson(
@@ -283,10 +283,10 @@ void main() {
         test('should build delete event with dataId', () {
           final repo = _dummyRepo();
           final json = {
-            'eventId': 'evt-del',
-            'operation': SyncOperation.delete.index,
-            'createdAt': DateTime.now().toUtc().millisecondsSinceEpoch,
-            'dataId': '99',
+            LocalFirstEvent.kEventId: 'evt-del',
+            LocalFirstEvent.kOperation: SyncOperation.delete.index,
+            LocalFirstEvent.kSyncCreatedAt: DateTime.now().toUtc().millisecondsSinceEpoch,
+            LocalFirstEvent.kDataId: '99',
           };
 
           final event =
@@ -300,11 +300,11 @@ void main() {
         test('should parse createdAt when provided as ISO string', () {
           final repo = _dummyRepo();
           final json = {
-            'eventId': 'evt-remote',
-            'operation': SyncOperation.update.index,
-            'createdAt': DateTime.now().toUtc().toIso8601String(),
-            'dataId': '1',
-            'data': {'id': '1'},
+            LocalFirstEvent.kEventId: 'evt-remote',
+            LocalFirstEvent.kOperation: SyncOperation.update.index,
+            LocalFirstEvent.kSyncCreatedAt: DateTime.now().toUtc().toIso8601String(),
+            LocalFirstEvent.kDataId: '1',
+            LocalFirstEvent.kData: {'id': '1'},
           };
 
           final event = LocalFirstEvent.fromRemoteJson(
@@ -318,11 +318,11 @@ void main() {
         test('should parse createdAt when provided as DateTime', () {
           final repo = _dummyRepo();
           final json = {
-            'eventId': 'evt-remote',
-            'operation': SyncOperation.update.index,
-            'createdAt': DateTime.now(),
-            'dataId': '1',
-            'data': {'id': '1'},
+            LocalFirstEvent.kEventId: 'evt-remote',
+            LocalFirstEvent.kOperation: SyncOperation.update.index,
+            LocalFirstEvent.kSyncCreatedAt: DateTime.now(),
+            LocalFirstEvent.kDataId: '1',
+            LocalFirstEvent.kData: {'id': '1'},
           };
 
           final event = LocalFirstEvent.fromRemoteJson(
@@ -369,10 +369,10 @@ void main() {
             () => LocalFirstEvent.fromRemoteJson(
               repository: repo,
               json: {
-                'eventId': 'evt-missing-date',
-                'operation': SyncOperation.insert.index,
-                'dataId': '1',
-                'data': {'id': '1'},
+                LocalFirstEvent.kEventId: 'evt-missing-date',
+                LocalFirstEvent.kOperation: SyncOperation.insert.index,
+                LocalFirstEvent.kDataId: '1',
+                LocalFirstEvent.kData: {'id': '1'},
               },
             ),
             throwsFormatException,
@@ -385,9 +385,9 @@ void main() {
             () => LocalFirstEvent.fromRemoteJson(
               repository: repo,
               json: {
-                'eventId': 'evt-missing-id',
-                'operation': SyncOperation.delete.index,
-                'createdAt': DateTime.now().toUtc().millisecondsSinceEpoch,
+                LocalFirstEvent.kEventId: 'evt-missing-id',
+                LocalFirstEvent.kOperation: SyncOperation.delete.index,
+                LocalFirstEvent.kSyncCreatedAt: DateTime.now().toUtc().millisecondsSinceEpoch,
               },
             ),
             throwsFormatException,
@@ -400,10 +400,10 @@ void main() {
             () => LocalFirstEvent.fromRemoteJson(
               repository: repo,
               json: {
-                'eventId': 'evt-missing-state',
-                'operation': SyncOperation.insert.index,
-                'createdAt': DateTime.now().toUtc().millisecondsSinceEpoch,
-                'dataId': '1',
+                LocalFirstEvent.kEventId: 'evt-missing-state',
+                LocalFirstEvent.kOperation: SyncOperation.insert.index,
+                LocalFirstEvent.kSyncCreatedAt: DateTime.now().toUtc().millisecondsSinceEpoch,
+                LocalFirstEvent.kDataId: '1',
               },
             ),
             throwsFormatException,
@@ -416,11 +416,11 @@ void main() {
             () => LocalFirstEvent.fromRemoteJson(
               repository: repo,
               json: {
-                'eventId': 'evt-throw',
-                'operation': SyncOperation.insert.index,
-                'createdAt': DateTime.now().toUtc().millisecondsSinceEpoch,
-                'dataId': '1',
-                'data': {'id': '1'},
+                LocalFirstEvent.kEventId: 'evt-throw',
+                LocalFirstEvent.kOperation: SyncOperation.insert.index,
+                LocalFirstEvent.kSyncCreatedAt: DateTime.now().toUtc().millisecondsSinceEpoch,
+                LocalFirstEvent.kDataId: '1',
+                LocalFirstEvent.kData: {'id': '1'},
               },
             ),
             throwsFormatException,

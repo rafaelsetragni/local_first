@@ -27,14 +27,15 @@ enum SyncOperation {
 /// Base sync event carrying metadata.
 abstract class LocalFirstEvent<T> {
   // Shared payload keys for remote and local.
-  static const String kEventId = 'eventId';
-  static const String kRepository = 'repository';
-  static const String kOperation = 'operation';
-  static const String kSyncCreatedAt = 'createdAt';
-  static const String kData = 'data';
-  static const String kDataId = 'dataId';
-  static const String kSyncStatus = 'syncStatus';
-  static const String kLastEventId = 'lastEventId';
+  // All metadata keys are prefixed with '_' to avoid collision with entity fields.
+  static const String kEventId = '_event_id';
+  static const String kRepository = '_repository';
+  static const String kOperation = '_operation';
+  static const String kSyncCreatedAt = '_created_at';
+  static const String kData = '_data';
+  static const String kDataId = '_data_id';
+  static const String kSyncStatus = '_sync_status';
+  static const String kLastEventId = '_last_event_id';
 
   LocalFirstEvent._({
     required this.repository,
@@ -263,7 +264,7 @@ final class LocalFirstStateEvent<T> extends LocalFirstEvent<T> {
   JsonMap toJson() => {
     LocalFirstEvent.kEventId: eventId,
     LocalFirstEvent.kOperation: syncOperation.index,
-    LocalFirstEvent.kSyncCreatedAt: syncCreatedAt.toUtc(),
+    LocalFirstEvent.kSyncCreatedAt: syncCreatedAt.toUtc().toIso8601String(),
     LocalFirstEvent.kData: repository.toJson(data),
     LocalFirstEvent.kDataId: dataId,
   };
@@ -310,7 +311,7 @@ final class LocalFirstDeleteEvent<T> extends LocalFirstEvent<T> {
   JsonMap toJson() => {
     LocalFirstEvent.kEventId: eventId,
     LocalFirstEvent.kOperation: syncOperation.index,
-    LocalFirstEvent.kSyncCreatedAt: syncCreatedAt.toUtc(),
+    LocalFirstEvent.kSyncCreatedAt: syncCreatedAt.toUtc().toIso8601String(),
     LocalFirstEvent.kDataId: dataId,
   };
 
