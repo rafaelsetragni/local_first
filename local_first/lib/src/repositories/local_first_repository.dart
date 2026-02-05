@@ -128,20 +128,50 @@ abstract class LocalFirstRepository<T> {
   }
 
   /// Pushes a state event through all sync strategies, updating its status.
+  ///
+  /// Only strategies that handle this repository (via [DataSyncStrategy.handlesRepository])
+  /// will receive the event.
   Future<LocalFirstEvent<T>> _pushLocalEventToRemote(
     LocalFirstEvent<T> event,
   ) async {
+    dev.log(
+      '_pushLocalEventToRemote called for ${event.eventId} with ${_syncStrategies.length} strategies',
+      name: 'LocalFirstRepository',
+    );
     var current = event;
 
     for (var strategy in _syncStrategies) {
+      // Only call strategies that handle this repository
+      if (!strategy.handlesRepository(name)) {
+        dev.log(
+          'Skipping strategy ${strategy.runtimeType} - does not handle repository $name',
+          name: 'LocalFirstRepository',
+        );
+        continue;
+      }
+
+      dev.log(
+        'Calling onPushToRemote on strategy: ${strategy.runtimeType}',
+        name: 'LocalFirstRepository',
+      );
       try {
         final syncResult = await strategy.onPushToRemote(current);
+        dev.log(
+          'Strategy ${strategy.runtimeType} returned: $syncResult',
+          name: 'LocalFirstRepository',
+        );
         current = current.updateEventState(syncStatus: syncResult);
         if (syncResult == SyncStatus.ok) {
           await _updateEventStatus(current);
           return current;
         }
-      } catch (_) {
+      } catch (e, s) {
+        dev.log(
+          'Strategy ${strategy.runtimeType} threw error: $e',
+          name: 'LocalFirstRepository',
+          error: e,
+          stackTrace: s,
+        );
         current = current.updateEventState(syncStatus: SyncStatus.failed);
       }
     }

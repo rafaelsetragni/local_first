@@ -348,7 +348,7 @@ void main() {
           final updated = event.updateEventState(syncStatus: SyncStatus.failed);
 
           expect(remote[LocalFirstEvent.kDataId], 'del-1');
-          expect(remote[LocalFirstEvent.kSyncCreatedAt], isA<DateTime>());
+          expect(remote[LocalFirstEvent.kSyncCreatedAt], isA<String>());
           expect(local[LocalFirstEvent.kSyncCreatedAt], isA<int>());
           expect(updated.syncStatus, SyncStatus.failed);
           expect(event.data, isNull);
@@ -445,7 +445,8 @@ void main() {
           expect(json[LocalFirstEvent.kOperation], SyncOperation.insert.index);
           expect(json[LocalFirstEvent.kDataId], '1');
           expect(json[LocalFirstEvent.kData], containsPair('id', '1'));
-          expect(json[LocalFirstEvent.kSyncCreatedAt], isA<DateTime>());
+          // toJson returns ISO 8601 string for JSON serialization
+          expect(json[LocalFirstEvent.kSyncCreatedAt], isA<String>());
         });
       });
     });

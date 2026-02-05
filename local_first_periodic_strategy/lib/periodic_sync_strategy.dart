@@ -380,6 +380,10 @@ class PeriodicSyncStrategy extends DataSyncStrategy {
   /// The event is stored in local storage and will be included in the next
   /// [_performSync] call, which happens at [syncInterval] intervals.
   ///
+  /// **Note:** The [LocalFirstRepository] filters strategies based on
+  /// [repositoryNames] before calling this method, so this method will only
+  /// be called for events that belong to repositories in [repositoryNames].
+  ///
   /// **Exceptions:**
   /// No exceptions are thrown. The event is always queued successfully.
   @override
