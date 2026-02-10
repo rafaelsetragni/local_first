@@ -206,6 +206,20 @@ class PeriodicSyncStrategy extends DataSyncStrategy {
     reportConnectionState(false);
   }
 
+  /// Forces an immediate sync cycle outside the regular timer.
+  ///
+  /// Useful when fresh data is needed immediately (e.g., navigating to a
+  /// screen that requires data not yet synced via the periodic timer).
+  ///
+  /// **Behavior:**
+  /// - Does nothing if the strategy is not running
+  /// - Does nothing if a sync is already in progress (waits for current cycle)
+  /// - Reuses the same sync logic as the periodic timer
+  Future<void> forceSync() async {
+    if (!_isRunning) return;
+    await _performSync();
+  }
+
   /// Disposes of all resources and stops synchronization.
   ///
   /// This method calls [stop] to clean up the timer and report disconnection.
