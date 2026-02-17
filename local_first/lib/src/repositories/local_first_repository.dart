@@ -359,12 +359,16 @@ abstract class LocalFirstRepository<T> {
 
   Future<List<LocalFirstEvent<T>>> _getAllEvents() async {
     final maps = await _client.localStorage.getAllEvents(name);
-    return maps
-        .map(
-          (json) =>
-              LocalFirstEvent<T>.fromLocalStorage(repository: this, json: json),
-        )
-        .toList();
+    final result = <LocalFirstEvent<T>>[];
+    for (final json in maps) {
+      try {
+        result.add(LocalFirstEvent<T>.fromLocalStorage(repository: this, json: json));
+      } catch (_) {
+        // Skip orphaned events whose data row was deleted (e.g. after a delete
+        // operation the old INSERT/UPDATE events have no data in the JOIN).
+      }
+    }
+    return result;
   }
 
   Future<LocalFirstEvent<T>?> getLastRespectivePendingEvent({
