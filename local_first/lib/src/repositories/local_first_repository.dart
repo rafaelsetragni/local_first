@@ -134,7 +134,7 @@ abstract class LocalFirstRepository<T> {
   Future<LocalFirstEvent<T>> _pushLocalEventToRemote(
     LocalFirstEvent<T> event,
   ) async {
-    dev.log(
+    LocalFirstLogger.log(
       '_pushLocalEventToRemote called for ${event.eventId} with ${_syncStrategies.length} strategies',
       name: 'LocalFirstRepository',
     );
@@ -143,20 +143,20 @@ abstract class LocalFirstRepository<T> {
     for (var strategy in _syncStrategies) {
       // Only call strategies that handle this repository
       if (!strategy.handlesRepository(name)) {
-        dev.log(
+        LocalFirstLogger.log(
           'Skipping strategy ${strategy.runtimeType} - does not handle repository $name',
           name: 'LocalFirstRepository',
         );
         continue;
       }
 
-      dev.log(
+      LocalFirstLogger.log(
         'Calling onPushToRemote on strategy: ${strategy.runtimeType}',
         name: 'LocalFirstRepository',
       );
       try {
         final syncResult = await strategy.onPushToRemote(current);
-        dev.log(
+        LocalFirstLogger.log(
           'Strategy ${strategy.runtimeType} returned: $syncResult',
           name: 'LocalFirstRepository',
         );
@@ -166,7 +166,7 @@ abstract class LocalFirstRepository<T> {
           return current;
         }
       } catch (e, s) {
-        dev.log(
+        LocalFirstLogger.log(
           'Strategy ${strategy.runtimeType} threw error: $e',
           name: 'LocalFirstRepository',
           error: e,

@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:developer' as dev;
 
 import 'package:flutter/foundation.dart';
 import 'package:local_first/local_first.dart';
@@ -279,7 +278,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
   /// in the background and returns immediately. Use the [connectionChanges]
   /// stream to monitor connection status.
   Future<void> start() async {
-    dev.log('Starting WebSocket sync strategy', name: logTag);
+    LocalFirstLogger.log('Starting WebSocket sync strategy', name: logTag);
     await client.awaitInitialization;
     // Start connection in background without blocking
     // ignore: unawaited_futures
@@ -288,7 +287,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
 
   /// Stops synchronization and closes the connection.
   void stop() {
-    dev.log('Stopping WebSocket sync strategy', name: logTag);
+    LocalFirstLogger.log('Stopping WebSocket sync strategy', name: logTag);
     _disconnect();
     _reconnectTimer?.cancel();
     _heartbeatTimer?.cancel();
@@ -311,7 +310,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
     reportConnectionState(false);
 
     try {
-      dev.log('Connecting to WebSocket: $websocketUrl', name: logTag);
+      LocalFirstLogger.log('Connecting to WebSocket: $websocketUrl', name: logTag);
 
       final uri = Uri.parse(websocketUrl);
       final channel =
@@ -328,7 +327,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
 
       _isConnected = true;
       reportConnectionState(true);
-      dev.log('WebSocket connected', name: logTag);
+      LocalFirstLogger.log('WebSocket connected', name: logTag);
 
       // Listen for messages from server
       _messageSubscription = channel.stream.listen(
@@ -350,7 +349,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
         await _flushPendingQueue();
       }
     } catch (e, s) {
-      dev.log(
+      LocalFirstLogger.log(
         'Error connecting to WebSocket: $e',
         name: logTag,
         error: e,
@@ -381,7 +380,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
   void _scheduleReconnect() {
     if (_reconnectTimer != null) return;
 
-    dev.log(
+    LocalFirstLogger.log(
       'Scheduling reconnection in ${reconnectDelay.inSeconds}s',
       name: logTag,
     );
@@ -404,11 +403,11 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
       final message = jsonDecode(rawMessage as String) as JsonMap<dynamic>;
       final type = message['type'] as String?;
 
-      dev.log('Message received: $type', name: logTag);
+      LocalFirstLogger.log('Message received: $type', name: logTag);
 
       switch (type) {
         case 'auth_success':
-          dev.log('Authentication successful', name: logTag);
+          LocalFirstLogger.log('Authentication successful', name: logTag);
           _authCompleter?.complete();
           break;
 
@@ -421,7 +420,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
           break;
 
         case 'sync_complete':
-          dev.log('Initial synchronization complete', name: logTag);
+          LocalFirstLogger.log('Initial synchronization complete', name: logTag);
           break;
 
         case 'ping':
@@ -440,7 +439,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
 
         case 'error':
           final error = message['message'] ?? 'Unknown error';
-          dev.log('Server error: $error', name: logTag);
+          LocalFirstLogger.log('Server error: $error', name: logTag);
           // If authentication fails, complete the auth completer with error
           if (_authCompleter != null && !_authCompleter!.isCompleted) {
             _authCompleter!.completeError(error);
@@ -448,10 +447,10 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
           break;
 
         default:
-          dev.log('Unknown message type: $type', name: logTag);
+          LocalFirstLogger.log('Unknown message type: $type', name: logTag);
       }
     } catch (e, s) {
-      dev.log(
+      LocalFirstLogger.log(
         'Error processing message: $e',
         name: logTag,
         error: e,
@@ -469,7 +468,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
       return;
     }
 
-    dev.log(
+    LocalFirstLogger.log(
       'Applying ${events.length} remote events for $repositoryName',
       name: logTag,
     );
@@ -492,7 +491,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
     try {
       await onSyncCompleted(repositoryName, remoteChanges);
     } catch (e, s) {
-      dev.log(
+      LocalFirstLogger.log(
         'Error in onSyncCompleted callback: $e',
         name: logTag,
         error: e,
@@ -521,7 +520,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
 
     if (eventIds == null || eventIds.isEmpty) return;
 
-    dev.log('Received ACK for ${eventIds.length} events', name: logTag);
+    LocalFirstLogger.log('Received ACK for ${eventIds.length} events', name: logTag);
 
     // Remove from pending queue (if enabled)
     if (enablePendingQueue) {
@@ -583,14 +582,14 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
       if (enablePendingQueue) {
         // Add to queue if disconnected and queue is enabled
         _pendingQueue.add(localData);
-        dev.log(
+        LocalFirstLogger.log(
           'Event added to queue (disconnected): ${localData.eventId}',
           name: logTag,
         );
         return SyncStatus.pending;
       } else {
         // Queue disabled - mark as failed, let periodic sync handle it
-        dev.log(
+        LocalFirstLogger.log(
           'Event not sent (disconnected, queue disabled): ${localData.eventId}',
           name: logTag,
         );
@@ -606,7 +605,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
         'event': localData.toJson(),
       });
 
-      dev.log('Event sent: ${localData.eventId}', name: logTag);
+      LocalFirstLogger.log('Event sent: ${localData.eventId}', name: logTag);
 
       // Return pending until server ACK
       return SyncStatus.pending;
@@ -621,7 +620,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
       }
     } catch (e, s) {
       // Other unexpected errors
-      dev.log(
+      LocalFirstLogger.log(
         'Unexpected error sending event: $e',
         name: logTag,
         error: e,
@@ -677,7 +676,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
       await _authCompleter!.future.timeout(
         const Duration(milliseconds: 1500),
         onTimeout: () {
-          dev.log('Authentication timeout', name: logTag);
+          LocalFirstLogger.log('Authentication timeout', name: logTag);
           throw TimeoutException('Authentication timeout');
         },
       );
@@ -697,10 +696,10 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
             if (newCredentials.headers != null) {
               _headers = Map.from(newCredentials.headers!);
             }
-            dev.log('Credentials refreshed for next connection', name: logTag);
+            LocalFirstLogger.log('Credentials refreshed for next connection', name: logTag);
           }
         } catch (e, s) {
-          dev.log(
+          LocalFirstLogger.log(
             'Error refreshing credentials: $e',
             name: logTag,
             error: e,
@@ -719,7 +718,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
     _isSyncing = true;
 
     try {
-      dev.log('Synchronizing initial state', name: logTag);
+      LocalFirstLogger.log('Synchronizing initial state', name: logTag);
 
       // If we have known repositories, request events for each with filters
       if (_knownRepositories.isNotEmpty) {
@@ -730,7 +729,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
             try {
               filterParams = await onBuildSyncFilter(repositoryName);
             } catch (e, s) {
-              dev.log(
+              LocalFirstLogger.log(
                 'Error in onBuildSyncFilter callback for $repositoryName: $e',
                 name: logTag,
                 error: e,
@@ -782,7 +781,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
     if (!enablePendingQueue) return;
     if (_pendingQueue.isEmpty) return;
 
-    dev.log('Sending ${_pendingQueue.length} pending events', name: logTag);
+    LocalFirstLogger.log('Sending ${_pendingQueue.length} pending events', name: logTag);
 
     // Group events by repository
     final eventsByRepo = <String, List<LocalFirstEvent>>{};
@@ -806,7 +805,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
         return; // Stop trying to send more batches
       } catch (e, s) {
         // Other unexpected errors - log and continue with next batch
-        dev.log(
+        LocalFirstLogger.log(
           'Unexpected error sending event batch: $e',
           name: logTag,
           error: e,
@@ -840,7 +839,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
       // Set timeout for pong response
       _pongTimeoutTimer = Timer(const Duration(seconds: 2), () {
         if (_pongCompleter != null && !_pongCompleter!.isCompleted) {
-          dev.log('Pong timeout - connection appears dead', name: logTag);
+          LocalFirstLogger.log('Pong timeout - connection appears dead', name: logTag);
           _handleConnectionLoss('pong timeout');
         }
       });
@@ -852,7 +851,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
 
   /// Handles connection errors.
   void _onError(dynamic error, [StackTrace? stackTrace]) {
-    dev.log(
+    LocalFirstLogger.log(
       'WebSocket error: $error',
       name: logTag,
       error: error,
@@ -864,7 +863,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
 
   /// Handles disconnection.
   void _onDisconnect() {
-    dev.log('WebSocket disconnected', name: logTag);
+    LocalFirstLogger.log('WebSocket disconnected', name: logTag);
     _disconnect();
     _scheduleReconnect();
   }
@@ -876,7 +875,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
   void _handleConnectionLoss(String operation, [dynamic error]) {
     if (!_isConnected) return; // Already handling disconnection
 
-    dev.log('Connection lost during $operation', name: logTag, error: error);
+    LocalFirstLogger.log('Connection lost during $operation', name: logTag, error: error);
     _disconnect();
     _scheduleReconnect();
   }

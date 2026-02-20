@@ -17,6 +17,7 @@ part 'src/repositories/local_first_repository.dart';
 part 'src/sync_strategies/data_sync_strategy.dart';
 part 'src/utils/conflict_util.dart';
 part 'src/utils/id_util.dart';
+part 'src/utils/local_first_logger.dart';
 
 typedef JsonMap<T> = Map<String, T>;
 
