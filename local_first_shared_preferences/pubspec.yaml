@@ -20,6 +20,8 @@ dependencies:
     sdk: flutter
   local_first: ^0.7.0
   shared_preferences: ^2.3.2
+  crypto: ^3.0.6
+  encrypt: ^5.0.3
 
 dev_dependencies:
   flutter_test:
