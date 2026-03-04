@@ -515,7 +515,7 @@ class WebSocketSyncStrategy extends DataSyncStrategy {
   /// Processes acknowledgment of sent events.
   Future<void> _handleAcknowledgment(JsonMap<dynamic> message) async {
     final eventIds = (message['eventIds'] as List<dynamic>?)
-        ?.cast<String>()
+        ?.whereType<String>()
         .toSet();
 
     if (eventIds == null || eventIds.isEmpty) return;

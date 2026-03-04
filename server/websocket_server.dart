@@ -69,7 +69,7 @@ class RepositoryConfig {
 class WebSocketSyncServer {
   static const logTag = 'WebSocketSyncServer';
   static const _productionPort = 8080;
-  static const _testPort = 8081;
+  static const _testPort = 18081;
   static const _productionDb = 'remote_counter_db';
   static const _testDb = 'remote_counter_db_test';
 
@@ -90,6 +90,12 @@ class WebSocketSyncServer {
   };
 
   final bool isTestMode;
+
+  /// Ping/pong intervals - shorter in test mode for faster tests
+  Duration get pingInterval =>
+      isTestMode ? const Duration(seconds: 3) : const Duration(seconds: 30);
+  Duration get pongTimeout =>
+      isTestMode ? const Duration(seconds: 5) : const Duration(seconds: 10);
 
   WebSocketSyncServer({this.isTestMode = false});
 
@@ -191,9 +197,9 @@ class WebSocketSyncServer {
       try {
         // Index for server sequence-based sync
         await collection.createIndex(keys: {'serverSequence': 1});
-        await collection.createIndex(keys: {'eventId': 1}, unique: true);
-        // Index for dataId queries (used to fetch entities by their ID)
-        await collection.createIndex(keys: {'dataId': 1});
+        await collection.createIndex(keys: {'_event_id': 1}, unique: true);
+        // Index for _data_id queries (used to fetch entities by their ID)
+        await collection.createIndex(keys: {'_data_id': 1});
       } catch (e) {
         dev.log('Failed to create indexes for $repoName: $e', name: logTag);
       }
@@ -531,7 +537,7 @@ class WebSocketSyncServer {
 
     try {
       final collection = db.collection(repository);
-      final event = await collection.findOne(where.eq('eventId', eventId));
+      final event = await collection.findOne(where.eq('_event_id', eventId));
 
       if (event == null) {
         _sendError(response, HttpStatus.notFound, 'Event not found');
@@ -574,7 +580,7 @@ class WebSocketSyncServer {
 
     try {
       final collection = db.collection(repository);
-      final event = await collection.findOne(where.eq('dataId', dataId));
+      final event = await collection.findOne(where.eq('_data_id', dataId));
 
       if (event == null) {
         _sendError(response, HttpStatus.notFound, 'Event not found');
@@ -607,11 +613,11 @@ class WebSocketSyncServer {
       final body = jsonDecode(bodyString) as Map<String, dynamic>;
 
       // Validate event has required fields
-      if (!body.containsKey('eventId')) {
+      if (!body.containsKey('_event_id')) {
         _sendError(
           response,
           HttpStatus.badRequest,
-          'Missing required field: eventId',
+          'Missing required field: _event_id',
         );
         return;
       }
@@ -624,7 +630,7 @@ class WebSocketSyncServer {
         jsonEncode({
           'status': 'success',
           'repository': repository,
-          'eventId': body['eventId'],
+          'eventId': body['_event_id'],
         }),
       );
       await response.close();
@@ -664,13 +670,13 @@ class WebSocketSyncServer {
       // Log incoming push request
       print('[REST POST] Repository: $repository, events: ${events.length}');
 
-      // Validate all events have eventId
+      // Validate all events have _event_id
       for (final event in events) {
-        if (!event.containsKey('eventId')) {
+        if (!event.containsKey('_event_id')) {
           _sendError(
             response,
             HttpStatus.badRequest,
-            'All events must have eventId field',
+            'All events must have _event_id field',
           );
           return;
         }
@@ -679,7 +685,7 @@ class WebSocketSyncServer {
       // Push events to MongoDB
       await pushEventsBatch(repository, events);
 
-      final eventIds = events.map((e) => e['eventId'] as String).toList();
+      final eventIds = events.map((e) => e['_event_id'] as String).toList();
       print('[REST POST] ✓ Saved ${eventIds.length} events: ${eventIds.take(5).join(", ")}${eventIds.length > 5 ? "..." : ""}');
 
       response.statusCode = HttpStatus.created;
@@ -738,11 +744,11 @@ class WebSocketSyncServer {
     }
 
     final collection = db.collection(repositoryName);
-    final eventId = event['eventId'];
+    final eventId = event['_event_id'];
 
     try {
       // Check if event already exists
-      final existing = await collection.findOne(where.eq('eventId', eventId));
+      final existing = await collection.findOne(where.eq('_event_id', eventId));
 
       if (existing != null) {
         // Event already exists, just return (idempotency)
@@ -849,12 +855,12 @@ class WebSocketSyncServer {
     final latestEventsByDataId = <String, Map<String, dynamic>>{};
 
     for (final event in allEvents) {
-      final dataId = event['dataId'] as String?;
+      final dataId = event['_data_id'] as String?;
 
-      // If no dataId, include the event as-is (backwards compatibility)
+      // If no _data_id, include the event as-is (backwards compatibility)
       if (dataId == null) {
-        // For events without dataId, use eventId as unique identifier
-        final eventId = event['eventId'] as String;
+        // For events without _data_id, use _event_id as unique identifier
+        final eventId = event['_event_id'] as String;
         latestEventsByDataId[eventId] = event;
         continue;
       }
@@ -960,11 +966,11 @@ class WebSocketSyncServer {
 /// Represents a connected WebSocket client.
 class ConnectedClient {
   static const logTag = 'ConnectedClient';
-  static const _pingInterval = Duration(seconds: 30);
-  static const _pongTimeout = Duration(seconds: 10);
 
   final WebSocket webSocket;
   final WebSocketSyncServer server;
+  Duration get _pingInterval => server.pingInterval;
+  Duration get _pongTimeout => server.pongTimeout;
   bool isAuthenticated = false;
   StreamSubscription? _subscription;
   Timer? _pingTimer;
@@ -1130,16 +1136,16 @@ class ConnectedClient {
     }
 
     try {
-      print('[WS PUSH] Repository: $repositoryName, event: ${event['eventId']}');
+      print('[WS PUSH] Repository: $repositoryName, event: ${event['_event_id']}');
       await server.pushEvent(repositoryName, event);
-      print('[WS PUSH] ✓ Saved event: ${event['eventId']}');
+      print('[WS PUSH] ✓ Saved event: ${event['_event_id']}');
 
       // Send acknowledgment
       sendMessage({
         'type': 'ack',
-        'eventIds': [event['eventId']],
+        'eventIds': [event['_event_id']],
         'repositories': {
-          repositoryName: [event['eventId']],
+          repositoryName: [event['_event_id']],
         },
       });
     } catch (e) {
@@ -1168,7 +1174,7 @@ class ConnectedClient {
 
       await server.pushEventsBatch(repositoryName, eventList);
 
-      final eventIds = eventList.map((e) => e['eventId'] as String).toList();
+      final eventIds = eventList.map((e) => e['_event_id'] as String).toList();
       print('[WS PUSH] ✓ Saved ${eventIds.length} events: ${eventIds.take(5).join(", ")}${eventIds.length > 5 ? "..." : ""}');
 
       // Send acknowledgment

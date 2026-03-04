@@ -4,7 +4,7 @@ import 'dart:typed_data';
 
 import 'package:local_first/local_first.dart';
 import 'package:path/path.dart' as p;
-import 'package:sqflite/sqflite.dart';
+import 'package:sqflite_sqlcipher/sqflite.dart';
 
 /// SQLite implementation of [LocalFirstStorage].
 ///
@@ -19,8 +19,10 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     this.databasePath,
     String namespace = 'default',
     DatabaseFactory? dbFactory,
+    String? password,
   }) : _namespace = namespace,
-       _factory = dbFactory ?? databaseFactory {
+       _factory = dbFactory ?? databaseFactory,
+       _password = password {
     _validateIdentifier(_namespace, 'namespace');
   }
 
@@ -28,6 +30,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   final String? databasePath;
   String _namespace;
   final DatabaseFactory _factory;
+  final String? _password;
 
   /// Current namespace used to derive the database file name.
   String get namespace => _namespace;
@@ -71,6 +74,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       path,
       options: OpenDatabaseOptions(
         version: 1,
+        onConfigure: _password != null
+            ? (db) async {
+                await db.rawQuery("PRAGMA key = '$_password'");
+              }
+            : null,
         onCreate: (db, _) async {
           await db.execute(
             'CREATE TABLE IF NOT EXISTS $_metadataTable (key TEXT PRIMARY KEY, value TEXT)',

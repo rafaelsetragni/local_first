@@ -161,7 +161,11 @@ void main() {
       'default factory and resolved path are created when no dbFactory provided',
       () async {
         databaseFactory = databaseFactoryFfi;
-        final defaultStorage = SqliteLocalFirstStorage(namespace: 'ns_default');
+        final defaultStorage = SqliteLocalFirstStorage(
+          namespace: 'ns_default',
+          databasePath: inMemoryDatabasePath,
+          dbFactory: databaseFactoryFfi,
+        );
         expect(defaultStorage.namespace, 'ns_default');
         await defaultStorage.initialize();
         await defaultStorage.close();
