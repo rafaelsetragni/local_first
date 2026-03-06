@@ -4,7 +4,7 @@ import 'dart:typed_data';
 
 import 'package:local_first/local_first.dart';
 import 'package:path/path.dart' as p;
-import 'package:sqflite/sqflite.dart';
+import 'package:sqflite_sqlcipher/sqflite.dart';
 
 /// SQLite implementation of [LocalFirstStorage].
 ///
@@ -19,8 +19,10 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     this.databasePath,
     String namespace = 'default',
     DatabaseFactory? dbFactory,
+    String? password,
   }) : _namespace = namespace,
-       _factory = dbFactory ?? databaseFactory {
+       _factory = dbFactory ?? databaseFactory,
+       _password = password {
     _validateIdentifier(_namespace, 'namespace');
   }
 
@@ -28,12 +30,17 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   final String? databasePath;
   String _namespace;
   final DatabaseFactory _factory;
+  final String? _password;
 
   /// Current namespace used to derive the database file name.
   String get namespace => _namespace;
 
   Database? _db;
   bool _initialized = false;
+
+  /// Completer that resolves when a namespace switch finishes. Queries await
+  /// this instead of hitting a closed database during the transition.
+  Completer<void>? _namespaceSwitching;
 
   final JsonMap<Set<_SqliteQueryObserver>> _observers = {};
   final JsonMap<JsonMap<LocalFieldType>> _schemas = {};
@@ -51,12 +58,37 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   Future<Database> get _database async {
+    // Wait for any in-progress namespace switch to complete before accessing
+    // the database. This prevents "database_closed" errors when queries run
+    // concurrently with useNamespace().
+    if (_namespaceSwitching != null) {
+      await _namespaceSwitching!.future;
+    }
     if (!_initialized || _db == null) {
       throw StateError(
         'SqliteLocalFirstStorage not initialized. Call initialize() first.',
       );
     }
     return _db!;
+  }
+
+  /// Executes [action] that accesses the database. If the database is closed
+  /// mid-operation due to a concurrent [useNamespace] call, waits for the
+  /// switch to finish and retries once with the new database.
+  Future<T> _withDb<T>(Future<T> Function() action) async {
+    if (_namespaceSwitching != null) {
+      await _namespaceSwitching!.future;
+    }
+    try {
+      return await action();
+    } on DatabaseException catch (e) {
+      if (_namespaceSwitching != null &&
+          e.toString().contains('database_closed')) {
+        await _namespaceSwitching!.future;
+        return await action();
+      }
+      rethrow;
+    }
   }
 
   /// Opens (or creates) the SQLite database file for the current namespace so
@@ -69,8 +101,9 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     _db = await _factory.openDatabase(
       path,
-      options: OpenDatabaseOptions(
+      options: SqlCipherOpenDatabaseOptions(
         version: 1,
+        password: _password,
         onCreate: (db, _) async {
           await db.execute(
             'CREATE TABLE IF NOT EXISTS $_metadataTable (key TEXT PRIMARY KEY, value TEXT)',
@@ -119,10 +152,23 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     if (_namespace == namespace) return;
     _validateIdentifier(namespace, 'namespace');
 
-    // Preserve observers across namespace change
-    await close(preserveObservers: true);
-    _namespace = namespace;
-    await initialize();
+    // Signal that a namespace switch is in progress so concurrent queries
+    // wait instead of hitting a closed database.
+    _namespaceSwitching = Completer<void>();
+    try {
+      // Preserve observers across namespace change
+      await close(preserveObservers: true);
+      _namespace = namespace;
+      await initialize();
+    } finally {
+      // Complete the switch BEFORE notifying watchers. The new database is
+      // already open, so pending queries can proceed. Completing after
+      // _notifyWatchers would deadlock: observers call query() → _withDb()
+      // → waits for _namespaceSwitching → which waits for _notifyWatchers.
+      final completer = _namespaceSwitching;
+      _namespaceSwitching = null;
+      completer?.complete();
+    }
 
     // Re-emit results to all active observers with data from the new namespace
     for (final repositoryName in _observers.keys.toList()) {
@@ -642,7 +688,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   /// Throws [StateError] if called before [initialize].
   @override
   Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query) {
-    if (!_initialized) {
+    if (!_initialized && _namespaceSwitching == null) {
       throw StateError(
         'SqliteLocalFirstStorage not initialized. Call initialize() first.',
       );
@@ -927,7 +973,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   ///
   /// - [query]: Query definition including filters, sorts and pagination.
   @override
-  Future<List<LocalFirstEvent<T>>> query<T>(LocalFirstQuery<T> query) async {
+  Future<List<LocalFirstEvent<T>>> query<T>(LocalFirstQuery<T> query) =>
+      _withDb(() => _queryInternal(query));
+
+  Future<List<LocalFirstEvent<T>>> _queryInternal<T>(
+      LocalFirstQuery<T> query) async {
     final db = await _database;
     await _ensureTables(query.repositoryName);
     final resolvedTable = _tableName(query.repositoryName);

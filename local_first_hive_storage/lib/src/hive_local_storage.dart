@@ -3,6 +3,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:local_first/local_first.dart';
@@ -39,6 +40,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   final HiveInterface _hive;
   final Future<void> Function([String? subDir]) _initFlutter;
   final Set<String> _lazyCollections;
+  final String? _password;
 
   static const Set<String> _metadataKeys = {
     LocalFirstEvent.kEventId,
@@ -55,16 +57,19 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   /// - [namespace]: Optional namespace to database
   /// - [hive]: Optional Hive interface (useful for tests/mocking)
   /// - [initFlutter]: Optional initializer for Hive Flutter (useful for tests)
+  /// - [password]: Optional password for at-rest encryption using AES-256
   HiveLocalFirstStorage({
     this.customPath,
     String? namespace,
     HiveInterface? hive,
     Future<void> Function([String? subDir])? initFlutter,
     Set<String> lazyCollections = const {},
+    String? password,
   }) : _namespace = namespace ?? 'default',
        _hive = hive ?? Hive,
        _initFlutter = initFlutter ?? Hive.initFlutter,
-       _lazyCollections = lazyCollections;
+       _lazyCollections = lazyCollections,
+       _password = password;
 
   /// Opens Hive boxes for the current namespace so reads/writes can start.
   ///
@@ -81,7 +86,10 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     }
 
     // Open metadata box
-    _metadataBox = await _hive.openBox<dynamic>(_metadataBoxName);
+    _metadataBox = await _hive.openBox<dynamic>(
+      _metadataBoxName,
+      encryptionCipher: _cipher,
+    );
 
     _initialized = true;
   }
@@ -129,6 +137,12 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
   String get _metadataBoxName => 'offline_metadata';
 
+  HiveCipher? get _cipher {
+    if (_password == null) return null;
+    final keyBytes = sha256.convert(utf8.encode(_password)).bytes;
+    return HiveAesCipher(keyBytes);
+  }
+
   String _boxName(String tableName, {bool isEvent = false}) {
     return isEvent ? '${tableName}__events' : tableName;
   }
@@ -164,10 +178,11 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
 
     final resolvedName = _boxName(tableName, isEvent: isEvent);
     // Open box and store in cache
+    final cipher = _cipher;
     final bool useLazy = !isEvent && _lazyCollections.contains(tableName);
     final box = useLazy
-        ? await _hive.openLazyBox<Map>(resolvedName)
-        : await _hive.openBox<Map>(resolvedName);
+        ? await _hive.openLazyBox<Map>(resolvedName, encryptionCipher: cipher)
+        : await _hive.openBox<Map>(resolvedName, encryptionCipher: cipher);
     _boxes[cacheKey] = box;
     return box;
   }

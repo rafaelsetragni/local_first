@@ -3,12 +3,8 @@ import 'dart:convert';
 import 'dart:developer' as dev;
 import 'dart:io';
 
-import 'package:mongo_dart/mongo_dart.dart';
-
-// mongo_dart query selector builder - use getter to always get fresh instance
-// IMPORTANT: SelectorBuilder is mutable and accumulates state between calls
-// Using a getter ensures each query starts with a clean slate
-SelectorBuilder get where => SelectorBuilder();
+import 'database_service.dart';
+import 'mongo_database_service.dart';
 
 /// Hybrid WebSocket + REST API server for local_first synchronization.
 ///
@@ -69,7 +65,7 @@ class RepositoryConfig {
 class WebSocketSyncServer {
   static const logTag = 'WebSocketSyncServer';
   static const _productionPort = 8080;
-  static const _testPort = 8081;
+  static const _testPort = 18081;
   static const _productionDb = 'remote_counter_db';
   static const _testDb = 'remote_counter_db_test';
 
@@ -90,8 +86,16 @@ class WebSocketSyncServer {
   };
 
   final bool isTestMode;
+  final DatabaseService? _injectedDbService;
 
-  WebSocketSyncServer({this.isTestMode = false});
+  /// Ping/pong intervals - shorter in test mode for faster tests
+  Duration get pingInterval =>
+      isTestMode ? const Duration(seconds: 3) : const Duration(seconds: 30);
+  Duration get pongTimeout =>
+      isTestMode ? const Duration(seconds: 5) : const Duration(seconds: 10);
+
+  WebSocketSyncServer({this.isTestMode = false, DatabaseService? dbService})
+      : _injectedDbService = dbService;
 
   /// Gets configuration for a specific repository
   static RepositoryConfig _getRepositoryConfig(String repositoryName) {
@@ -113,7 +117,7 @@ class WebSocketSyncServer {
   }
 
   HttpServer? _httpServer;
-  Db? _db;
+  late DatabaseService _dbService;
   final Set<ConnectedClient> _clients = {};
 
   /// Starts the WebSocket server.
@@ -130,8 +134,16 @@ class WebSocketSyncServer {
         dev.log('Database: $databaseName', name: logTag);
       }
 
-      // Connect to MongoDB
-      await _connectToMongo();
+      // Initialize database service
+      _dbService = _injectedDbService ??
+          MongoDatabaseService(connectionString: mongoConnectionString);
+      await _dbService.open();
+      dev.log('Database connected', name: logTag);
+
+      // Ensure indexes
+      await _dbService.ensureIndexes(
+        ['user', 'counter_log', 'session_counter', 'chat', 'message'],
+      );
 
       // Start HTTP server for WebSocket upgrade
       final httpServer = await HttpServer.bind(InternetAddress.anyIPv4, port);
@@ -160,58 +172,11 @@ class WebSocketSyncServer {
   /// Stops the server.
   Future<void> stop() async {
     await _httpServer?.close();
-    await _db?.close();
+    await _dbService.close();
     for (final client in _clients) {
       await client.close();
     }
     _clients.clear();
-  }
-
-  /// Connects to MongoDB.
-  Future<void> _connectToMongo() async {
-    final db = await Db.create(mongoConnectionString);
-    _db = db;
-    await db.open();
-    dev.log('Connected to MongoDB at $mongoConnectionString', name: logTag);
-
-    // Ensure indexes
-    await _ensureIndexes();
-  }
-
-  /// Ensures MongoDB indexes exist.
-  Future<void> _ensureIndexes() async {
-    final db = _db;
-    if (db == null) return;
-
-    final repos = ['user', 'counter_log', 'session_counter', 'chat', 'message'];
-
-    for (final repoName in repos) {
-      final collection = db.collection(repoName);
-
-      try {
-        // Index for server sequence-based sync
-        await collection.createIndex(keys: {'serverSequence': 1});
-        await collection.createIndex(keys: {'eventId': 1}, unique: true);
-        // Index for dataId queries (used to fetch entities by their ID)
-        await collection.createIndex(keys: {'dataId': 1});
-      } catch (e) {
-        dev.log('Failed to create indexes for $repoName: $e', name: logTag);
-      }
-    }
-
-    // Initialize sequence counters collection
-    try {
-      final countersCollection = db.collection('_sequence_counters');
-      await countersCollection.createIndex(
-        keys: {'repository': 1},
-        unique: true,
-      );
-    } catch (e) {
-      dev.log(
-        'Failed to create sequence counters collection: $e',
-        name: logTag,
-      );
-    }
   }
 
   /// Handles new WebSocket connection.
@@ -372,14 +337,13 @@ class WebSocketSyncServer {
   /// Handles GET /api/health - Health check endpoint.
   Future<void> _handleHealthCheck(HttpRequest request) async {
     final response = request.response;
-    final isDbConnected = _db?.isConnected ?? false;
 
     response.statusCode = HttpStatus.ok;
     response.write(
       jsonEncode({
         'status': 'ok',
         'timestamp': DateTime.now().toIso8601String(),
-        'mongodb': isDbConnected ? 'connected' : 'disconnected',
+        'mongodb': _dbService.isConnected ? 'connected' : 'disconnected',
         'activeConnections': _clients.length,
       }),
     );
@@ -389,9 +353,8 @@ class WebSocketSyncServer {
   /// Handles GET /api/repositories - List available repositories.
   Future<void> _handleListRepositories(HttpRequest request) async {
     final response = request.response;
-    final db = _db;
 
-    if (db == null) {
+    if (!_dbService.isConnected) {
       _sendError(
         response,
         HttpStatus.serviceUnavailable,
@@ -401,29 +364,29 @@ class WebSocketSyncServer {
     }
 
     try {
-      final collections = await db.getCollectionNames();
+      final collections = await _dbService.getCollectionNames();
 
       // Filter out system collections and internal collections
       final repositories = collections
           .where(
             (name) =>
-                name != null &&
                 !name.startsWith('_') &&
                 !name.endsWith('__events') &&
                 !name.startsWith('system.'),
           )
-          .cast<String>()
           .toList();
 
       // Get statistics for each repository
       final stats = <Map<String, dynamic>>[];
       for (final repo in repositories) {
-        final collection = db.collection(repo);
-        final count = await collection.count();
+        final count = await _dbService.collectionCount(repo);
 
         // Get max sequence
-        final maxSeqDoc = await collection.findOne(
-          where.sortBy('serverSequence', descending: true).limit(1),
+        final maxSeqDoc = await _dbService.findOne(
+          repo,
+          sortByField: 'serverSequence',
+          sortDescending: true,
+          limit: 1,
         );
         final maxSequence = maxSeqDoc?['serverSequence'] as int? ?? 0;
 
@@ -451,9 +414,8 @@ class WebSocketSyncServer {
   /// Handles GET /api/events/{repository}?seq={n} - Get events after sequence.
   Future<void> _handleGetEvents(HttpRequest request, String repository) async {
     final response = request.response;
-    final db = _db;
 
-    if (db == null) {
+    if (!_dbService.isConnected) {
       _sendError(
         response,
         HttpStatus.serviceUnavailable,
@@ -518,9 +480,8 @@ class WebSocketSyncServer {
     String eventId,
   ) async {
     final response = request.response;
-    final db = _db;
 
-    if (db == null) {
+    if (!_dbService.isConnected) {
       _sendError(
         response,
         HttpStatus.serviceUnavailable,
@@ -530,16 +491,16 @@ class WebSocketSyncServer {
     }
 
     try {
-      final collection = db.collection(repository);
-      final event = await collection.findOne(where.eq('eventId', eventId));
+      final event = await _dbService.findOne(
+        repository,
+        eqField: '_event_id',
+        eqValue: eventId,
+      );
 
       if (event == null) {
         _sendError(response, HttpStatus.notFound, 'Event not found');
         return;
       }
-
-      // Remove MongoDB internal _id
-      event.remove('_id');
 
       response.statusCode = HttpStatus.ok;
       response.headers.contentType = ContentType.json;
@@ -561,9 +522,8 @@ class WebSocketSyncServer {
     String dataId,
   ) async {
     final response = request.response;
-    final db = _db;
 
-    if (db == null) {
+    if (!_dbService.isConnected) {
       _sendError(
         response,
         HttpStatus.serviceUnavailable,
@@ -573,16 +533,16 @@ class WebSocketSyncServer {
     }
 
     try {
-      final collection = db.collection(repository);
-      final event = await collection.findOne(where.eq('dataId', dataId));
+      final event = await _dbService.findOne(
+        repository,
+        eqField: '_data_id',
+        eqValue: dataId,
+      );
 
       if (event == null) {
         _sendError(response, HttpStatus.notFound, 'Event not found');
         return;
       }
-
-      // Remove MongoDB internal _id
-      event.remove('_id');
 
       response.statusCode = HttpStatus.ok;
       response.headers.contentType = ContentType.json;
@@ -607,16 +567,16 @@ class WebSocketSyncServer {
       final body = jsonDecode(bodyString) as Map<String, dynamic>;
 
       // Validate event has required fields
-      if (!body.containsKey('eventId')) {
+      if (!body.containsKey('_event_id')) {
         _sendError(
           response,
           HttpStatus.badRequest,
-          'Missing required field: eventId',
+          'Missing required field: _event_id',
         );
         return;
       }
 
-      // Push event to MongoDB
+      // Push event to database
       await pushEvent(repository, body);
 
       response.statusCode = HttpStatus.created;
@@ -624,7 +584,7 @@ class WebSocketSyncServer {
         jsonEncode({
           'status': 'success',
           'repository': repository,
-          'eventId': body['eventId'],
+          'eventId': body['_event_id'],
         }),
       );
       await response.close();
@@ -664,22 +624,22 @@ class WebSocketSyncServer {
       // Log incoming push request
       print('[REST POST] Repository: $repository, events: ${events.length}');
 
-      // Validate all events have eventId
+      // Validate all events have _event_id
       for (final event in events) {
-        if (!event.containsKey('eventId')) {
+        if (!event.containsKey('_event_id')) {
           _sendError(
             response,
             HttpStatus.badRequest,
-            'All events must have eventId field',
+            'All events must have _event_id field',
           );
           return;
         }
       }
 
-      // Push events to MongoDB
+      // Push events to database
       await pushEventsBatch(repository, events);
 
-      final eventIds = events.map((e) => e['eventId'] as String).toList();
+      final eventIds = events.map((e) => e['_event_id'] as String).toList();
       print('[REST POST] ✓ Saved ${eventIds.length} events: ${eventIds.take(5).join(", ")}${eventIds.length > 5 ? "..." : ""}');
 
       response.statusCode = HttpStatus.created;
@@ -701,48 +661,20 @@ class WebSocketSyncServer {
     }
   }
 
-  /// Gets the next sequence number for a repository.
-  Future<int> _getNextSequence(String repositoryName) async {
-    final db = _db;
-    if (db == null) {
-      throw StateError('MongoDB not connected');
-    }
-
-    final countersCollection = db.collection('_sequence_counters');
-
-    // Use raw map for MongoDB update operators - more reliable than ModifierBuilder
-    await countersCollection.updateOne(
-      where.eq('repository', repositoryName),
-      {
-        r'$inc': {'sequence': 1},
-        r'$setOnInsert': {'repository': repositoryName},
-      },
-      upsert: true,
-    );
-
-    final doc = await countersCollection.findOne(
-      where.eq('repository', repositoryName),
-    );
-
-    return doc?['sequence'] as int? ?? 1;
-  }
-
-  /// Pushes an event to MongoDB.
+  /// Pushes an event to the database.
   Future<void> pushEvent(
     String repositoryName,
     Map<String, dynamic> event,
   ) async {
-    final db = _db;
-    if (db == null) {
-      throw StateError('MongoDB not connected');
-    }
-
-    final collection = db.collection(repositoryName);
-    final eventId = event['eventId'];
+    final eventId = event['_event_id'];
 
     try {
       // Check if event already exists
-      final existing = await collection.findOne(where.eq('eventId', eventId));
+      final existing = await _dbService.findOne(
+        repositoryName,
+        eqField: '_event_id',
+        eqValue: eventId,
+      );
 
       if (existing != null) {
         // Event already exists, just return (idempotency)
@@ -755,7 +687,7 @@ class WebSocketSyncServer {
       }
 
       // Get next sequence number
-      final serverSequence = await _getNextSequence(repositoryName);
+      final serverSequence = await _dbService.getNextSequence(repositoryName);
 
       // Add server sequence to event and ensure no _id field
       final eventWithSequence = Map<String, dynamic>.from(event)
@@ -763,9 +695,9 @@ class WebSocketSyncServer {
         ..['serverSequence'] = serverSequence;
 
       // Ensure all nested maps and values are properly serialized
-      final cleanedEvent = _cleanEventForMongo(eventWithSequence);
+      final cleanedEvent = _cleanEventForStorage(eventWithSequence);
 
-      await collection.insertOne(cleanedEvent);
+      await _dbService.insertOne(repositoryName, cleanedEvent);
 
       dev.log(
         'Event $eventId pushed to $repositoryName with sequence $serverSequence',
@@ -780,7 +712,7 @@ class WebSocketSyncServer {
     }
   }
 
-  /// Pushes multiple events to MongoDB.
+  /// Pushes multiple events to the database.
   Future<void> pushEventsBatch(
     String repositoryName,
     List<Map<String, dynamic>> events,
@@ -790,7 +722,7 @@ class WebSocketSyncServer {
     }
   }
 
-  /// Fetches events from MongoDB after a given sequence number.
+  /// Fetches events from the database after a given sequence number.
   ///
   /// Returns only the latest event for each dataId to minimize network traffic.
   /// Events are grouped by dataId and only the event with the highest serverSequence
@@ -805,36 +737,21 @@ class WebSocketSyncServer {
     int? afterSequence,
     int? limit,
   }) async {
-    final db = _db;
-    if (db == null) {
-      throw StateError('MongoDB not connected');
-    }
-
     // Get repository-specific configuration
     final config = _getRepositoryConfig(repositoryName);
 
-    final collection = db.collection(repositoryName);
-    var selector = afterSequence != null
-        ? where.gt('serverSequence', afterSequence)
-        : where;
-
-    // Apply sorting based on repository configuration
-    selector = selector.sortBy('serverSequence', descending: config.sortDescending);
-
     // For repositories without deduplication (like counter_log), apply limit in query
     // For others, we need all events to properly group by dataId
-    if (!config.shouldDeduplicate && limit != null && limit > 0) {
-      selector = selector.limit(limit);
-    }
+    final queryLimit = !config.shouldDeduplicate ? limit : null;
 
-    final cursor = collection.find(selector);
-    final allEvents = <Map<String, dynamic>>[];
-
-    await cursor.forEach((doc) {
-      final map = Map<String, dynamic>.from(doc)
-        ..remove('_id'); // Remove MongoDB internal _id field only
-      allEvents.add(map);
-    });
+    final allEvents = await _dbService.find(
+      repositoryName,
+      gtField: afterSequence != null ? 'serverSequence' : null,
+      gtValue: afterSequence,
+      sortByField: 'serverSequence',
+      sortDescending: config.sortDescending,
+      limit: queryLimit,
+    );
 
     // Skip deduplication if repository config specifies no deduplication
     if (!config.shouldDeduplicate) {
@@ -849,12 +766,12 @@ class WebSocketSyncServer {
     final latestEventsByDataId = <String, Map<String, dynamic>>{};
 
     for (final event in allEvents) {
-      final dataId = event['dataId'] as String?;
+      final dataId = event['_data_id'] as String?;
 
-      // If no dataId, include the event as-is (backwards compatibility)
+      // If no _data_id, include the event as-is (backwards compatibility)
       if (dataId == null) {
-        // For events without dataId, use eventId as unique identifier
-        final eventId = event['eventId'] as String;
+        // For events without _data_id, use _event_id as unique identifier
+        final eventId = event['_event_id'] as String;
         latestEventsByDataId[eventId] = event;
         continue;
       }
@@ -924,9 +841,9 @@ class WebSocketSyncServer {
     }
   }
 
-  /// Cleans event data for MongoDB insertion by ensuring proper types.
+  /// Cleans event data for storage by ensuring proper types.
   /// This handles any legacy data or edge cases where types might not match.
-  Map<String, dynamic> _cleanEventForMongo(Map<String, dynamic> event) {
+  Map<String, dynamic> _cleanEventForStorage(Map<String, dynamic> event) {
     final cleaned = <String, dynamic>{};
 
     for (final entry in event.entries) {
@@ -936,11 +853,11 @@ class WebSocketSyncServer {
       if (value == null) {
         cleaned[key] = null;
       } else if (value is Map) {
-        cleaned[key] = _cleanEventForMongo(value.cast<String, dynamic>());
+        cleaned[key] = _cleanEventForStorage(value.cast<String, dynamic>());
       } else if (value is List) {
         cleaned[key] = value.map((item) {
           if (item is Map) {
-            return _cleanEventForMongo(item.cast<String, dynamic>());
+            return _cleanEventForStorage(item.cast<String, dynamic>());
           }
           return item;
         }).toList();
@@ -952,19 +869,16 @@ class WebSocketSyncServer {
 
     return cleaned;
   }
-
-  /// Sorts event lists by their serverSequence value.
-  /// Defaults to descending order unless `descending` is false.
 }
 
 /// Represents a connected WebSocket client.
 class ConnectedClient {
   static const logTag = 'ConnectedClient';
-  static const _pingInterval = Duration(seconds: 30);
-  static const _pongTimeout = Duration(seconds: 10);
 
   final WebSocket webSocket;
   final WebSocketSyncServer server;
+  Duration get _pingInterval => server.pingInterval;
+  Duration get _pongTimeout => server.pongTimeout;
   bool isAuthenticated = false;
   StreamSubscription? _subscription;
   Timer? _pingTimer;
@@ -1130,16 +1044,16 @@ class ConnectedClient {
     }
 
     try {
-      print('[WS PUSH] Repository: $repositoryName, event: ${event['eventId']}');
+      print('[WS PUSH] Repository: $repositoryName, event: ${event['_event_id']}');
       await server.pushEvent(repositoryName, event);
-      print('[WS PUSH] ✓ Saved event: ${event['eventId']}');
+      print('[WS PUSH] ✓ Saved event: ${event['_event_id']}');
 
       // Send acknowledgment
       sendMessage({
         'type': 'ack',
-        'eventIds': [event['eventId']],
+        'eventIds': [event['_event_id']],
         'repositories': {
-          repositoryName: [event['eventId']],
+          repositoryName: [event['_event_id']],
         },
       });
     } catch (e) {
@@ -1168,7 +1082,7 @@ class ConnectedClient {
 
       await server.pushEventsBatch(repositoryName, eventList);
 
-      final eventIds = eventList.map((e) => e['eventId'] as String).toList();
+      final eventIds = eventList.map((e) => e['_event_id'] as String).toList();
       print('[WS PUSH] ✓ Saved ${eventIds.length} events: ${eventIds.take(5).join(", ")}${eventIds.length > 5 ? "..." : ""}');
 
       // Send acknowledgment

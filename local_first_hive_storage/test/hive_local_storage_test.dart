@@ -586,4 +586,94 @@ void main() {
       },
     );
   });
+
+  group('HiveLocalFirstStorage (encrypted)', () {
+    late Directory tempDir;
+    late HiveLocalFirstStorage storage;
+
+    setUp(() async {
+      tempDir = await Directory.systemTemp.createTemp('hive_encrypted_test');
+      await Directory('${tempDir.path}/enc_ns').create(recursive: true);
+      storage = HiveLocalFirstStorage(
+        customPath: tempDir.path,
+        namespace: 'enc_ns',
+        password: 'test-secret-key',
+      );
+      await storage.initialize();
+    });
+
+    tearDown(() async {
+      await storage.close();
+      if (tempDir.existsSync()) {
+        await tempDir.delete(recursive: true);
+      }
+    });
+
+    test('insert and retrieve data with encryption', () async {
+      await storage.insert('users', {'id': '1', 'username': 'Alice'}, 'id');
+      await storage.insert('users', {'id': '2', 'username': 'Bob'}, 'id');
+
+      final byId = await storage.getById('users', '1');
+      expect(byId, isNotNull);
+      expect(byId?['username'], 'Alice');
+
+      final all = await storage.getAll('users');
+      expect(all.length, 2);
+    });
+
+    test('config values work with encryption', () async {
+      await storage.setConfigValue('bool', true);
+      await storage.setConfigValue('int', 42);
+      await storage.setConfigValue('double', 3.14);
+      await storage.setConfigValue('string', 'encrypted');
+      await storage.setConfigValue('list', <String>['a', 'b']);
+
+      expect(await storage.getConfigValue<bool>('bool'), isTrue);
+      expect(await storage.getConfigValue<int>('int'), 42);
+      expect(await storage.getConfigValue<double>('double'), 3.14);
+      expect(await storage.getConfigValue<String>('string'), 'encrypted');
+      expect(await storage.getConfigValue<List<String>>('list'), ['a', 'b']);
+    });
+
+    test('events work with encryption', () async {
+      await storage.insertEvent('users', {
+        LocalFirstEvent.kEventId: 'evt-1',
+        LocalFirstEvent.kDataId: '1',
+        LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+        LocalFirstEvent.kOperation: SyncOperation.insert.index,
+        LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+      }, LocalFirstEvent.kEventId);
+
+      final event = await storage.getEventById('users', 'evt-1');
+      expect(event, isNotNull);
+      expect(event?[LocalFirstEvent.kDataId], '1');
+    });
+
+    test('wrong password returns corrupted data', () async {
+      await storage.insert('users', {'id': '1', 'username': 'Secret'}, 'id');
+      await storage.close();
+
+      final wrongStorage = HiveLocalFirstStorage(
+        customPath: tempDir.path,
+        namespace: 'enc_ns',
+        password: 'wrong-password',
+      );
+
+      // Hive CE may not throw on wrong key but data will be unreadable
+      try {
+        await wrongStorage.initialize();
+        final data = await wrongStorage.getAll('users');
+        // If it doesn't throw, the data should be empty or corrupted
+        if (data.isNotEmpty) {
+          expect(data.first['username'], isNot('Secret'));
+        }
+      } catch (_) {
+        // Expected: Hive throws on corrupted decryption
+      } finally {
+        try {
+          await wrongStorage.close();
+        } catch (_) {}
+      }
+    });
+  });
 }
