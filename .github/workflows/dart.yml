@@ -26,6 +26,9 @@ jobs:
       - name: Bootstrap workspace
         run: melos bootstrap
 
+      - name: Run server tests
+        run: cd server && dart pub get && dart test
+
       - name: Run coverage (melos)
         run: melos coverage --no-select
 

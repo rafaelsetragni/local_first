@@ -5,44 +5,22 @@ import 'dart:io';
 import 'package:test/test.dart';
 import 'package:http/http.dart' as http;
 
-/// Integration tests for WebSocket + REST API server.
+import '../in_memory_database_service.dart';
+import '../websocket_server.dart';
+
+/// Unit tests for WebSocket + REST API server using in-memory database.
 ///
-/// Prerequisites:
-/// - MongoDB must be running on localhost:27017
-/// - Run with: dart test
-///
-/// To start MongoDB:
-/// docker run -d --name mongo_test -p 27017:27017 \
-///   -e MONGO_INITDB_ROOT_USERNAME=admin \
-///   -e MONGO_INITDB_ROOT_PASSWORD=admin mongo:7
+/// No external dependencies required — MongoDB is replaced by
+/// [InMemoryDatabaseService] for deterministic, fast test execution.
 void main() {
-  late Process serverProcess;
+  late WebSocketSyncServer server;
   late String baseUrl;
   late String wsUrl;
 
-  // Setup: Start server before all tests
+  // Setup: Start server in-process with in-memory database
   setUpAll(() async {
-    // Use test port (18081) to avoid conflicts with production server (8080)
     baseUrl = 'http://localhost:18081';
     wsUrl = 'ws://localhost:18081';
-
-    // CRITICAL: Verify test database name to prevent production data corruption
-    const testDbName = 'remote_counter_db_test';
-    const prodDbName = 'remote_counter_db';
-
-    if (testDbName == prodDbName) {
-      throw Exception(
-        'SAFETY CHECK FAILED: Test database name cannot be the same as production! '
-        'Test DB: $testDbName, Prod DB: $prodDbName',
-      );
-    }
-
-    if (!testDbName.contains('test')) {
-      throw Exception(
-        'SAFETY CHECK FAILED: Test database name must contain "test" to prevent accidents. '
-        'Current: $testDbName',
-      );
-    }
 
     // CRITICAL: Verify test port 18081 is not already in use
     try {
@@ -50,67 +28,21 @@ void main() {
       await serverSocket.close();
     } catch (e) {
       throw Exception(
-        'SAFETY CHECK FAILED: Port 18081 is already in use!\n'
-        'This usually means another test server is running.\n'
+        'Port 18081 is already in use!\n'
         'Kill any process using port 18081 before running tests.',
       );
     }
 
-    // Check if MongoDB is running
-    try {
-      final result = await Process.run('docker', [
-        'exec',
-        'local_first_mongodb',
-        'mongosh',
-        '--quiet',
-        '--eval',
-        'db.version()',
-      ]);
-
-      if (result.exitCode != 0) {
-        throw Exception(
-          'MongoDB container not found or not running. '
-          'Start it with: melos server:start',
-        );
-      }
-    } catch (e) {
-      print(
-        'Warning: Could not verify MongoDB. '
-        'Ensure MongoDB is running on localhost:27017',
-      );
-    }
-
-    // Start the server in test mode (uses port 18081 and test database)
-    print('Starting WebSocket server in test mode...');
-    print('  Port: 18081');
-    print('  Database: $testDbName');
-    // Resolve server directory: find pubspec.yaml to locate package root
-    var serverDir = Directory.current;
-    while (!File('${serverDir.path}/websocket_server.dart').existsSync()) {
-      final parent = serverDir.parent;
-      if (parent.path == serverDir.path) break;
-      serverDir = parent;
-    }
-    print('  Server dir: ${serverDir.path}');
-    serverProcess = await Process.start(
-      'dart',
-      ['${serverDir.path}/websocket_server.dart', '--test'],
-      environment: {
-        ...Platform.environment,
-        'MONGO_HOST': '127.0.0.1',
-        'MONGO_PORT': '27017',
-      },
+    // Start server with in-memory database (no MongoDB needed)
+    server = WebSocketSyncServer(
+      isTestMode: true,
+      dbService: InMemoryDatabaseService(),
     );
 
-    // Forward server output for debugging
-    serverProcess.stdout.transform(utf8.decoder).listen(
-      (data) => print('[SERVER STDOUT] $data'),
-    );
-    serverProcess.stderr.transform(utf8.decoder).listen(
-      (data) => print('[SERVER STDERR] $data'),
-    );
+    // Start server in background (start() blocks on the request loop)
+    unawaited(server.start());
 
-    // Wait for server to start (check health endpoint)
+    // Wait for server to be ready
     var attempts = 0;
     while (attempts < 30) {
       try {
@@ -118,37 +50,25 @@ void main() {
             .get(Uri.parse('$baseUrl/api/health'))
             .timeout(Duration(seconds: 1));
         if (response.statusCode == 200) {
-          print('Server started successfully');
+          print('Server started successfully (in-memory database)');
           break;
         }
       } catch (e) {
-        // Server not ready yet
-        await Future.delayed(Duration(milliseconds: 500));
+        await Future.delayed(Duration(milliseconds: 100));
         attempts++;
       }
     }
 
     if (attempts >= 30) {
-      serverProcess.kill();
-      throw Exception('Server failed to start after 15 seconds');
+      await server.stop();
+      throw Exception('Server failed to start after 3 seconds');
     }
-
-    // CRITICAL: Verify server is using test database
-    await _verifyTestDatabase();
-
-    // Drop test database to ensure deterministic test state
-    print('Dropping test database to ensure clean state...');
-    await _dropTestDatabase();
   });
 
-  // Teardown: Stop server after all tests
+  // Teardown: Stop server
   tearDownAll(() async {
     print('Stopping WebSocket server...');
-    serverProcess.kill();
-    await serverProcess.exitCode;
-
-    // Drop test database for cleanup
-    await _dropTestDatabase();
+    await server.stop();
   });
 
   group('REST API - Health and Info Endpoints', () {
@@ -551,7 +471,6 @@ void main() {
       final dataId = 'log_entry_$timestamp';
 
       // Create multiple log events with the same dataId
-      // In a real scenario, logs might have the same dataId but different timestamps
       final response1 = await http.post(
         Uri.parse('$baseUrl/api/events/counter_log'),
         headers: {'Content-Type': 'application/json'},
@@ -585,7 +504,7 @@ void main() {
       );
       expect(response3.statusCode, 201, reason: 'Event 3 creation failed');
 
-      // Fetch all counter_log events with high limit to ensure we get all our test events
+      // Fetch all counter_log events with high limit
       final response = await http.get(
         Uri.parse('$baseUrl/api/events/counter_log?limit=100'),
       );
@@ -597,13 +516,12 @@ void main() {
       // Filter events for our test dataId
       final logEvents = events.where((e) => e['_data_id'] == dataId).toList();
 
-      // Should have ALL 3 events, not just the latest (counter_log is excluded from deduplication)
+      // Should have ALL 3 events, not just the latest
       expect(logEvents.length, 3,
           reason:
               'counter_log should return all events, not deduplicate by dataId');
 
-      // Verify all events are present with correct values in DESCENDING order (newest first)
-      // Log events are returned newest first since old logs are not useful for new devices
+      // Verify all events are present in DESCENDING order (newest first)
       expect(logEvents[0]['data']['value'], 3);
       expect(logEvents[1]['data']['value'], 2);
       expect(logEvents[2]['data']['value'], 1);
@@ -704,7 +622,6 @@ void main() {
       );
 
       // Fetch logs after minSequence with limit 5
-      // Should return the 3 newest logs (not the old ones chronologically)
       final response = await http.get(
         Uri.parse('$baseUrl/api/events/counter_log?seq=$minSequence&limit=5'),
       );
@@ -883,11 +800,6 @@ void main() {
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final repo = 'test_new_repo_$timestamp';
 
-      // This test specifically verifies the fix for the ObjectId type cast bug.
-      // When creating the first event in a new repository, the sequence counter
-      // must be created using 'repository' field instead of '_id' to avoid
-      // MongoDB's automatic ObjectId casting.
-
       final response = await http.post(
         Uri.parse('$baseUrl/api/events/$repo'),
         headers: {'Content-Type': 'application/json'},
@@ -900,7 +812,7 @@ void main() {
         }),
       );
 
-      // Should succeed without ObjectId type cast error
+      // Should succeed without errors
       expect(response.statusCode, 201);
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       expect(data['status'], 'success');
@@ -1089,71 +1001,4 @@ void main() {
       await ws.close();
     });
   });
-}
-
-/// Verifies that the server is connected to the test database.
-/// This is a critical safety check to prevent accidental operations on production data.
-Future<void> _verifyTestDatabase() async {
-  try {
-    final result = await Process.run('docker', [
-      'exec',
-      'local_first_mongodb',
-      'mongosh',
-      '--quiet',
-      '-u',
-      'admin',
-      '-p',
-      'admin',
-      '--authenticationDatabase',
-      'admin',
-      '--eval',
-      'db.getMongo().getDBNames()',
-    ]);
-
-    if (result.exitCode == 0) {
-      // With test mode (--test flag), the server runs on port 18081 with test database
-      // Production database can safely exist alongside test database
-      // The test database will be created automatically when first event is inserted
-      print('✓ Database safety check passed - test mode uses isolated database');
-    }
-  } catch (e) {
-    if (e.toString().contains('SAFETY CHECK FAILED')) {
-      rethrow;
-    }
-    print('Warning: Could not verify test database (may be created on first use): $e');
-  }
-}
-
-/// Helper function to clean up test data from MongoDB
-/// Drops the entire test database to ensure deterministic test execution.
-/// This prevents state leakage between test runs and ensures each test
-/// suite starts with a completely clean database.
-Future<void> _dropTestDatabase() async {
-  const testDbName = 'remote_counter_db_test';
-
-  try {
-    final result = await Process.run('docker', [
-      'exec',
-      'local_first_mongodb',
-      'mongosh',
-      '--quiet',
-      '-u',
-      'admin',
-      '-p',
-      'admin',
-      '--authenticationDatabase',
-      'admin',
-      testDbName,
-      '--eval',
-      'db.dropDatabase()',
-    ]);
-
-    if (result.exitCode == 0) {
-      print('Test database dropped successfully');
-    } else {
-      print('Warning: Failed to drop test database: ${result.stderr}');
-    }
-  } catch (e) {
-    print('Warning: Could not drop test database: $e');
-  }
 }
