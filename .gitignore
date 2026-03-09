@@ -3,6 +3,7 @@ pubspec.lock
 *.idea
 *.DS_Store
 .dart_tool
+.flutter-plugins-dependencies
 *.dll
 
 # Melos
