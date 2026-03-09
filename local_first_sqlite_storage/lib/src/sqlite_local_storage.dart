@@ -30,7 +30,13 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   final String? databasePath;
   String _namespace;
   final DatabaseFactory _factory;
-  final String? _password;
+  String? _password;
+
+  /// Updates the encryption password used when opening new namespaces.
+  /// Must be called before [useNamespace] for the change to take effect.
+  void setPassword(String? password) {
+    _password = password;
+  }
 
   /// Current namespace used to derive the database file name.
   String get namespace => _namespace;
