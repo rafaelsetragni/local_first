@@ -1,8 +1,79 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:icloud_storage/icloud_storage.dart';
 import 'package:local_first/local_first.dart';
 import 'package:path/path.dart' as p;
+
+/// Delegate that wraps [ICloudStorage] static methods for testability.
+@visibleForTesting
+abstract class ICloudStorageDelegate {
+  /// Uploads a file to iCloud.
+  Future<void> upload({
+    required String containerId,
+    required String filePath,
+    required String destinationRelativePath,
+  });
+
+  /// Downloads a file from iCloud.
+  Future<void> download({
+    required String containerId,
+    required String relativePath,
+    required String destinationFilePath,
+  });
+
+  /// Lists all files in the iCloud container.
+  Future<List<ICloudFile>> gather({required String containerId});
+
+  /// Deletes a file from iCloud.
+  Future<void> delete({
+    required String containerId,
+    required String relativePath,
+  });
+}
+
+/// Default delegate that calls [ICloudStorage] static methods.
+class _DefaultICloudStorageDelegate implements ICloudStorageDelegate {
+  const _DefaultICloudStorageDelegate();
+
+  @override
+  Future<void> upload({
+    required String containerId,
+    required String filePath,
+    required String destinationRelativePath,
+  }) =>
+      ICloudStorage.upload(
+        containerId: containerId,
+        filePath: filePath,
+        destinationRelativePath: destinationRelativePath,
+      );
+
+  @override
+  Future<void> download({
+    required String containerId,
+    required String relativePath,
+    required String destinationFilePath,
+  }) =>
+      ICloudStorage.download(
+        containerId: containerId,
+        relativePath: relativePath,
+        destinationFilePath: destinationFilePath,
+      );
+
+  @override
+  Future<List<ICloudFile>> gather({required String containerId}) =>
+      ICloudStorage.gather(containerId: containerId);
+
+  @override
+  Future<void> delete({
+    required String containerId,
+    required String relativePath,
+  }) =>
+      ICloudStorage.delete(
+        containerId: containerId,
+        relativePath: relativePath,
+      );
+}
 
 /// iCloud backup provider using iCloud Documents.
 ///
@@ -18,14 +89,20 @@ class ICloudBackupProvider implements BackupStorageProvider {
   /// Subdirectory within the iCloud container for backups.
   final String subfolder;
 
+  /// The delegate for iCloud storage operations.
+  final ICloudStorageDelegate _delegate;
+
   /// Creates an [ICloudBackupProvider].
   ///
   /// - [containerId]: Your iCloud container ID from Xcode entitlements.
   /// - [subfolder]: Subdirectory name for backups (default: `local_first_backups`).
+  /// - [delegate]: Optional delegate for testing. If not provided, uses
+  ///   real [ICloudStorage] static methods.
   ICloudBackupProvider({
     required this.containerId,
     this.subfolder = 'local_first_backups',
-  }) {
+    @visibleForTesting ICloudStorageDelegate? delegate,
+  }) : _delegate = delegate ?? const _DefaultICloudStorageDelegate() {
     if (!Platform.isIOS && !Platform.isMacOS) {
       throw UnsupportedError(
         'ICloudBackupProvider is only available on iOS and macOS.',
@@ -46,7 +123,7 @@ class ICloudBackupProvider implements BackupStorageProvider {
     await tempFile.writeAsBytes(data);
 
     try {
-      await ICloudStorage.upload(
+      await _delegate.upload(
         containerId: containerId,
         filePath: tempFile.path,
         destinationRelativePath: _relativePath(fileName),
@@ -70,7 +147,7 @@ class ICloudBackupProvider implements BackupStorageProvider {
     final tempFile = File(p.join(tempDir.path, metadata.fileName));
 
     try {
-      await ICloudStorage.download(
+      await _delegate.download(
         containerId: containerId,
         relativePath: metadata.id,
         destinationFilePath: tempFile.path,
@@ -84,7 +161,7 @@ class ICloudBackupProvider implements BackupStorageProvider {
 
   @override
   Future<List<BackupMetadata>> listBackups() async {
-    final files = await ICloudStorage.gather(
+    final files = await _delegate.gather(
       containerId: containerId,
     );
 
@@ -105,7 +182,7 @@ class ICloudBackupProvider implements BackupStorageProvider {
 
   @override
   Future<void> delete(BackupMetadata metadata) async {
-    await ICloudStorage.delete(
+    await _delegate.delete(
       containerId: containerId,
       relativePath: metadata.id,
     );

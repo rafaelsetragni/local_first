@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:googleapis/drive/v3.dart' as drive;
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
@@ -19,7 +20,12 @@ class GDriveBackupProvider implements BackupStorageProvider {
   /// Creates a [GDriveBackupProvider].
   ///
   /// - [folderName]: Optional subfolder name within App Data (default: `local_first_backups`).
-  GDriveBackupProvider({this.folderName = 'local_first_backups'});
+  /// - [driveApi]: Optional [drive.DriveApi] for testing. If provided, [signIn]
+  ///   is not required.
+  GDriveBackupProvider({
+    this.folderName = 'local_first_backups',
+    @visibleForTesting drive.DriveApi? driveApi,
+  }) : _driveApi = driveApi;
 
   /// Signs in with Google and initializes the Drive API.
   ///
