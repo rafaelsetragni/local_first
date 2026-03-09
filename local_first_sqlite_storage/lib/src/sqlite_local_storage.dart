@@ -88,10 +88,16 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     try {
       return await action();
     } on DatabaseException catch (e) {
-      if (_namespaceSwitching != null &&
-          e.toString().contains('database_closed')) {
-        await _namespaceSwitching!.future;
-        return await action();
+      if (e.toString().contains('database_closed')) {
+        // Wait for any in-progress namespace switch
+        if (_namespaceSwitching != null) {
+          await _namespaceSwitching!.future;
+        }
+        // Retry if the database is now open (namespace switch completed
+        // between the failed call and this catch block)
+        if (_initialized && _db != null) {
+          return await action();
+        }
       }
       rethrow;
     }
