@@ -1,5 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:googleapis/drive/v3.dart' as drive;
+import 'package:http/http.dart' as http;
 import 'package:local_first/local_first.dart';
 import 'package:local_first_gdrive_backup/local_first_gdrive_backup.dart';
 import 'package:mocktail/mocktail.dart';
@@ -10,11 +12,22 @@ class MockDriveApi extends Mock implements drive.DriveApi {}
 
 class MockFilesResource extends Mock implements drive.FilesResource {}
 
+class MockGoogleSignIn extends Mock implements GoogleSignIn {}
+
+class MockGoogleSignInAccount extends Mock implements GoogleSignInAccount {}
+
+class MockHttpClient extends Mock implements http.Client {}
+
 // --- Helpers ---
 
 class FakeDriveFile extends Fake implements drive.File {}
 
 class FakeMedia extends Fake implements drive.Media {}
+
+class _FakeBaseRequest extends Fake implements http.BaseRequest {
+  @override
+  final Map<String, String> headers = {};
+}
 
 void main() {
   late MockDriveApi mockDriveApi;
@@ -25,6 +38,7 @@ void main() {
     registerFallbackValue(FakeDriveFile());
     registerFallbackValue(FakeMedia());
     registerFallbackValue(drive.DownloadOptions.fullMedia);
+    registerFallbackValue(_FakeBaseRequest());
   });
 
   setUp(() {
@@ -53,11 +67,13 @@ void main() {
 
         expect(
           () => p.upload(fileName: 'test.lfbk', data: [1]),
-          throwsA(isA<StateError>().having(
-            (e) => e.message,
-            'message',
-            contains('not signed in'),
-          )),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              contains('not signed in'),
+            ),
+          ),
         );
       });
 
@@ -98,10 +114,9 @@ void main() {
           ..createdTime = now
           ..mimeType = 'application/octet-stream';
 
-        when(() => mockFiles.create(
-              any(),
-              uploadMedia: any(named: 'uploadMedia'),
-            )).thenAnswer((_) async => createdFile);
+        when(
+          () => mockFiles.create(any(), uploadMedia: any(named: 'uploadMedia')),
+        ).thenAnswer((_) async => createdFile);
 
         final result = await provider.upload(
           fileName: 'test.lfbk',
@@ -114,10 +129,14 @@ void main() {
         expect(result.sizeInBytes, equals(3));
         expect(result.extra, equals({'mimeType': 'application/octet-stream'}));
 
-        final captured = verify(() => mockFiles.create(
-              captureAny(),
-              uploadMedia: any(named: 'uploadMedia'),
-            )).captured.single as drive.File;
+        final captured =
+            verify(
+                  () => mockFiles.create(
+                    captureAny(),
+                    uploadMedia: any(named: 'uploadMedia'),
+                  ),
+                ).captured.single
+                as drive.File;
         expect(captured.parents, equals(['appDataFolder']));
         expect(captured.name, equals('test.lfbk'));
       });
@@ -129,10 +148,9 @@ void main() {
           ..createdTime = null
           ..mimeType = null;
 
-        when(() => mockFiles.create(
-              any(),
-              uploadMedia: any(named: 'uploadMedia'),
-            )).thenAnswer((_) async => createdFile);
+        when(
+          () => mockFiles.create(any(), uploadMedia: any(named: 'uploadMedia')),
+        ).thenAnswer((_) async => createdFile);
 
         final result = await provider.upload(
           fileName: 'test.lfbk',
@@ -153,10 +171,12 @@ void main() {
         ]);
         final media = drive.Media(mediaStream, 6);
 
-        when(() => mockFiles.get(
-              any(),
-              downloadOptions: drive.DownloadOptions.fullMedia,
-            )).thenAnswer((_) async => media);
+        when(
+          () => mockFiles.get(
+            any(),
+            downloadOptions: drive.DownloadOptions.fullMedia,
+          ),
+        ).thenAnswer((_) async => media);
 
         final metadata = BackupMetadata(
           id: 'file-id-123',
@@ -168,17 +188,21 @@ void main() {
         final result = await provider.download(metadata);
 
         expect(result, equals([1, 2, 3, 4, 5, 6]));
-        verify(() => mockFiles.get(
-              'file-id-123',
-              downloadOptions: drive.DownloadOptions.fullMedia,
-            )).called(1);
+        verify(
+          () => mockFiles.get(
+            'file-id-123',
+            downloadOptions: drive.DownloadOptions.fullMedia,
+          ),
+        ).called(1);
       });
 
       test('throws StateError when response is not Media', () async {
-        when(() => mockFiles.get(
-              any(),
-              downloadOptions: drive.DownloadOptions.fullMedia,
-            )).thenAnswer((_) async => drive.File());
+        when(
+          () => mockFiles.get(
+            any(),
+            downloadOptions: drive.DownloadOptions.fullMedia,
+          ),
+        ).thenAnswer((_) async => drive.File());
 
         final metadata = BackupMetadata(
           id: 'file-id',
@@ -189,11 +213,13 @@ void main() {
 
         expect(
           () => provider.download(metadata),
-          throwsA(isA<StateError>().having(
-            (e) => e.message,
-            'message',
-            contains('unexpected response type'),
-          )),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              contains('unexpected response type'),
+            ),
+          ),
         );
       });
     });
@@ -217,11 +243,13 @@ void main() {
               ..size = '512',
           ];
 
-        when(() => mockFiles.list(
-              spaces: any(named: 'spaces'),
-              orderBy: any(named: 'orderBy'),
-              $fields: any(named: '\$fields'),
-            )).thenAnswer((_) async => fileList);
+        when(
+          () => mockFiles.list(
+            spaces: any(named: 'spaces'),
+            orderBy: any(named: 'orderBy'),
+            $fields: any(named: '\$fields'),
+          ),
+        ).thenAnswer((_) async => fileList);
 
         final backups = await provider.listBackups();
 
@@ -233,21 +261,25 @@ void main() {
         expect(backups[1].id, equals('id-2'));
         expect(backups[1].sizeInBytes, equals(512));
 
-        verify(() => mockFiles.list(
-              spaces: 'appDataFolder',
-              orderBy: 'createdTime desc',
-              $fields: 'files(id, name, createdTime, size)',
-            )).called(1);
+        verify(
+          () => mockFiles.list(
+            spaces: 'appDataFolder',
+            orderBy: 'createdTime desc',
+            $fields: 'files(id, name, createdTime, size)',
+          ),
+        ).called(1);
       });
 
       test('returns empty list when files is null', () async {
         final fileList = drive.FileList()..files = null;
 
-        when(() => mockFiles.list(
-              spaces: any(named: 'spaces'),
-              orderBy: any(named: 'orderBy'),
-              $fields: any(named: '\$fields'),
-            )).thenAnswer((_) async => fileList);
+        when(
+          () => mockFiles.list(
+            spaces: any(named: 'spaces'),
+            orderBy: any(named: 'orderBy'),
+            $fields: any(named: '\$fields'),
+          ),
+        ).thenAnswer((_) async => fileList);
 
         final backups = await provider.listBackups();
         expect(backups, isEmpty);
@@ -263,11 +295,13 @@ void main() {
               ..size = null,
           ];
 
-        when(() => mockFiles.list(
-              spaces: any(named: 'spaces'),
-              orderBy: any(named: 'orderBy'),
-              $fields: any(named: '\$fields'),
-            )).thenAnswer((_) async => fileList);
+        when(
+          () => mockFiles.list(
+            spaces: any(named: 'spaces'),
+            orderBy: any(named: 'orderBy'),
+            $fields: any(named: '\$fields'),
+          ),
+        ).thenAnswer((_) async => fileList);
 
         final backups = await provider.listBackups();
 
@@ -287,11 +321,13 @@ void main() {
               ..size = 'not-a-number',
           ];
 
-        when(() => mockFiles.list(
-              spaces: any(named: 'spaces'),
-              orderBy: any(named: 'orderBy'),
-              $fields: any(named: '\$fields'),
-            )).thenAnswer((_) async => fileList);
+        when(
+          () => mockFiles.list(
+            spaces: any(named: 'spaces'),
+            orderBy: any(named: 'orderBy'),
+            $fields: any(named: '\$fields'),
+          ),
+        ).thenAnswer((_) async => fileList);
 
         final backups = await provider.listBackups();
 
@@ -326,6 +362,65 @@ void main() {
           throwsA(isA<StateError>()),
         );
       });
+    });
+
+    group('signIn', () {
+      test('initializes driveApi after successful sign-in', () async {
+        final mockSignIn = MockGoogleSignIn();
+        final mockAccount = MockGoogleSignInAccount();
+
+        when(() => mockSignIn.signIn()).thenAnswer((_) async => mockAccount);
+        when(
+          () => mockAccount.authHeaders,
+        ).thenAnswer((_) async => {'Authorization': 'Bearer test-token'});
+
+        final p = GDriveBackupProvider(googleSignIn: mockSignIn);
+        await p.signIn();
+
+        verify(() => mockSignIn.signIn()).called(1);
+        verify(() => mockAccount.authHeaders).called(1);
+        // Provider is now usable — upload would not throw StateError
+        // (it would throw because DriveApi hits the network, not because of missing auth)
+      });
+
+      test('throws StateError when user cancels sign-in', () async {
+        final mockSignIn = MockGoogleSignIn();
+        when(() => mockSignIn.signIn()).thenAnswer((_) async => null);
+
+        final p = GDriveBackupProvider(googleSignIn: mockSignIn);
+
+        await expectLater(
+          p.signIn(),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              contains('cancelled'),
+            ),
+          ),
+        );
+      });
+    });
+  });
+
+  group('GoogleAuthClient', () {
+    test('adds auth headers to outgoing requests', () async {
+      final mockInner = MockHttpClient();
+      final authClient = GoogleAuthClient(
+        {'Authorization': 'Bearer test-token', 'X-Custom': 'value'},
+        inner: mockInner,
+      );
+
+      final request = http.Request('GET', Uri.parse('https://example.com'));
+      final response = http.StreamedResponse(const Stream.empty(), 200);
+
+      when(() => mockInner.send(any())).thenAnswer((_) async => response);
+
+      await authClient.send(request);
+
+      expect(request.headers['Authorization'], equals('Bearer test-token'));
+      expect(request.headers['X-Custom'], equals('value'));
+      verify(() => mockInner.send(request)).called(1);
     });
   });
 }

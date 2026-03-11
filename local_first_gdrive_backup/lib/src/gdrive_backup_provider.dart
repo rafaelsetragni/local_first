@@ -22,19 +22,21 @@ class GDriveBackupProvider implements BackupStorageProvider {
   /// - [folderName]: Optional subfolder name within App Data (default: `local_first_backups`).
   /// - [driveApi]: Optional [drive.DriveApi] for testing. If provided, [signIn]
   ///   is not required.
+  /// - [googleSignIn]: Optional [GoogleSignIn] for testing. If provided, the
+  ///   injected instance is used instead of creating a new one in [signIn].
   GDriveBackupProvider({
     this.folderName = 'local_first_backups',
     @visibleForTesting drive.DriveApi? driveApi,
-  }) : _driveApi = driveApi;
+    @visibleForTesting GoogleSignIn? googleSignIn,
+  })  : _driveApi = driveApi,
+        _googleSignIn = googleSignIn;
 
   /// Signs in with Google and initializes the Drive API.
   ///
   /// Must be called before any other method. Requests the `drive.appdata`
   /// scope for App Data folder access.
   Future<void> signIn() async {
-    _googleSignIn = GoogleSignIn(scopes: [
-      drive.DriveApi.driveAppdataScope,
-    ]);
+    _googleSignIn ??= GoogleSignIn(scopes: [drive.DriveApi.driveAppdataScope]);
 
     final account = await _googleSignIn!.signIn();
     if (account == null) {
@@ -42,7 +44,7 @@ class GDriveBackupProvider implements BackupStorageProvider {
     }
 
     final authHeaders = await account.authHeaders;
-    final client = _GoogleAuthClient(authHeaders);
+    final client = GoogleAuthClient(authHeaders);
     _driveApi = drive.DriveApi(client);
   }
 
@@ -68,19 +70,13 @@ class GDriveBackupProvider implements BackupStorageProvider {
     required String fileName,
     required List<int> data,
   }) async {
-    final media = drive.Media(
-      Stream.value(data),
-      data.length,
-    );
+    final media = drive.Media(Stream.value(data), data.length);
 
     final driveFile = drive.File()
       ..name = fileName
       ..parents = ['appDataFolder'];
 
-    final created = await _api.files.create(
-      driveFile,
-      uploadMedia: media,
-    );
+    final created = await _api.files.create(driveFile, uploadMedia: media);
 
     return BackupMetadata(
       id: created.id!,
@@ -132,11 +128,20 @@ class GDriveBackupProvider implements BackupStorageProvider {
 }
 
 /// HTTP client that injects Google auth headers into every request.
-class _GoogleAuthClient extends http.BaseClient {
+///
+/// Used internally by [GDriveBackupProvider] after a successful [GDriveBackupProvider.signIn].
+@visibleForTesting
+class GoogleAuthClient extends http.BaseClient {
   final Map<String, String> _headers;
-  final http.Client _inner = http.Client();
+  final http.Client _inner;
 
-  _GoogleAuthClient(this._headers);
+  /// Creates a [GoogleAuthClient] that adds [headers] to every request.
+  ///
+  /// - [headers]: Auth headers to inject (e.g. from [GoogleSignInAccount.authHeaders]).
+  /// - [inner]: Optional inner [http.Client] for testing. Defaults to a new [http.Client].
+  @visibleForTesting
+  GoogleAuthClient(this._headers, {http.Client? inner})
+      : _inner = inner ?? http.Client();
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) {
