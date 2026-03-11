@@ -1,3 +1,7 @@
+## 0.2.1
+
+- Updated documentation: standardized Contributing and Support the Project sections.
+
 ## 0.2.0
 
 - Add supported config types table and example app/run instructions to README.

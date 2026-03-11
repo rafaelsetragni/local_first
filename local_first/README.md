@@ -144,13 +144,13 @@ dependencies:
   local_first: ^0.7.0
 
   # Storage adapters (choose one or more)
-  local_first_hive_storage: ^0.2.0       # schema-less key/value storage
-  local_first_sqlite_storage: ^0.3.0     # structured tables with indexes
-  local_first_shared_preferences: ^0.1.0 # config-only key/value storage
+  local_first_hive_storage: ^0.2.1       # schema-less key/value storage
+  local_first_sqlite_storage: ^0.4.0     # structured tables with indexes
+  local_first_shared_preferences: ^0.1.1 # config-only key/value storage
 
   # Sync strategies (choose one or more)
-  local_first_periodic_strategy: ^0.1.0  # periodic REST sync
-  local_first_websocket: ^0.2.0          # real-time WebSocket sync
+  local_first_periodic_strategy: ^0.2.0  # periodic REST sync
+  local_first_websocket: ^0.3.0          # real-time WebSocket sync
 
   # Backup providers (choose one or more)
   local_first_firebase_backup: ^0.1.0    # Firebase Storage (cross-platform)
