@@ -4,7 +4,7 @@ import 'dart:typed_data';
 
 import 'package:local_first/local_first.dart';
 import 'package:path/path.dart' as p;
-import 'package:sqflite/sqflite.dart';
+import 'package:sqflite_sqlcipher/sqflite.dart';
 
 /// SQLite implementation of [LocalFirstStorage].
 ///
@@ -19,8 +19,10 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     this.databasePath,
     String namespace = 'default',
     DatabaseFactory? dbFactory,
+    String? password,
   }) : _namespace = namespace,
-       _factory = dbFactory ?? databaseFactory {
+       _factory = dbFactory ?? databaseFactory,
+       _password = password {
     _validateIdentifier(_namespace, 'namespace');
   }
 
@@ -28,12 +30,23 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   final String? databasePath;
   String _namespace;
   final DatabaseFactory _factory;
+  String? _password;
+
+  /// Updates the encryption password used when opening new namespaces.
+  /// Must be called before [useNamespace] for the change to take effect.
+  void setPassword(String? password) {
+    _password = password;
+  }
 
   /// Current namespace used to derive the database file name.
   String get namespace => _namespace;
 
   Database? _db;
   bool _initialized = false;
+
+  /// Completer that resolves when a namespace switch finishes. Queries await
+  /// this instead of hitting a closed database during the transition.
+  Completer<void>? _namespaceSwitching;
 
   final JsonMap<Set<_SqliteQueryObserver>> _observers = {};
   final JsonMap<JsonMap<LocalFieldType>> _schemas = {};
@@ -51,12 +64,43 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   Future<Database> get _database async {
+    // Wait for any in-progress namespace switch to complete before accessing
+    // the database. This prevents "database_closed" errors when queries run
+    // concurrently with useNamespace().
+    if (_namespaceSwitching != null) {
+      await _namespaceSwitching!.future;
+    }
     if (!_initialized || _db == null) {
       throw StateError(
         'SqliteLocalFirstStorage not initialized. Call initialize() first.',
       );
     }
     return _db!;
+  }
+
+  /// Executes [action] that accesses the database. If the database is closed
+  /// mid-operation due to a concurrent [useNamespace] call, waits for the
+  /// switch to finish and retries once with the new database.
+  Future<T> _withDb<T>(Future<T> Function() action) async {
+    if (_namespaceSwitching != null) {
+      await _namespaceSwitching!.future;
+    }
+    try {
+      return await action();
+    } on DatabaseException catch (e) {
+      if (e.toString().contains('database_closed')) {
+        // Wait for any in-progress namespace switch
+        if (_namespaceSwitching != null) {
+          await _namespaceSwitching!.future;
+        }
+        // Retry if the database is now open (namespace switch completed
+        // between the failed call and this catch block)
+        if (_initialized && _db != null) {
+          return await action();
+        }
+      }
+      rethrow;
+    }
   }
 
   /// Opens (or creates) the SQLite database file for the current namespace so
@@ -69,8 +113,9 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     _db = await _factory.openDatabase(
       path,
-      options: OpenDatabaseOptions(
+      options: SqlCipherOpenDatabaseOptions(
         version: 1,
+        password: _password,
         onCreate: (db, _) async {
           await db.execute(
             'CREATE TABLE IF NOT EXISTS $_metadataTable (key TEXT PRIMARY KEY, value TEXT)',
@@ -84,16 +129,22 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   }
 
   /// Closes the database connection and shuts down any active query streams.
+  ///
+  /// If [preserveObservers] is true, observers are kept alive so they can
+  /// continue receiving updates after a namespace change. This is used
+  /// internally by [useNamespace].
   @override
-  Future<void> close() async {
+  Future<void> close({bool preserveObservers = false}) async {
     if (!_initialized) return;
 
-    for (final observers in List.of(_observers.values)) {
-      for (final observer in List.of(observers)) {
-        await observer.controller.close();
+    if (!preserveObservers) {
+      for (final observers in List.of(_observers.values)) {
+        for (final observer in List.of(observers)) {
+          await observer.controller.close();
+        }
       }
+      _observers.clear();
     }
-    _observers.clear();
 
     await _db?.close();
     _db = null;
@@ -103,14 +154,38 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   /// Changes the active namespace by closing the current database and opening a
   /// separate database file for the new namespace.
   ///
+  /// Observers are preserved across namespace changes. After opening the new
+  /// database, all active observers will re-emit their query results with data
+  /// from the new namespace.
+  ///
   /// - [namespace]: Target namespace name.
   @override
   Future<void> useNamespace(String namespace) async {
     if (_namespace == namespace) return;
     _validateIdentifier(namespace, 'namespace');
-    await close();
-    _namespace = namespace;
-    await initialize();
+
+    // Signal that a namespace switch is in progress so concurrent queries
+    // wait instead of hitting a closed database.
+    _namespaceSwitching = Completer<void>();
+    try {
+      // Preserve observers across namespace change
+      await close(preserveObservers: true);
+      _namespace = namespace;
+      await initialize();
+    } finally {
+      // Complete the switch BEFORE notifying watchers. The new database is
+      // already open, so pending queries can proceed. Completing after
+      // _notifyWatchers would deadlock: observers call query() → _withDb()
+      // → waits for _namespaceSwitching → which waits for _notifyWatchers.
+      final completer = _namespaceSwitching;
+      _namespaceSwitching = null;
+      completer?.complete();
+    }
+
+    // Re-emit results to all active observers with data from the new namespace
+    for (final repositoryName in _observers.keys.toList()) {
+      await _notifyWatchers(repositoryName);
+    }
   }
 
   /// Deletes every table (including metadata) for the current namespace and
@@ -171,14 +246,14 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     final rows = await db.rawQuery(
       'SELECT d.data, d._lasteventId, '
-      'e.eventId, e.syncStatus, e.operation, e.createdAt '
+      'e.${LocalFirstEvent.kEventId}, e.${LocalFirstEvent.kSyncStatus}, e.${LocalFirstEvent.kOperation}, e.${LocalFirstEvent.kSyncCreatedAt} '
       'FROM $dataTable d '
-      'LEFT JOIN $eventTable e ON d._lasteventId = e.eventId',
+      'LEFT JOIN $eventTable e ON d._lasteventId = e.${LocalFirstEvent.kEventId}',
     );
 
     return rows
         .map(_decodeJoinedRow)
-        .where((row) => row['operation'] != SyncOperation.delete.index)
+        .where((row) => row[LocalFirstEvent.kOperation] != SyncOperation.delete.index)
         .toList();
   }
 
@@ -197,10 +272,10 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     final rows = await db.rawQuery(
       'SELECT d.data, d._lasteventId, '
-      'e.eventId, e.dataId, e.syncStatus, '
-      'e.operation, e.createdAt '
+      'e.${LocalFirstEvent.kEventId}, e.${LocalFirstEvent.kDataId}, e.${LocalFirstEvent.kSyncStatus}, '
+      'e.${LocalFirstEvent.kOperation}, e.${LocalFirstEvent.kSyncCreatedAt} '
       'FROM $eventTable e '
-      'LEFT JOIN $dataTable d ON e.dataId = d.id',
+      'LEFT JOIN $dataTable d ON e.${LocalFirstEvent.kDataId} = d.id',
     );
 
     return rows.map(_decodeJoinedRow).toList();
@@ -222,9 +297,9 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     final rows = await db.rawQuery(
       'SELECT d.data, d._lasteventId, '
-      'e.eventId, e.syncStatus, e.operation, e.createdAt '
+      'e.${LocalFirstEvent.kEventId}, e.${LocalFirstEvent.kSyncStatus}, e.${LocalFirstEvent.kOperation}, e.${LocalFirstEvent.kSyncCreatedAt} '
       'FROM $dataTable d '
-      'LEFT JOIN $eventTable e ON d._lasteventId = e.eventId '
+      'LEFT JOIN $eventTable e ON d._lasteventId = e.${LocalFirstEvent.kEventId} '
       'WHERE d.id = ? '
       'LIMIT 1',
       [id],
@@ -249,11 +324,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     final rows = await db.rawQuery(
       'SELECT d.data, d._lasteventId, '
-      'e.eventId, e.dataId, e.syncStatus, '
-      'e.operation, e.createdAt '
+      'e.${LocalFirstEvent.kEventId}, e.${LocalFirstEvent.kDataId}, e.${LocalFirstEvent.kSyncStatus}, '
+      'e.${LocalFirstEvent.kOperation}, e.${LocalFirstEvent.kSyncCreatedAt} '
       'FROM $eventTable e '
-      'LEFT JOIN $dataTable d ON e.dataId = d.id '
-      'WHERE e.eventId = ? '
+      'LEFT JOIN $dataTable d ON e.${LocalFirstEvent.kDataId} = d.id '
+      'WHERE e.${LocalFirstEvent.kEventId} = ? '
       'LIMIT 1',
       [id],
     );
@@ -314,7 +389,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     final resolvedTable = _tableName(tableName, isEvent: true);
 
     final eventId = item[idField];
-    final dataId = item['dataId'] ?? item[idField];
+    final dataId = item[LocalFirstEvent.kDataId] ?? item[idField];
     if (eventId is! String) {
       throw ArgumentError('Item is missing string id field "$idField".');
     }
@@ -372,7 +447,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     await _ensureTables(tableName);
     final resolvedTable = _tableName(tableName, isEvent: true);
 
-    final dataId = item['dataId'] ?? id;
+    final dataId = item[LocalFirstEvent.kDataId] ?? id;
     if (dataId is! String) {
       throw ArgumentError('Event item is missing data id reference.');
     }
@@ -625,7 +700,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   /// Throws [StateError] if called before [initialize].
   @override
   Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query) {
-    if (!_initialized) {
+    if (!_initialized && _namespaceSwitching == null) {
       throw StateError(
         'SqliteLocalFirstStorage not initialized. Call initialize() first.',
       );
@@ -728,17 +803,17 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     await db.execute(
       'CREATE TABLE IF NOT EXISTS $resolvedTableName ('
-      'eventId TEXT PRIMARY KEY, '
-      'dataId TEXT NOT NULL, '
-      'syncStatus INTEGER, '
-      'operation INTEGER, '
-      'createdAt INTEGER'
+      '${LocalFirstEvent.kEventId} TEXT PRIMARY KEY, '
+      '${LocalFirstEvent.kDataId} TEXT NOT NULL, '
+      '${LocalFirstEvent.kSyncStatus} INTEGER, '
+      '${LocalFirstEvent.kOperation} INTEGER, '
+      '${LocalFirstEvent.kSyncCreatedAt} INTEGER'
       ')',
     );
 
     await db.execute(
       'CREATE INDEX IF NOT EXISTS ${resolvedTableName}__data '
-      'ON $resolvedTableName(dataId)',
+      'ON $resolvedTableName(${LocalFirstEvent.kDataId})',
     );
   }
 
@@ -810,13 +885,13 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     String? lastEventId,
   ) {
     final payload = JsonMap.from(item);
-    const metaKeys = {
+    final metaKeys = {
       '_lasteventId',
-      'eventId',
-      'dataId',
-      'syncStatus',
-      'operation',
-      'createdAt',
+      LocalFirstEvent.kEventId,
+      LocalFirstEvent.kDataId,
+      LocalFirstEvent.kSyncStatus,
+      LocalFirstEvent.kOperation,
+      LocalFirstEvent.kSyncCreatedAt,
     };
     payload.removeWhere((key, _) => metaKeys.contains(key));
 
@@ -839,11 +914,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     String eventId,
   ) {
     return {
-      'eventId': eventId,
-      'dataId': dataId,
-      'syncStatus': item['syncStatus'],
-      'operation': item['operation'],
-      'createdAt': item['createdAt'],
+      LocalFirstEvent.kEventId: eventId,
+      LocalFirstEvent.kDataId: dataId,
+      LocalFirstEvent.kSyncStatus: item[LocalFirstEvent.kSyncStatus],
+      LocalFirstEvent.kOperation: item[LocalFirstEvent.kOperation],
+      LocalFirstEvent.kSyncCreatedAt: item[LocalFirstEvent.kSyncCreatedAt],
     };
   }
 
@@ -854,21 +929,21 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
         : <String, dynamic>{};
 
     final lastEventId = row['_lasteventId'];
-    final eventId = row['eventId'];
-    final syncStatus = row['syncStatus'];
-    final syncOperation = row['operation'];
-    final syncCreatedAt = row['createdAt'];
-    final dataId = row['dataId'];
+    final eventId = row[LocalFirstEvent.kEventId];
+    final syncStatus = row[LocalFirstEvent.kSyncStatus];
+    final syncOperation = row[LocalFirstEvent.kOperation];
+    final syncCreatedAt = row[LocalFirstEvent.kSyncCreatedAt];
+    final dataId = row[LocalFirstEvent.kDataId];
 
-    if (lastEventId is String) map['_lasteventId'] = lastEventId;
-    if (eventId is String) map['eventId'] = eventId;
+    if (lastEventId is String) map[LocalFirstEvent.kLastEventId] = lastEventId;
+    if (eventId is String) map[LocalFirstEvent.kEventId] = eventId;
     if (dataId is String) {
-      map['dataId'] = dataId;
+      map[LocalFirstEvent.kDataId] = dataId;
       map.putIfAbsent('id', () => dataId);
     }
-    if (syncStatus != null) map['syncStatus'] = syncStatus;
-    if (syncOperation != null) map['operation'] = syncOperation;
-    if (syncCreatedAt != null) map['createdAt'] = syncCreatedAt;
+    if (syncStatus != null) map[LocalFirstEvent.kSyncStatus] = syncStatus;
+    if (syncOperation != null) map[LocalFirstEvent.kOperation] = syncOperation;
+    if (syncCreatedAt != null) map[LocalFirstEvent.kSyncCreatedAt] = syncCreatedAt;
 
     return map;
   }
@@ -910,7 +985,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   ///
   /// - [query]: Query definition including filters, sorts and pagination.
   @override
-  Future<List<LocalFirstEvent<T>>> query<T>(LocalFirstQuery<T> query) async {
+  Future<List<LocalFirstEvent<T>>> query<T>(LocalFirstQuery<T> query) =>
+      _withDb(() => _queryInternal(query));
+
+  Future<List<LocalFirstEvent<T>>> _queryInternal<T>(
+      LocalFirstQuery<T> query) async {
     final db = await _database;
     await _ensureTables(query.repositoryName);
     final resolvedTable = _tableName(query.repositoryName);
@@ -1005,7 +1084,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     // Add !includeDeleted filter arg BEFORE processing sorts
     // This ensures args are in the correct order for the SQL placeholders
     if (!query.includeDeleted) {
-      whereClauses.add('e.operation != ?');
+      whereClauses.add('e.${LocalFirstEvent.kOperation} != ?');
       args.add(SyncOperation.delete.index);
     }
 
@@ -1016,9 +1095,9 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     final sql = StringBuffer(
       'SELECT d.data, d._lasteventId, '
-      'e.eventId, e.syncStatus, e.operation, e.createdAt '
+      'e.${LocalFirstEvent.kEventId}, e.${LocalFirstEvent.kSyncStatus}, e.${LocalFirstEvent.kOperation}, e.${LocalFirstEvent.kSyncCreatedAt} '
       'FROM $resolvedTable d '
-      'LEFT JOIN $eventTable e ON d._lasteventId = e.eventId',
+      'LEFT JOIN $eventTable e ON d._lasteventId = e.${LocalFirstEvent.kEventId}',
     );
     if (whereClauses.isNotEmpty) {
       sql.write(' WHERE ${whereClauses.join(' AND ')}');

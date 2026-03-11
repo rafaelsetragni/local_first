@@ -1,3 +1,10 @@
+## 0.3.0
+
+- Added configurable logger system via `LocalFirstLogger` with adjustable log levels.
+- Fixed event field name alignment with server convention (`_` prefix metadata keys).
+- Improved test coverage to 100%.
+- Updated documentation with architecture diagram.
+
 ## 0.2.0
 
 * Fixed authentication flow in test suite

@@ -8,7 +8,7 @@ part of '../../local_first.dart';
 /// - Maintaining sync state across nodes
 /// - Providing access to the local database delegate
 class LocalFirstClient {
-  late final List<LocalFirstRepository> _repositories;
+  final List<LocalFirstRepository> _repositories;
   final LocalFirstStorage _localStorage;
   final ConfigKeyValueStorage _configStorage;
 
@@ -41,23 +41,22 @@ class LocalFirstClient {
   /// Creates an instance of LocalFirstClient.
   ///
   /// Parameters:
-  /// - [nodes]: List of [LocalFirstRepository] instances to be managed
+  /// - [repositories]: List of [LocalFirstRepository] instances to be managed.
+  ///   Defaults to empty list.
   /// - [localStorage]: The local database delegate for storage operations
   /// - [keyValueStorage]: Optional delegate for config key/value operations.
   ///   Defaults to [localStorage] when not provided.
+  /// - [syncStrategies]: List of sync strategies. Defaults to empty list.
   ///
   /// Throws [ArgumentError] if there are duplicate node names.
   LocalFirstClient({
-    required List<LocalFirstRepository> repositories,
+    List<LocalFirstRepository> repositories = const [],
     required LocalFirstStorage localStorage,
     ConfigKeyValueStorage? keyValueStorage,
-    required this.syncStrategies,
-  }) : assert(
-         syncStrategies.isNotEmpty,
-         'You need to provide at least one sync strategy.',
-       ),
-       _localStorage = localStorage,
-       _configStorage = keyValueStorage ?? localStorage {
+    this.syncStrategies = const [],
+  })  : _repositories = List.unmodifiable(repositories),
+        _localStorage = localStorage,
+        _configStorage = keyValueStorage ?? localStorage {
     final names = repositories.map((n) => n.name).toSet();
     if (names.length != repositories.length) {
       throw ArgumentError('Duplicate node names');
@@ -69,8 +68,6 @@ class LocalFirstClient {
     for (final strategy in syncStrategies) {
       strategy.attach(this);
     }
-
-    _repositories = List.unmodifiable(repositories);
   }
 
   /// Looks up a repository by name so you can call repository-specific methods.

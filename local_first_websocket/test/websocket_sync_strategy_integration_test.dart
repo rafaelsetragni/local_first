@@ -68,7 +68,16 @@ void main() {
         () => mockChannel.stream,
       ).thenAnswer((_) => messageController.stream);
       when(() => mockChannel.sink).thenReturn(mockSink);
-      when(() => mockSink.add(any())).thenAnswer((_) {});
+      when(() => mockSink.add(any())).thenAnswer((invocation) {
+        final msg = invocation.positionalArguments.first;
+        try {
+          final decoded = jsonDecode(msg as String);
+          if (decoded['type'] == 'auth') {
+            // Simulate server auth_success response
+            messageController.add(jsonEncode({'type': 'auth_success'}));
+          }
+        } catch (_) {}
+      });
       when(() => mockSink.close()).thenAnswer((_) async {});
     });
 

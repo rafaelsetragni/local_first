@@ -23,6 +23,23 @@ abstract class DataSyncStrategy {
   @protected
   LocalFirstClient get client => _client;
 
+  /// List of repository names this strategy handles.
+  ///
+  /// Override this getter to specify which repositories this strategy should
+  /// handle. An empty list means the strategy handles all repositories.
+  ///
+  /// The [LocalFirstRepository] uses this to filter which strategies receive
+  /// events during push operations.
+  List<String> get repositoryNames => const [];
+
+  /// Returns true if this strategy handles the given repository.
+  ///
+  /// By default, returns true if [repositoryNames] is empty (handles all)
+  /// or if the repository name is in the list.
+  bool handlesRepository(String repositoryName) {
+    return repositoryNames.isEmpty || repositoryNames.contains(repositoryName);
+  }
+
   /// Pushes a local event to the remote backend.
   ///
   /// Override this to implement your transport; return the resulting

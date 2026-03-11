@@ -128,20 +128,50 @@ abstract class LocalFirstRepository<T> {
   }
 
   /// Pushes a state event through all sync strategies, updating its status.
+  ///
+  /// Only strategies that handle this repository (via [DataSyncStrategy.handlesRepository])
+  /// will receive the event.
   Future<LocalFirstEvent<T>> _pushLocalEventToRemote(
     LocalFirstEvent<T> event,
   ) async {
+    LocalFirstLogger.log(
+      '_pushLocalEventToRemote called for ${event.eventId} with ${_syncStrategies.length} strategies',
+      name: 'LocalFirstRepository',
+    );
     var current = event;
 
     for (var strategy in _syncStrategies) {
+      // Only call strategies that handle this repository
+      if (!strategy.handlesRepository(name)) {
+        LocalFirstLogger.log(
+          'Skipping strategy ${strategy.runtimeType} - does not handle repository $name',
+          name: 'LocalFirstRepository',
+        );
+        continue;
+      }
+
+      LocalFirstLogger.log(
+        'Calling onPushToRemote on strategy: ${strategy.runtimeType}',
+        name: 'LocalFirstRepository',
+      );
       try {
         final syncResult = await strategy.onPushToRemote(current);
+        LocalFirstLogger.log(
+          'Strategy ${strategy.runtimeType} returned: $syncResult',
+          name: 'LocalFirstRepository',
+        );
         current = current.updateEventState(syncStatus: syncResult);
         if (syncResult == SyncStatus.ok) {
           await _updateEventStatus(current);
           return current;
         }
-      } catch (_) {
+      } catch (e, s) {
+        LocalFirstLogger.log(
+          'Strategy ${strategy.runtimeType} threw error: $e',
+          name: 'LocalFirstRepository',
+          error: e,
+          stackTrace: s,
+        );
         current = current.updateEventState(syncStatus: SyncStatus.failed);
       }
     }
@@ -329,12 +359,16 @@ abstract class LocalFirstRepository<T> {
 
   Future<List<LocalFirstEvent<T>>> _getAllEvents() async {
     final maps = await _client.localStorage.getAllEvents(name);
-    return maps
-        .map(
-          (json) =>
-              LocalFirstEvent<T>.fromLocalStorage(repository: this, json: json),
-        )
-        .toList();
+    final result = <LocalFirstEvent<T>>[];
+    for (final json in maps) {
+      try {
+        result.add(LocalFirstEvent<T>.fromLocalStorage(repository: this, json: json));
+      } catch (_) {
+        // Skip orphaned events whose data row was deleted (e.g. after a delete
+        // operation the old INSERT/UPDATE events have no data in the JOIN).
+      }
+    }
+    return result;
   }
 
   Future<LocalFirstEvent<T>?> getLastRespectivePendingEvent({

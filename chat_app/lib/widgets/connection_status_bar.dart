@@ -12,10 +12,7 @@ import '../services/repository_service.dart';
 class ConnectionStatusBar extends StatefulWidget {
   final Widget child;
 
-  const ConnectionStatusBar({
-    super.key,
-    required this.child,
-  });
+  const ConnectionStatusBar({super.key, required this.child});
 
   @override
   State<ConnectionStatusBar> createState() => _ConnectionStatusBarState();
@@ -33,10 +30,10 @@ class _ConnectionStatusBarState extends State<ConnectionStatusBar> {
     _connectionSubscription = _repositoryService.connectionState
         .distinct()
         .listen((connected) {
-      if (mounted) {
-        setState(() => _isConnected = connected);
-      }
-    });
+          if (mounted) {
+            setState(() => _isConnected = connected);
+          }
+        });
   }
 
   @override
@@ -59,10 +56,7 @@ class _ConnectionStatusBarState extends State<ConnectionStatusBar> {
           height: _isConnected ? 0 : topPadding + 28,
           color: Colors.red,
           clipBehavior: Clip.hardEdge,
-          padding: EdgeInsets.only(
-            top: topPadding,
-            bottom: 8,
-          ),
+          padding: EdgeInsets.only(top: topPadding, bottom: 8),
           child: const Text(
             'Connecting...',
             textAlign: TextAlign.center,

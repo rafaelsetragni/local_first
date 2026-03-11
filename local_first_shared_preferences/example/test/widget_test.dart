@@ -8,7 +8,7 @@ void main() {
   ) async {
     await tester.pumpWidget(const MyApp(home: SignInPage()));
 
-    expect(find.text('Offline Counter'), findsOneWidget);
+    expect(find.text('Local First\nShared Preferences'), findsOneWidget);
     expect(find.text('Sign In'), findsWidgets); // title + button
     expect(find.widgetWithText(TextFormField, 'Username'), findsOneWidget);
   });

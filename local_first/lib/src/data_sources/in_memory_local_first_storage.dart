@@ -39,14 +39,19 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
   }
 
   /// Tears down the storage, closing watchers and clearing initialization flag.
+  ///
+  /// If [preserveObservers] is true, observers are kept alive so they can
+  /// continue receiving updates after a namespace change.
   @override
-  Future<void> close() async {
+  Future<void> close({bool preserveObservers = false}) async {
     if (!_initialized) return;
-    for (final observerSet in _observersByNamespace.values) {
-      for (final observer in observerSet.values.expand((o) => o).toList()) {
-        await observer.controller.close();
+    if (!preserveObservers) {
+      for (final observerSet in _observersByNamespace.values) {
+        for (final observer in observerSet.values.expand((o) => o).toList()) {
+          await observer.controller.close();
+        }
+        observerSet.clear();
       }
-      observerSet.clear();
     }
     _initialized = false;
   }
@@ -54,16 +59,26 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
   /// Switches the active namespace, reinitializing internal data so each
   /// tenant/user gets isolated state.
   ///
-  /// - [namespace]: Logical bucket name (for example, a user id). Switching
-  ///   resets in-memory watchers to avoid cross-namespace leaks.
+  /// Observers are preserved across namespace changes. After switching,
+  /// all active observers will re-emit their query results with data
+  /// from the new namespace.
+  ///
+  /// - [namespace]: Logical bucket name (for example, a user id).
   ///
   /// Throws [StateError] if called before [initialize].
   @override
   Future<void> useNamespace(String namespace) async {
     if (_namespace == namespace) return;
-    await close();
+
+    // Preserve observers across namespace change
+    await close(preserveObservers: true);
     _namespace = namespace;
     await initialize();
+
+    // Re-emit results to all active observers with data from the new namespace
+    for (final repositoryName in _observers.keys.toList()) {
+      await _notifyWatchers(repositoryName);
+    }
   }
 
   @visibleForTesting

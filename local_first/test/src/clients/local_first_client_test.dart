@@ -240,15 +240,13 @@ void main() {
       strategy = _SpyStrategy();
     });
 
-    test('should require at least one sync strategy', () {
-      expect(
-        () => LocalFirstClient(
-          repositories: [],
-          localStorage: storage,
-          syncStrategies: [],
-        ),
-        throwsAssertionError,
+    test('should allow creation without sync strategies', () {
+      final client = LocalFirstClient(
+        repositories: [],
+        localStorage: storage,
+        syncStrategies: [],
       );
+      expect(client.syncStrategies, isEmpty);
     });
 
     test('should throw on duplicate repository names', () {

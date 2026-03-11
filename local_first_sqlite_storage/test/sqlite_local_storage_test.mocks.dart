@@ -7,6 +7,7 @@ import 'dart:async' as _i3;
 import 'dart:typed_data' as _i7;
 
 import 'package:local_first/local_first.dart' as _i5;
+import 'package:local_first/local_first.dart';
 import 'package:mockito/mockito.dart' as _i1;
 import 'package:mockito/src/dummies.dart' as _i6;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart' as _i2;

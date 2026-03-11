@@ -1,3 +1,7 @@
+## 0.1.1
+
+- Updated documentation: standardized Contributing and Support the Project sections.
+
 ## 0.1.0
 
 - Initial release of `local_first_shared_preferences`

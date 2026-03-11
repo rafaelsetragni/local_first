@@ -1,3 +1,10 @@
+## 0.4.0
+
+- Added `setPassword()` to allow changing the SQLCipher encryption password at runtime.
+- Fixed `database_closed` race condition during namespace switch.
+- Fixed `SqlCipherOpenDatabaseOptions` usage and improved namespace switch protection.
+- Updated documentation with encryption setup and ProGuard configuration.
+
 ## 0.3.0
 
 - Enhanced SQL query construction for better performance

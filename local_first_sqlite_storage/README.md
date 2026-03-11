@@ -36,6 +36,7 @@ A powerful, schema-based storage adapter for the [local_first](https://pub.dev/p
 - ✅ **Namespaces**: Isolate data per user or tenant
 - ✅ **Full CRUD**: Complete create, read, update, delete operations
 - ✅ **JSON Storage**: Full object stored in `data` column + schema columns
+- ✅ **Encryption**: Optional AES-256 at-rest encryption via SQLCipher
 
 ## Installation
 
@@ -413,6 +414,7 @@ StreamBuilder<List<LocalFirstEvent<Todo>>>(
 | **Best For** | Complex queries, filtering | Simple models, speed |
 | **Platform Support** | All platforms | All platforms |
 | **Memory Usage** | Very low | Low (with lazy) |
+| **Encryption** | SQLCipher (AES-256) | HiveAesCipher (AES-256) |
 
 **Choose SQLite when:**
 - ✅ You need complex SQL queries
@@ -596,6 +598,62 @@ await client.setConfigValue('__last_seq__$repositoryName', sequence);
 final lastSeq = await client.getConfigValue<int>('__last_seq__$repositoryName');
 ```
 
+## Encryption (At-Rest)
+
+Enable transparent AES-256 encryption by passing a `password` to the storage constructor:
+
+```dart
+final storage = SqliteLocalFirstStorage(
+  password: 'my-secret-key',
+);
+```
+
+When a password is provided, the entire database file is encrypted using [SQLCipher](https://www.zetetic.net/sqlcipher/). All data — tables, indexes, journal — is protected at rest. Without the correct password, the file is unreadable.
+
+When no password is provided, the database operates normally without encryption (fully backward compatible).
+
+### Android ProGuard / R8 Configuration
+
+SQLCipher uses native libraries via JNI. When building a release APK with code shrinking enabled (`minifyEnabled = true`), you **must** add the following ProGuard rule to prevent R8 from removing required classes.
+
+Create or update `android/app/proguard-rules.pro`:
+
+```proguard
+-keep class net.sqlcipher.** { *; }
+-dontwarn net.sqlcipher.**
+```
+
+Then reference it in your `android/app/build.gradle` (or `build.gradle.kts`):
+
+**Groovy (`build.gradle`):**
+```groovy
+android {
+    buildTypes {
+        release {
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+```
+
+**Kotlin DSL (`build.gradle.kts`):**
+```kotlin
+android {
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+    }
+}
+```
+
+> **Note:** This rule is only needed on Android when using encryption with code shrinking. iOS, macOS, Windows, and Linux do not require additional configuration.
+
 ## Troubleshooting
 
 ### Slow Queries
@@ -721,7 +779,15 @@ flutter run
 
 ## Contributing
 
-Contributions are welcome! Please open an issue to discuss ideas or bugs. See the main [local_first](https://pub.dev/packages/local_first) repository for contribution guidelines.
+Contributions are welcome. See [CONTRIBUTING.md](https://github.com/rafaelsetragni/local_first/blob/main/CONTRIBUTING.md) for guidelines.
+
+
+## Support the Project 💰
+
+Your contributions help us enhance and maintain our plugins. Donations are used to procure devices and equipment for testing compatibility across platforms and versions.
+
+[*![Donate With Stripe](https://raw.githubusercontent.com/rafaelsetragni/awesome_task_manager/master/assets/readme/stripe.png)*](https://donate.stripe.com/3cs14Yf79dQcbU4001)
+[*![Donate With Buy Me A Coffee](https://raw.githubusercontent.com/rafaelsetragni/awesome_task_manager/master/assets/readme/buy-me-a-coffee.jpeg)*](https://www.buymeacoffee.com/rafaelsetragni)
 
 ## License
 
