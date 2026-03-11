@@ -20,11 +20,22 @@ Local-first data layer for Flutter applications that keeps your data available o
 
 This solution is ***100% self hosted and low bandwith***. It can be customized combining the usage of multiple packages, such as:
 
+**Core**
 - [`local_first`](https://pub.dev/packages/local_first): core client, repositories, in memory storages, sync contracts and common utilities.
+
+**Storage adapters**
 - [`local_first_hive_storage`](https://pub.dev/packages/local_first_hive_storage): Hive adapter (schema-less boxes).
 - [`local_first_sqlite_storage`](https://pub.dev/packages/local_first_sqlite_storage): SQLite adapter (structured tables with indexes).
+- [`local_first_shared_preferences`](https://pub.dev/packages/local_first_shared_preferences): SharedPreferences adapter (config-only key/value storage).
+
+**Sync strategies**
 - [`local_first_periodic_strategy`](https://pub.dev/packages/local_first_periodic_strategy): Periodic data sync strategy for robust periodic fetches.
-- [`local_first_websocket`](https://pub.dev/packages/local_first_websocket): Websocket data sync strategy for live communication.
+- [`local_first_websocket`](https://pub.dev/packages/local_first_websocket): WebSocket data sync strategy for live communication.
+
+**Backup & restore**
+- [`local_first_firebase_backup`](https://pub.dev/packages/local_first_firebase_backup): Firebase Storage backup provider (cross-platform).
+- [`local_first_gdrive_backup`](https://pub.dev/packages/local_first_gdrive_backup): Google Drive backup provider (Android).
+- [`local_first_icloud_backup`](https://pub.dev/packages/local_first_icloud_backup): iCloud backup provider (iOS/macOS).
 
 
 > Status: early preview. The package is in active development (final stages) and the public API may change before the first stable release. Use the examples below as guidance for the intended design.
@@ -140,6 +151,11 @@ dependencies:
   # Sync strategies (choose one or more)
   local_first_periodic_strategy: ^0.1.0  # periodic REST sync
   local_first_websocket: ^0.2.0          # real-time WebSocket sync
+
+  # Backup providers (choose one or more)
+  local_first_firebase_backup: ^0.1.0    # Firebase Storage (cross-platform)
+  local_first_gdrive_backup: ^0.1.0      # Google Drive (Android)
+  local_first_icloud_backup: ^0.1.0      # iCloud (iOS/macOS)
 ```
 
 Then install it with:
@@ -281,6 +297,27 @@ flutter pub get
 flutter run
 ```
 
+## Migration guide
+
+### 0.7.x → 0.8.0
+
+#### ⚠️ Event metadata field rename
+
+All internal event metadata keys now use a `_` prefix to prevent collision with entity fields (e.g. `user.created_at` no longer conflicts with the event's own `_created_at`).
+
+| Before | After |
+|---|---|
+| `eventId` | `_event_id` |
+| `repository` | `_repository` |
+| `operation` | `_operation` |
+| `createdAt` | `_created_at` |
+| `data` | `_data` |
+| `dataId` | `_data_id` |
+| `syncStatus` | `_sync_status` |
+| `lastEventId` | `_last_event_id` |
+
+The Dart constants (`LocalFirstEvent.kEventId`, `kSyncCreatedAt`, etc.) remain unchanged — only the string values they hold have changed. If you access event fields exclusively through these constants, no code changes are needed. A one-time database migration may be required if you have existing persisted events.
+
 ## Roadmap
 
 - [X] Simple chat application example at repository.
@@ -290,15 +327,20 @@ flutter run
 - [X] Provide Periodic REST and WebSocket sync strategies via add-on packages.
 - [X] End-to-end sample app with authentication.
 - [X] Comprehensive docs and testing utilities (models now use `LocalFirstModel` mixin; full test coverage added).
+- [X] Backup & restore via Firebase Storage, Google Drive, and iCloud add-on packages.
 - [ ] Background sync helpers for Android/iOS via add-on packages.
 
 ## Contributing
 
-Contributions are welcome! Please open an issue to discuss ideas or bugs, and feel free to submit pull requests once we agree on the approach. Running the test suite before sending changes helps keep the package stable:
+Contributions are welcome. See [CONTRIBUTING.md](https://github.com/rafaelsetragni/local_first/blob/main/CONTRIBUTING.md) for guidelines.
 
-```bash
-flutter test
-```
+
+## Support the Project 💰
+
+Your contributions help us enhance and maintain our plugins. Donations are used to procure devices and equipment for testing compatibility across platforms and versions.
+
+[*![Donate With Stripe](https://raw.githubusercontent.com/rafaelsetragni/awesome_task_manager/master/assets/readme/stripe.png)*](https://donate.stripe.com/3cs14Yf79dQcbU4001)
+[*![Donate With Buy Me A Coffee](https://raw.githubusercontent.com/rafaelsetragni/awesome_task_manager/master/assets/readme/buy-me-a-coffee.jpeg)*](https://www.buymeacoffee.com/rafaelsetragni)
 
 ## License
 
