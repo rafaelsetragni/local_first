@@ -34,27 +34,31 @@ class FakeUploadTask extends Fake implements UploadTask {
   final TaskSnapshot _snapshot = MockTaskSnapshot();
 
   @override
-  Future<S> then<S>(FutureOr<S> Function(TaskSnapshot) onValue,
-          {Function? onError}) =>
-      Future<TaskSnapshot>.value(_snapshot).then(onValue, onError: onError);
+  Future<S> then<S>(
+    FutureOr<S> Function(TaskSnapshot) onValue, {
+    Function? onError,
+  }) => Future<TaskSnapshot>.value(_snapshot).then(onValue, onError: onError);
 
   @override
   Future<TaskSnapshot> whenComplete(FutureOr Function() action) =>
       Future<TaskSnapshot>.value(_snapshot).whenComplete(action);
 
   @override
-  Future<TaskSnapshot> catchError(Function onError,
-          {bool Function(Object error)? test}) =>
-      Future<TaskSnapshot>.value(_snapshot).catchError(onError, test: test);
+  Future<TaskSnapshot> catchError(
+    Function onError, {
+    bool Function(Object error)? test,
+  }) => Future<TaskSnapshot>.value(_snapshot).catchError(onError, test: test);
 
   @override
   Stream<TaskSnapshot> asStream() => Stream.value(_snapshot);
 
   @override
-  Future<TaskSnapshot> timeout(Duration timeLimit,
-          {FutureOr<TaskSnapshot> Function()? onTimeout}) =>
-      Future<TaskSnapshot>.value(_snapshot)
-          .timeout(timeLimit, onTimeout: onTimeout);
+  Future<TaskSnapshot> timeout(
+    Duration timeLimit, {
+    FutureOr<TaskSnapshot> Function()? onTimeout,
+  }) => Future<TaskSnapshot>.value(
+    _snapshot,
+  ).timeout(timeLimit, onTimeout: onTimeout);
 }
 
 void main() {
@@ -76,18 +80,12 @@ void main() {
     when(() => mockUser.uid).thenReturn('test-uid-123');
     when(() => mockAuth.currentUser).thenReturn(mockUser);
 
-    provider = FirebaseBackupProvider(
-      storage: mockStorage,
-      auth: mockAuth,
-    );
+    provider = FirebaseBackupProvider(storage: mockStorage, auth: mockAuth);
   });
 
   group('FirebaseBackupProvider', () {
     test('default subfolder is local_first_backups', () {
-      final p = FirebaseBackupProvider(
-        storage: mockStorage,
-        auth: mockAuth,
-      );
+      final p = FirebaseBackupProvider(storage: mockStorage, auth: mockAuth);
       expect(p.subfolder, equals('local_first_backups'));
     });
 
@@ -107,12 +105,13 @@ void main() {
         final now = DateTime.utc(2026, 3, 6, 12);
 
         when(() => mockStorage.ref(any())).thenReturn(mockRef);
-        when(() => mockRef.putData(any(), any()))
-            .thenAnswer((_) => FakeUploadTask());
-        when(() => mockRef.getMetadata())
-            .thenAnswer((_) async => mockMetadata);
-        when(() => mockRef.fullPath)
-            .thenReturn('backups/test-uid-123/local_first_backups/test.lfbk');
+        when(
+          () => mockRef.putData(any(), any()),
+        ).thenAnswer((_) => FakeUploadTask());
+        when(() => mockRef.getMetadata()).thenAnswer((_) async => mockMetadata);
+        when(
+          () => mockRef.fullPath,
+        ).thenReturn('backups/test-uid-123/local_first_backups/test.lfbk');
         when(() => mockMetadata.timeCreated).thenReturn(now);
         when(() => mockMetadata.size).thenReturn(42);
 
@@ -121,14 +120,19 @@ void main() {
           data: [1, 2, 3],
         );
 
-        expect(result.id,
-            equals('backups/test-uid-123/local_first_backups/test.lfbk'));
+        expect(
+          result.id,
+          equals('backups/test-uid-123/local_first_backups/test.lfbk'),
+        );
         expect(result.fileName, equals('test.lfbk'));
         expect(result.createdAt, equals(now));
         expect(result.sizeInBytes, equals(42));
 
-        verify(() => mockStorage.ref(
-            'backups/test-uid-123/local_first_backups/test.lfbk')).called(1);
+        verify(
+          () => mockStorage.ref(
+            'backups/test-uid-123/local_first_backups/test.lfbk',
+          ),
+        ).called(1);
         verify(() => mockRef.putData(any(), any())).called(1);
       });
 
@@ -137,10 +141,10 @@ void main() {
         final mockMetadata = MockFullMetadata();
 
         when(() => mockStorage.ref(any())).thenReturn(mockRef);
-        when(() => mockRef.putData(any(), any()))
-            .thenAnswer((_) => FakeUploadTask());
-        when(() => mockRef.getMetadata())
-            .thenAnswer((_) async => mockMetadata);
+        when(
+          () => mockRef.putData(any(), any()),
+        ).thenAnswer((_) => FakeUploadTask());
+        when(() => mockRef.getMetadata()).thenAnswer((_) async => mockMetadata);
         when(() => mockRef.fullPath).thenReturn('path/file.lfbk');
         when(() => mockMetadata.timeCreated).thenReturn(null);
         when(() => mockMetadata.size).thenReturn(null);
@@ -190,11 +194,13 @@ void main() {
 
         expect(
           () => provider.download(metadata),
-          throwsA(isA<StateError>().having(
-            (e) => e.message,
-            'message',
-            contains('Failed to download'),
-          )),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              contains('Failed to download'),
+            ),
+          ),
         );
       });
     });
@@ -212,8 +218,7 @@ void main() {
         final newer = DateTime.utc(2026, 3, 6);
 
         when(() => mockStorage.ref(any())).thenReturn(prefixRef);
-        when(() => prefixRef.listAll())
-            .thenAnswer((_) async => listResult);
+        when(() => prefixRef.listAll()).thenAnswer((_) async => listResult);
         when(() => listResult.items).thenReturn([ref1, ref2]);
 
         when(() => ref1.getMetadata()).thenAnswer((_) async => meta1);
@@ -242,8 +247,7 @@ void main() {
         final listResult = MockListResult();
 
         when(() => mockStorage.ref(any())).thenReturn(prefixRef);
-        when(() => prefixRef.listAll())
-            .thenAnswer((_) async => listResult);
+        when(() => prefixRef.listAll()).thenAnswer((_) async => listResult);
         when(() => listResult.items).thenReturn([]);
 
         final backups = await provider.listBackups();
@@ -259,8 +263,7 @@ void main() {
         final listResult = MockListResult();
 
         when(() => mockStorage.ref(any())).thenReturn(prefixRef);
-        when(() => prefixRef.listAll())
-            .thenAnswer((_) async => listResult);
+        when(() => prefixRef.listAll()).thenAnswer((_) async => listResult);
         when(() => listResult.items).thenReturn([badRef, goodRef]);
 
         when(() => badRef.getMetadata()).thenThrow(Exception('access denied'));
@@ -284,8 +287,7 @@ void main() {
         final listResult = MockListResult();
 
         when(() => mockStorage.ref(any())).thenReturn(prefixRef);
-        when(() => prefixRef.listAll())
-            .thenAnswer((_) async => listResult);
+        when(() => prefixRef.listAll()).thenAnswer((_) async => listResult);
         when(() => listResult.items).thenReturn([ref]);
         when(() => ref.getMetadata()).thenAnswer((_) async => meta);
         when(() => ref.fullPath).thenReturn('path/file.lfbk');
@@ -332,11 +334,13 @@ void main() {
 
         expect(
           () => provider.upload(fileName: 'test.lfbk', data: [1]),
-          throwsA(isA<StateError>().having(
-            (e) => e.message,
-            'message',
-            contains('requires an authenticated user'),
-          )),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              contains('requires an authenticated user'),
+            ),
+          ),
         );
       });
 
@@ -351,18 +355,19 @@ void main() {
         final mockMetadata = MockFullMetadata();
 
         when(() => mockStorage.ref(any())).thenReturn(mockRef);
-        when(() => mockRef.putData(any(), any()))
-            .thenAnswer((_) => FakeUploadTask());
-        when(() => mockRef.getMetadata())
-            .thenAnswer((_) async => mockMetadata);
+        when(
+          () => mockRef.putData(any(), any()),
+        ).thenAnswer((_) => FakeUploadTask());
+        when(() => mockRef.getMetadata()).thenAnswer((_) async => mockMetadata);
         when(() => mockRef.fullPath).thenReturn('path');
         when(() => mockMetadata.timeCreated).thenReturn(DateTime.utc(2026));
         when(() => mockMetadata.size).thenReturn(1);
 
         await customProvider.upload(fileName: 'f.lfbk', data: [1]);
 
-        verify(() => mockStorage.ref(
-            'backups/test-uid-123/custom_dir/f.lfbk')).called(1);
+        verify(
+          () => mockStorage.ref('backups/test-uid-123/custom_dir/f.lfbk'),
+        ).called(1);
       });
     });
   });

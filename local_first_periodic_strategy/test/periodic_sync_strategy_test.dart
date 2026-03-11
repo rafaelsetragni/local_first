@@ -4,6 +4,56 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:local_first/local_first.dart';
 import 'package:local_first_periodic_strategy/local_first_periodic_strategy.dart';
 
+// Helper to build a standard test repository
+LocalFirstRepository<JsonMap> _buildRepo(String name) =>
+    LocalFirstRepository<JsonMap>.create(
+      name: name,
+      getId: (item) => item['id'] as String,
+      toJson: (item) => item,
+      fromJson: (json) => json,
+    );
+
+// Helper to build a started strategy + client using InMemoryLocalFirstStorage
+Future<({PeriodicSyncStrategy strategy, LocalFirstClient client})>
+_startInMemory({
+  required PeriodicSyncStrategy strategy,
+  List<LocalFirstRepository>? repos,
+}) async {
+  final client = LocalFirstClient(
+    repositories: repos ?? [_buildRepo('test_repo')],
+    localStorage: InMemoryLocalFirstStorage(),
+    syncStrategies: [strategy],
+  );
+  await client.initialize();
+  await strategy.start();
+  return (strategy: strategy, client: client);
+}
+
+// Helper to build a started strategy + client using _NoopStorage
+Future<({PeriodicSyncStrategy strategy, LocalFirstClient client})>
+_startNoop({
+  required PeriodicSyncStrategy strategy,
+  List<LocalFirstRepository>? repos,
+}) async {
+  final client = LocalFirstClient(
+    repositories: repos ?? [_buildRepo('test_repo')],
+    localStorage: _NoopStorage(),
+    syncStrategies: [strategy],
+  );
+  await client.initialize();
+  await strategy.start();
+  return (strategy: strategy, client: client);
+}
+
+// Valid remote event JSON for a 'test_repo' insert
+JsonMap _remoteInsertEvent({String id = 'remote-1'}) => {
+  LocalFirstEvent.kEventId: 'evt-$id',
+  LocalFirstEvent.kOperation: SyncOperation.insert.index,
+  LocalFirstEvent.kSyncCreatedAt: DateTime.now().toUtc().toIso8601String(),
+  LocalFirstEvent.kData: {'id': id},
+  LocalFirstEvent.kDataId: id,
+};
+
 /// Mock storage implementation for testing
 class _NoopStorage implements LocalFirstStorage {
   @override
@@ -468,6 +518,247 @@ void main() {
         strategy.dispose();
 
         expect(strategy.latestConnectionState, isFalse);
+      });
+    });
+
+    group('forceSync', () {
+      test('does nothing when strategy is not running', () async {
+        var syncCalled = false;
+        final strategy = PeriodicSyncStrategy(
+          syncInterval: const Duration(seconds: 100),
+          repositoryNames: ['test_repo'],
+          onFetchEvents: (_) async {
+            syncCalled = true;
+            return [];
+          },
+          onPushEvents: (_, events) async => true,
+          onBuildSyncFilter: (_) async => null,
+          onSaveSyncState: (_, events) async {},
+        );
+
+        // Do NOT call start() — strategy is not running
+        await strategy.forceSync();
+
+        expect(syncCalled, isFalse);
+      });
+
+      test('executes a sync cycle when running', () async {
+        var fetchCallCount = 0;
+        final strategy = PeriodicSyncStrategy(
+          syncInterval: const Duration(seconds: 100),
+          repositoryNames: ['test_repo'],
+          onFetchEvents: (_) async {
+            fetchCallCount++;
+            return [];
+          },
+          onPushEvents: (_, events) async => true,
+          onBuildSyncFilter: (_) async => null,
+          onSaveSyncState: (_, events) async {},
+        );
+
+        final ctx = await _startNoop(strategy: strategy);
+        // start() already performed one sync
+        expect(fetchCallCount, 1);
+
+        await strategy.forceSync();
+        // forceSync triggers a second sync
+        expect(fetchCallCount, 2);
+
+        ctx.strategy.stop();
+      });
+    });
+
+    group('onPing exception', () {
+      test('reports disconnected when onPing throws', () async {
+        final strategy = PeriodicSyncStrategy(
+          syncInterval: const Duration(seconds: 100),
+          repositoryNames: ['test_repo'],
+          onFetchEvents: (_) async => [],
+          onPushEvents: (_, events) async => true,
+          onBuildSyncFilter: (_) async => null,
+          onSaveSyncState: (_, events) async {},
+          onPing: () async => throw Exception('Network unreachable'),
+        );
+
+        final ctx = await _startNoop(strategy: strategy);
+
+        expect(ctx.strategy.latestConnectionState, isFalse);
+
+        ctx.strategy.stop();
+      });
+    });
+
+    group('Push with pending events', () {
+      test('calls onPushEvents when pending events exist', () async {
+        var pushedRepo = '';
+        var pushedCount = 0;
+
+        final strategy = PeriodicSyncStrategy(
+          syncInterval: const Duration(seconds: 100),
+          repositoryNames: ['test_repo'],
+          onFetchEvents: (_) async => [],
+          onPushEvents: (repoName, events) async {
+            pushedRepo = repoName;
+            pushedCount = events.length;
+            return true;
+          },
+          onBuildSyncFilter: (_) async => null,
+          onSaveSyncState: (_, events) async {},
+        );
+
+        final testRepo = _buildRepo('test_repo');
+        final ctx = await _startInMemory(
+          strategy: strategy,
+          repos: [testRepo],
+        );
+
+        // Insert an item to create a pending event before syncing
+        await testRepo.upsert({'id': '1'}, needSync: true);
+        await strategy.forceSync();
+
+        expect(pushedRepo, 'test_repo');
+        expect(pushedCount, greaterThan(0));
+
+        ctx.strategy.stop();
+      });
+
+      test('logs failure when onPushEvents returns false', () async {
+        var pushCalled = false;
+
+        final strategy = PeriodicSyncStrategy(
+          syncInterval: const Duration(seconds: 100),
+          repositoryNames: ['test_repo'],
+          onFetchEvents: (_) async => [],
+          onPushEvents: (_, events) async {
+            pushCalled = true;
+            return false; // simulate server rejection
+          },
+          onBuildSyncFilter: (_) async => null,
+          onSaveSyncState: (_, events) async {},
+        );
+
+        final testRepo = _buildRepo('test_repo');
+        final ctx = await _startInMemory(
+          strategy: strategy,
+          repos: [testRepo],
+        );
+
+        await testRepo.upsert({'id': '1'}, needSync: true);
+        await strategy.forceSync();
+
+        expect(pushCalled, isTrue);
+        // Connection remains true — only ping failure marks disconnected
+        expect(ctx.strategy.latestConnectionState, isTrue);
+
+        ctx.strategy.stop();
+      });
+
+      test('continues syncing other repos when onPushEvents throws', () async {
+        final pushedRepos = <String>[];
+
+        final strategy = PeriodicSyncStrategy(
+          syncInterval: const Duration(seconds: 100),
+          repositoryNames: ['repo1', 'repo2'],
+          onFetchEvents: (_) async => [],
+          onPushEvents: (repoName, events) async {
+            if (repoName == 'repo1') throw Exception('Push failed');
+            pushedRepos.add(repoName);
+            return true;
+          },
+          onBuildSyncFilter: (_) async => null,
+          onSaveSyncState: (_, events) async {},
+        );
+
+        final repo1 = _buildRepo('repo1');
+        final repo2 = _buildRepo('repo2');
+        final ctx = await _startInMemory(
+          strategy: strategy,
+          repos: [repo1, repo2],
+        );
+
+        await repo1.upsert({'id': '1'}, needSync: true);
+        await repo2.upsert({'id': '2'}, needSync: true);
+        await strategy.forceSync();
+
+        // repo2 should still be attempted even if repo1 push threw
+        expect(pushedRepos, contains('repo2'));
+
+        ctx.strategy.stop();
+      });
+    });
+
+    group('Pull with remote events', () {
+      test('applies non-empty remote events to local storage', () async {
+        var saveSyncStateCalled = false;
+
+        final strategy = PeriodicSyncStrategy(
+          syncInterval: const Duration(seconds: 100),
+          repositoryNames: ['test_repo'],
+          onFetchEvents: (_) async => [_remoteInsertEvent(id: 'r1')],
+          onPushEvents: (_, events) async => true,
+          onBuildSyncFilter: (_) async => null,
+          onSaveSyncState: (_, events) async {
+            saveSyncStateCalled = true;
+          },
+        );
+
+        final ctx = await _startInMemory(strategy: strategy);
+
+        expect(saveSyncStateCalled, isTrue);
+
+        ctx.strategy.stop();
+      });
+
+      test('continues when onSaveSyncState throws', () async {
+        var fetchCalled = false;
+
+        final strategy = PeriodicSyncStrategy(
+          syncInterval: const Duration(seconds: 100),
+          repositoryNames: ['test_repo'],
+          onFetchEvents: (_) async {
+            fetchCalled = true;
+            return [_remoteInsertEvent(id: 'r2')];
+          },
+          onPushEvents: (_, events) async => true,
+          onBuildSyncFilter: (_) async => null,
+          onSaveSyncState: (_, events) async {
+            throw Exception('State save failed');
+          },
+        );
+
+        final ctx = await _startInMemory(strategy: strategy);
+
+        // Sync should have completed despite the onSaveSyncState error
+        expect(fetchCalled, isTrue);
+        expect(ctx.strategy.latestConnectionState, isTrue);
+
+        ctx.strategy.stop();
+      });
+
+      test('continues syncing other repos when pull throws', () async {
+        final fetchedRepos = <String>[];
+
+        final strategy = PeriodicSyncStrategy(
+          syncInterval: const Duration(seconds: 100),
+          repositoryNames: ['repo1', 'repo2'],
+          onFetchEvents: (repoName) async {
+            fetchedRepos.add(repoName);
+            if (repoName == 'repo1') throw Exception('Fetch failed');
+            return [];
+          },
+          onPushEvents: (_, events) async => true,
+          onBuildSyncFilter: (_) async => null,
+          onSaveSyncState: (_, events) async {},
+        );
+
+        final ctx = await _startInMemory(
+          strategy: strategy,
+          repos: [_buildRepo('repo1'), _buildRepo('repo2')],
+        );
+
+        expect(fetchedRepos, containsAll(['repo1', 'repo2']));
+
+        ctx.strategy.stop();
       });
     });
   });

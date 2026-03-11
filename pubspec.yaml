@@ -53,15 +53,17 @@ melos:
       run: |
         mkdir -p coverage
         rm -f coverage/*.info
-        melos exec -c 1 -- \
+        melos exec -c 1 --no-select -- \
           "flutter test --coverage"
-        lcov -a local_first/coverage/lcov.info \
-            -a local_first_hive_storage/coverage/lcov.info \
-            -a local_first_sqlite_storage/coverage/lcov.info \
-            -a local_first_shared_preferences/coverage/lcov.info \
-            -a local_first_websocket/coverage/lcov.info \
-            -a local_first_periodic_strategy/coverage/lcov.info \
-            -o coverage/lcov.info
+        LCOV_ARGS=""
+        for f in */coverage/lcov.info; do
+          [ -f "$f" ] && LCOV_ARGS="$LCOV_ARGS -a $f"
+        done
+        if [ -n "$LCOV_ARGS" ]; then
+          lcov $LCOV_ARGS -o coverage/lcov.info
+        else
+          echo "No coverage files found."
+        fi
       packageFilters:
         dirExists:
           - test

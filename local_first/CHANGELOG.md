@@ -1,3 +1,32 @@
+## 0.8.0
+
+- Added backup & restore system with `BackupService`, `BackupData`, `BackupStorageProvider` interface, and AES-256 + gzip encryption pipeline.
+- Added `local_first_firebase_backup`, `local_first_gdrive_backup`, and `local_first_icloud_backup` companion packages.
+- Added configurable logger system (`LocalFirstLogger`) for all plugins with adjustable log levels.
+- Added repository filtering to sync strategies via `onBuildSyncFilter` callback.
+- Fixed `DateTime` serialization to ISO 8601 string in `LocalFirstEvent.toJson()`.
+- Fixed orphaned events being deserialized in `getAllEvents`, preventing runtime errors.
+- Fixed server event field name alignment with client convention.
+
+### ⚠️ Breaking change — event metadata field rename
+
+All internal event metadata keys now use a `_` prefix to prevent collision with your entity fields (e.g. a `user.created_at` field no longer conflicts with the event's own `_created_at`).
+
+If you store or transmit raw event maps (e.g. via a custom sync backend or direct storage queries), update your field references:
+
+| Before | After |
+|---|---|
+| `eventId` | `_event_id` |
+| `repository` | `_repository` |
+| `operation` | `_operation` |
+| `createdAt` | `_created_at` |
+| `data` | `_data` |
+| `dataId` | `_data_id` |
+| `syncStatus` | `_sync_status` |
+| `lastEventId` | `_last_event_id` |
+
+The Dart constants (`LocalFirstEvent.kEventId`, `kSyncCreatedAt`, etc.) remain unchanged — only the string values they hold have changed. If you access event fields exclusively through these constants, no code changes are needed. A one-time database migration may be required if you have existing persisted events.
+
 ## 0.7.2
 
 - Updated README with absolute GitHub URLs for proper rendering on pub.dev

@@ -93,41 +93,7 @@ await todoRepository.upsert(
 
 ### Architecture
 
-```
-┌─────────────────────────────────────────┐
-│         Flutter Application             │
-│  ┌───────────────────────────────────┐  │
-│  │  LocalFirst Repositories          │  │
-│  │  - Create/Update/Delete           │  │
-│  └───────────────┬───────────────────┘  │
-│                  │                       │
-│  ┌───────────────▼───────────────────┐  │
-│  │  WebSocketSyncStrategy            │  │
-│  │  - Instant event push             │  │
-│  │  - Real-time event pull           │  │
-│  │  - Reconnection logic             │  │
-│  │  - Event queue management         │  │
-│  └───────────────┬───────────────────┘  │
-└──────────────────┼───────────────────────┘
-                   │ WebSocket (persistent)
-┌──────────────────▼───────────────────────┐
-│         WebSocket Server                 │
-│  ┌───────────────────────────────────┐   │
-│  │  Protocol Handler                 │   │
-│  │  - auth, ping/pong                │   │
-│  │  - push_event, push_events_batch  │   │
-│  │  - request_events, events         │   │
-│  │  - ack, sync_complete             │   │
-│  └───────────────┬───────────────────┘   │
-└──────────────────┼───────────────────────┘
-                   │
-┌──────────────────▼───────────────────────┐
-│            Database (MongoDB)            │
-│  - Event storage                         │
-│  - Event deduplication                   │
-│  - Query filtering                       │
-└──────────────────────────────────────────┘
-```
+![Architecture](doc/architecture.png)
 
 ### Push Flow
 
@@ -663,7 +629,15 @@ wsStrategy.connectionChanges.listen(
 
 ## Contributing
 
-Contributions are welcome! Please open an issue to discuss ideas or bugs, and feel free to submit pull requests. See the main [local_first](https://pub.dev/packages/local_first) repository for guidelines.
+Contributions are welcome. See [CONTRIBUTING.md](https://github.com/rafaelsetragni/local_first/blob/main/CONTRIBUTING.md) for guidelines.
+
+
+## Support the Project 💰
+
+Your contributions help us enhance and maintain our plugins. Donations are used to procure devices and equipment for testing compatibility across platforms and versions.
+
+[*![Donate With Stripe](https://raw.githubusercontent.com/rafaelsetragni/awesome_task_manager/master/assets/readme/stripe.png)*](https://donate.stripe.com/3cs14Yf79dQcbU4001)
+[*![Donate With Buy Me A Coffee](https://raw.githubusercontent.com/rafaelsetragni/awesome_task_manager/master/assets/readme/buy-me-a-coffee.jpeg)*](https://www.buymeacoffee.com/rafaelsetragni)
 
 ## License
 
