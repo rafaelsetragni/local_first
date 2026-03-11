@@ -41,24 +41,22 @@ class _DefaultICloudStorageDelegate implements ICloudStorageDelegate {
     required String containerId,
     required String filePath,
     required String destinationRelativePath,
-  }) =>
-      ICloudStorage.upload(
-        containerId: containerId,
-        filePath: filePath,
-        destinationRelativePath: destinationRelativePath,
-      );
+  }) => ICloudStorage.upload(
+    containerId: containerId,
+    filePath: filePath,
+    destinationRelativePath: destinationRelativePath,
+  );
 
   @override
   Future<void> download({
     required String containerId,
     required String relativePath,
     required String destinationFilePath,
-  }) =>
-      ICloudStorage.download(
-        containerId: containerId,
-        relativePath: relativePath,
-        destinationFilePath: destinationFilePath,
-      );
+  }) => ICloudStorage.download(
+    containerId: containerId,
+    relativePath: relativePath,
+    destinationFilePath: destinationFilePath,
+  );
 
   @override
   Future<List<ICloudFile>> gather({required String containerId}) =>
@@ -68,11 +66,10 @@ class _DefaultICloudStorageDelegate implements ICloudStorageDelegate {
   Future<void> delete({
     required String containerId,
     required String relativePath,
-  }) =>
-      ICloudStorage.delete(
-        containerId: containerId,
-        relativePath: relativePath,
-      );
+  }) => ICloudStorage.delete(
+    containerId: containerId,
+    relativePath: relativePath,
+  );
 }
 
 /// iCloud backup provider using iCloud Documents.
@@ -161,18 +158,18 @@ class ICloudBackupProvider implements BackupStorageProvider {
 
   @override
   Future<List<BackupMetadata>> listBackups() async {
-    final files = await _delegate.gather(
-      containerId: containerId,
-    );
+    final files = await _delegate.gather(containerId: containerId);
 
     final backups = files
         .where((f) => f.relativePath.startsWith(subfolder))
-        .map((f) => BackupMetadata(
-              id: f.relativePath,
-              fileName: p.basename(f.relativePath),
-              createdAt: f.contentChangeDate,
-              sizeInBytes: f.sizeInBytes,
-            ))
+        .map(
+          (f) => BackupMetadata(
+            id: f.relativePath,
+            fileName: p.basename(f.relativePath),
+            createdAt: f.contentChangeDate,
+            sizeInBytes: f.sizeInBytes,
+          ),
+        )
         .toList();
 
     // Sort newest first
@@ -182,9 +179,6 @@ class ICloudBackupProvider implements BackupStorageProvider {
 
   @override
   Future<void> delete(BackupMetadata metadata) async {
-    await _delegate.delete(
-      containerId: containerId,
-      relativePath: metadata.id,
-    );
+    await _delegate.delete(containerId: containerId, relativePath: metadata.id);
   }
 }

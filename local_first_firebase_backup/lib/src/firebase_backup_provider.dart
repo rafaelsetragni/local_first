@@ -31,8 +31,8 @@ class FirebaseBackupProvider implements BackupStorageProvider {
     FirebaseStorage? storage,
     FirebaseAuth? auth,
     this.subfolder = 'local_first_backups',
-  })  : _storageOverride = storage,
-        _authOverride = auth;
+  }) : _storageOverride = storage,
+       _authOverride = auth;
 
   FirebaseStorage get _storage => _storageOverride ?? FirebaseStorage.instance;
   FirebaseAuth get _auth => _authOverride ?? FirebaseAuth.instance;
@@ -99,12 +99,14 @@ class FirebaseBackupProvider implements BackupStorageProvider {
     for (final ref in result.items) {
       try {
         final metadata = await ref.getMetadata();
-        backups.add(BackupMetadata(
-          id: ref.fullPath,
-          fileName: ref.name,
-          createdAt: metadata.timeCreated ?? DateTime.now().toUtc(),
-          sizeInBytes: metadata.size ?? 0,
-        ));
+        backups.add(
+          BackupMetadata(
+            id: ref.fullPath,
+            fileName: ref.name,
+            createdAt: metadata.timeCreated ?? DateTime.now().toUtc(),
+            sizeInBytes: metadata.size ?? 0,
+          ),
+        );
       } catch (_) {
         // Skip files that can't be read
       }
