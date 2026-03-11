@@ -8,6 +8,7 @@ pubspec.lock
 
 # Melos
 pubspec_overrides.yaml
+*.iml
 build/
 
 # Coverage
