@@ -1,0 +1,13 @@
+name: websocket_server_example
+description: WebSocket server example for local_first_websocket
+publish_to: none
+
+environment:
+  sdk: ^3.10.0
+
+dependencies:
+  mongo_dart: ^0.10.5
+
+dev_dependencies:
+  test: ^1.25.0
+  http: ^1.2.2

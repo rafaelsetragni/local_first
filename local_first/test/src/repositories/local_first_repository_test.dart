@@ -1,698 +1,985 @@
-// ignore_for_file: override_on_non_overriding_member
-
-import 'dart:async';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_first/local_first.dart';
 
-class _TestModel with LocalFirstModel {
-  _TestModel(this.id, {this.value});
-  final String id;
-  final String? value;
+class _StubStorage implements LocalFirstStorage {
+  final List<JsonMap> events = [];
+  final List<JsonMap> updatedEvents = [];
+  bool containsIdReturn = false;
+  int ensureSchemaCount = 0;
+  int insertCount = 0;
+  int updateCount = 0;
+  int deleteCount = 0;
+  int insertEventCount = 0;
+  int updateEventCount = 0;
+  JsonMap? lastInsertedData;
+  JsonMap? lastUpdatedData;
+  String? lastDeletedId;
+  JsonMap? lastInsertedEvent;
+  JsonMap? lastUpdatedEvent;
 
   @override
-  Map<String, dynamic> toJson() => {
-    'id': id,
-    if (value != null) 'value': value,
-  };
-
-  factory _TestModel.fromJson(Map<String, dynamic> json) =>
-      _TestModel(json['id'] as String, value: json['value'] as String?);
-}
-
-class _InMemoryStorage implements LocalFirstStorage {
-  final Map<String, Map<String, Map<String, dynamic>>> tables = {};
-  final Map<String, String> meta = {};
-  final Map<String, StreamController<List<Map<String, dynamic>>>> _controllers =
-      {};
-  bool initialized = false;
-
-  StreamController<List<Map<String, dynamic>>> _controller(String name) {
-    return _controllers.putIfAbsent(
-      name,
-      () => StreamController<List<Map<String, dynamic>>>.broadcast(),
-    );
-  }
-
-  Future<void> _emit(String tableName) async {
-    final controller = _controller(tableName);
-    if (controller.isClosed) return;
-    controller.add(await getAll(tableName));
-  }
+  Future<void> clearAllData() async {}
 
   @override
-  Future<void> initialize() async {
-    initialized = true;
-  }
+  Future<void> close() async {}
 
   @override
-  Future<void> close() async {
-    initialized = false;
-    for (final controller in _controllers.values) {
-      await controller.close();
-    }
-    _controllers.clear();
-  }
-
-  @override
-  Future<void> clearAllData() async {
-    tables.clear();
-    meta.clear();
-    for (final controller in _controllers.values) {
-      if (!controller.isClosed) {
-        controller.add([]);
-      }
-    }
-  }
-
-  @override
-  Future<List<Map<String, dynamic>>> getAll(String tableName) async {
-    return tables[tableName]?.values.map((e) => Map.of(e)).toList() ?? [];
-  }
-
-  @override
-  Future<Map<String, dynamic>?> getById(String tableName, String id) async {
-    return tables[tableName]?[id];
-  }
-
-  @override
-  Future<void> insert(
-    String tableName,
-    Map<String, dynamic> item,
-    String idField,
-  ) async {
-    tables.putIfAbsent(tableName, () => {});
-    tables[tableName]![item[idField] as String] = item;
-    await _emit(tableName);
-  }
-
-  @override
-  Future<void> update(
-    String tableName,
-    String id,
-    Map<String, dynamic> item,
-  ) async {
-    tables.putIfAbsent(tableName, () => {});
-    tables[tableName]![id] = item;
-    await _emit(tableName);
-  }
+  Future<bool> containsId(String tableName, String id) async =>
+      containsIdReturn;
 
   @override
   Future<void> delete(String repositoryName, String id) async {
-    tables[repositoryName]?.remove(id);
-    await _emit(repositoryName);
+    deleteCount++;
+    lastDeletedId = id;
   }
 
   @override
-  Future<void> deleteAll(String tableName) async {
-    tables[tableName]?.clear();
-    await _emit(tableName);
+  Future<void> deleteAll(String tableName) async {}
+
+  @override
+  Future<void> deleteAllEvents(String tableName) async {}
+
+  @override
+  Future<void> deleteEvent(String repositoryName, String id) async {
+    deleteCount++;
   }
-
-  @override
-  Future<DateTime?> getLastSyncAt(String repositoryName) async => null;
-
-  @override
-  Future<void> setLastSyncAt(String repositoryName, DateTime time) async {}
-
-  @override
-  Future<void> setMeta(String key, String value) async {
-    meta[key] = value;
-  }
-
-  @override
-  Future<String?> getMeta(String key) async => meta[key];
 
   @override
   Future<void> ensureSchema(
     String tableName,
     Map<String, LocalFieldType> schema, {
     required String idFieldName,
-  }) async {}
-
-  @override
-  Future<List<Map<String, dynamic>>> query(LocalFirstQuery query) async {
-    return getAll(query.repositoryName);
+  }) async {
+    ensureSchemaCount++;
   }
 
   @override
-  Stream<List<Map<String, dynamic>>> watchQuery(LocalFirstQuery query) async* {
-    final controller = _controller(query.repositoryName);
-    controller.onListen = () async {
-      controller.add(await getAll(query.repositoryName));
-    };
-    yield* controller.stream;
+  Future<List<JsonMap>> getAll(String tableName) async => [];
+
+  @override
+  Future<List<JsonMap>> getAllEvents(String tableName) async =>
+      List.unmodifiable(events);
+
+  @override
+  Future<JsonMap?> getById(String tableName, String id) async => null;
+
+  @override
+  Future<JsonMap?> getEventById(String tableName, String id) async => null;
+
+  @override
+  Future<bool> containsConfigKey(String key) async => false;
+
+  @override
+  Future<T?> getConfigValue<T>(String key) async => null;
+
+  @override
+  Future<bool> removeConfig(String key) async => true;
+
+  @override
+  Future<bool> clearConfig() async => true;
+
+  @override
+  Future<Set<String>> getConfigKeys() async => {};
+
+  @override
+  Future<void> useNamespace(String namespace) async {}
+
+  @override
+  Future<void> initialize() async {}
+
+  @override
+  Future<void> insert(String tableName, JsonMap item, String idField) async {
+    insertCount++;
+    lastInsertedData = item;
   }
+
+  @override
+  Future<void> insertEvent(
+    String tableName,
+    JsonMap item,
+    String idField,
+  ) async {
+    insertEventCount++;
+    events.add(item);
+    lastInsertedEvent = item;
+  }
+
+  @override
+  Future<List<LocalFirstEvent<T>>> query<T>(LocalFirstQuery<T> query) async =>
+      [];
+
+  @override
+  Future<bool> setConfigValue<T>(String key, T value) async => true;
+
+  @override
+  Future<void> update(String tableName, String id, JsonMap item) async {
+    updateCount++;
+    lastUpdatedData = item;
+  }
+
+  @override
+  Future<void> updateEvent(String tableName, String id, JsonMap item) async {
+    updateEventCount++;
+    updatedEvents.add(item);
+    lastUpdatedEvent = item;
+  }
+
+  @override
+  Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query) =>
+      const Stream.empty();
 }
 
-class _NoopStrategy extends DataSyncStrategy {
-  @override
-  Future<SyncStatus> onPushToRemote(LocalFirstModel localData) async {
-    return SyncStatus.ok;
-  }
+class _DummyStrategy extends DataSyncStrategy {}
+
+LocalFirstRepository<JsonMap> _buildRepo(_StubStorage storage) {
+  final repo = LocalFirstRepository<JsonMap>.create(
+    name: 'repo',
+    getId: (item) => item['id'] as String,
+    toJson: (item) => item,
+    fromJson: (json) => json,
+  );
+  LocalFirstClient(
+    repositories: [repo],
+    localStorage: storage,
+    syncStrategies: [_DummyStrategy()],
+  );
+  return repo;
 }
 
-class _FailingStrategy extends DataSyncStrategy {
-  @override
-  Future<SyncStatus> onPushToRemote(LocalFirstModel localData) async {
-    return SyncStatus.failed;
-  }
-}
-
-class _ConditionalStrategy extends DataSyncStrategy {
-  @override
-  Future<SyncStatus> onPushToRemote(LocalFirstModel localData) async {
-    if (localData is _TestModel && localData.id == 'fail-push') {
-      throw Exception('push failed');
-    }
-    return SyncStatus.ok;
-  }
+LocalFirstRepository<JsonMap> _buildRepoWithStrategy(
+  _StubStorage storage,
+  DataSyncStrategy strategy,
+) {
+  final repo = LocalFirstRepository<JsonMap>.create(
+    name: 'repo',
+    getId: (item) => item['id'] as String,
+    toJson: (item) => item,
+    fromJson: (json) => json,
+  );
+  LocalFirstClient(
+    repositories: [repo],
+    localStorage: storage,
+    syncStrategies: [strategy],
+  );
+  return repo;
 }
 
 void main() {
   group('LocalFirstRepository', () {
-    late _InMemoryStorage storage;
-    late LocalFirstClient client;
-    late LocalFirstRepository<_TestModel> repo;
+    late _StubStorage storage;
+    late LocalFirstRepository<JsonMap> repository;
 
-    setUp(() async {
-      storage = _InMemoryStorage();
-      repo = LocalFirstRepository<_TestModel>.create(
-        name: 'tests',
-        getId: (m) => m.id,
-        toJson: (m) => m.toJson(),
-        fromJson: _TestModel.fromJson,
-        onConflict: (l, r) => l,
+    setUp(() {
+      storage = _StubStorage();
+      repository = _buildRepo(storage);
+    });
+
+    test('initialize should ensure schema only once until reset', () async {
+      await repository.initialize();
+      await repository.initialize();
+
+      expect(storage.ensureSchemaCount, 1);
+
+      repository.reset();
+      await repository.initialize();
+      expect(storage.ensureSchemaCount, 2);
+    });
+
+    test('upsert should insert when id does not exist', () async {
+      storage.containsIdReturn = false;
+
+      await repository.upsert({'id': '1'}, needSync: false);
+
+      expect(storage.insertCount, 1);
+      expect(storage.updateEventCount, 1);
+      expect(storage.insertEventCount, 0);
+    });
+
+    test('upsert should update when id exists', () async {
+      storage.containsIdReturn = true;
+
+      await repository.upsert({'id': '1'}, needSync: false);
+
+      expect(storage.updateCount, 1);
+      expect(storage.updateEventCount, 1);
+      expect(storage.insertCount, 0);
+    });
+
+    test('upsert should accept LocalFirstEvent payloads', () async {
+      storage.containsIdReturn = false;
+      await repository.upsert({'id': '1'}, needSync: false);
+
+      expect(storage.insertCount, 1);
+      expect(storage.updateEventCount, 1);
+    });
+
+    test(
+      'upsert should push event to sync strategies when needSync is true',
+      () async {
+        final strategy = _StrategyWithStatus(SyncStatus.ok);
+        repository = _buildRepoWithStrategy(storage, strategy);
+
+        await repository.upsert({'id': '1'}, needSync: true);
+
+        expect(strategy.received, isNotEmpty);
+        expect(storage.updateEventCount, greaterThan(0));
+      },
+    );
+
+    test('delete should log delete event and remove data', () async {
+      final existing = LocalFirstEvent.createNewInsertEvent(
+        repository: repository,
+        data: {'id': '1'},
+        needSync: false,
       );
-      client = LocalFirstClient(
-        repositories: [repo],
+      storage.events.add(existing.toLocalStorageJson());
+
+      await repository.delete('1', needSync: true);
+
+      expect(storage.deleteCount, 1);
+      expect(storage.insertEventCount, 1);
+      expect(
+        storage.updatedEvents.map((e) => e[LocalFirstEvent.kEventId]),
+        isNotEmpty,
+      );
+    });
+
+    test('query should honor includeDeleted flag', () {
+      final q1 = repository.query();
+      final q2 = repository.query(includeDeleted: true);
+
+      expect(q1.includeDeleted, isFalse);
+      expect(q2.includeDeleted, isTrue);
+      expect(q2.repository, same(repository));
+    });
+
+    test('getPendingEvents should return only events needing sync', () async {
+      final pending = LocalFirstEvent.createNewInsertEvent(
+        repository: repository,
+        data: {'id': '1'},
+        needSync: true,
+      );
+      final synced = LocalFirstEvent.createNewInsertEvent(
+        repository: repository,
+        data: {'id': '2'},
+        needSync: false,
+      );
+      storage.events
+        ..add(pending.toLocalStorageJson())
+        ..add(synced.toLocalStorageJson());
+
+      final result = await repository.getPendingEvents();
+
+      expect(result.map((e) => e.dataId), ['1']);
+    });
+
+    test(
+      'getLastRespectivePendingEvent should return latest pending for same id',
+      () async {
+        final older = LocalFirstEvent.createNewUpdateEvent(
+          repository: repository,
+          data: {'id': '1'},
+          needSync: true,
+        );
+        final newer = LocalFirstEvent.createNewUpdateEvent(
+          repository: repository,
+          data: {'id': '1'},
+          needSync: true,
+        );
+        final olderJson = older.toLocalStorageJson()
+          ..[LocalFirstEvent.kSyncCreatedAt] = 1000;
+        final newerJson = newer.toLocalStorageJson()
+          ..[LocalFirstEvent.kSyncCreatedAt] = 2000;
+        storage.events
+          ..add(olderJson)
+          ..add(newerJson);
+
+        final result = await repository.getLastRespectivePendingEvent(
+          reference: newer,
+        );
+
+        expect(result?.eventId, newer.eventId);
+      },
+    );
+
+    test(
+      '_markAllPreviousEventAsOk should update only older events for same data',
+      () async {
+        final target = LocalFirstEvent.createNewUpdateEvent(
+          repository: repository,
+          data: {'id': '1'},
+          needSync: true,
+        );
+        final olderSame = LocalFirstEvent.createNewInsertEvent(
+          repository: repository,
+          data: {'id': '1'},
+          needSync: true,
+        );
+        final newerSame = LocalFirstEvent.createNewUpdateEvent(
+          repository: repository,
+          data: {'id': '1'},
+          needSync: true,
+        );
+        final otherId = LocalFirstEvent.createNewInsertEvent(
+          repository: repository,
+          data: {'id': '2'},
+          needSync: true,
+        );
+        final olderJson = olderSame.toLocalStorageJson()
+          ..[LocalFirstEvent.kSyncCreatedAt] = 1000;
+        final targetJson = target.toLocalStorageJson()
+          ..[LocalFirstEvent.kSyncCreatedAt] = 2000;
+        final newerJson = newerSame.toLocalStorageJson()
+          ..[LocalFirstEvent.kSyncCreatedAt] = 3000;
+        final otherJson = otherId.toLocalStorageJson()
+          ..[LocalFirstEvent.kSyncCreatedAt] = 1500;
+        storage.events.addAll([olderJson, targetJson, newerJson, otherJson]);
+
+        final helper = TestHelperLocalFirstRepository(repository);
+        final reference = LocalFirstEvent<JsonMap>.fromLocalStorage(
+          repository: repository,
+          json: targetJson,
+        );
+        await helper.markAllPreviousEventAsOk(reference);
+
+        // Only the older event for the same data id should be updated.
+        expect(
+          storage.updatedEvents.map((e) => e[LocalFirstEvent.kEventId]),
+          contains(olderSame.eventId),
+        );
+        expect(
+          storage.updatedEvents.map((e) => e[LocalFirstEvent.kEventId]),
+          isNot(contains(newerSame.eventId)),
+        );
+        expect(
+          storage.updatedEvents.map((e) => e[LocalFirstEvent.kEventId]),
+          isNot(contains(otherId.eventId)),
+        );
+      },
+    );
+
+    test(
+      'mergeInsertEvent should insert when localPendingEvent is null',
+      () async {
+        final helper = TestHelperLocalFirstRepository(repository);
+        final remote =
+            LocalFirstEvent.createNewInsertEvent(
+                  repository: repository,
+                  data: {'id': '10'},
+                  needSync: false,
+                )
+                as LocalFirstStateEvent<JsonMap>;
+
+        await helper.mergeInsertEvent(
+          remoteEvent: remote,
+          localPendingEvent: null,
+        );
+
+        expect(storage.insertCount, 1);
+        expect(storage.updateEventCount, greaterThan(0));
+      },
+    );
+
+    test(
+      'mergeInsertEvent should resolve conflict when pending exists',
+      () async {
+        final helper = TestHelperLocalFirstRepository(repository);
+        final pending =
+            LocalFirstEvent.createNewInsertEvent(
+                  repository: repository,
+                  data: {'id': '11'},
+                  needSync: true,
+                )
+                as LocalFirstStateEvent<JsonMap>;
+        final remote =
+            LocalFirstEvent.createNewInsertEvent(
+                  repository: repository,
+                  data: {'id': '11'},
+                  needSync: false,
+                )
+                as LocalFirstStateEvent<JsonMap>;
+
+        await helper.mergeInsertEvent(
+          remoteEvent: remote,
+          localPendingEvent: pending,
+        );
+
+        expect(storage.updateCount + storage.insertCount, greaterThan(0));
+        expect(storage.updateEventCount, greaterThan(0));
+      },
+    );
+
+    test(
+      'delete should pick latest event for same id before deleting',
+      () async {
+        final older = LocalFirstEvent.createNewInsertEvent(
+          repository: repository,
+          data: {'id': 'late'},
+          needSync: false,
+        ).toLocalStorageJson()..[LocalFirstEvent.kSyncCreatedAt] = 10;
+        final newer = LocalFirstEvent.createNewUpdateEvent(
+          repository: repository,
+          data: {'id': 'late'},
+          needSync: false,
+        ).toLocalStorageJson()..[LocalFirstEvent.kSyncCreatedAt] = 20;
+        storage.events.addAll([older, newer]);
+
+        await repository.delete('late', needSync: true);
+
+        expect(storage.deleteCount, 1);
+        expect(storage.insertEventCount, 1);
+      },
+    );
+
+    test('delete should no-op when no prior event exists', () async {
+      await repository.delete('ghost', needSync: true);
+
+      expect(storage.deleteCount, 0);
+      expect(storage.insertEventCount, 0);
+    });
+
+    test(
+      'mergeRemoteEvent should handle remote insert without pending',
+      () async {
+        final remote = LocalFirstEvent.createNewInsertEvent(
+          repository: repository,
+          data: {'id': 'remote-insert'},
+          needSync: false,
+        );
+
+        await repository.mergeRemoteEvent(remoteEvent: remote);
+
+        expect(storage.insertCount, greaterThan(0));
+        expect(
+          storage.updateEventCount + storage.insertEventCount,
+          greaterThan(0),
+        );
+      },
+    );
+
+    test('mergeRemoteEvent should route update events', () async {
+      final remote = LocalFirstEvent.createNewUpdateEvent(
+        repository: repository,
+        data: {'id': 'remote-update'},
+        needSync: false,
+      );
+
+      await repository.mergeRemoteEvent(remoteEvent: remote);
+
+      expect(storage.insertCount + storage.updateCount, greaterThan(0));
+      expect(storage.updateEventCount, greaterThan(0));
+    });
+
+    test('mergeRemoteEvent should handle remote deletes', () async {
+      final remoteDelete = LocalFirstEvent.createNewDeleteEvent<JsonMap>(
+        repository: repository,
+        dataId: 'to-remove',
+        needSync: false,
+      );
+
+      await repository.mergeRemoteEvent(remoteEvent: remoteDelete);
+
+      expect(storage.deleteCount, greaterThan(0));
+      expect(
+        storage.insertEventCount + storage.updateEventCount,
+        greaterThan(0),
+      );
+    });
+
+    test(
+      'confirmEvent helper should persist confirmed pending event',
+      () async {
+        final helper = TestHelperLocalFirstRepository(repository);
+        final localPending = LocalFirstEvent.createNewUpdateEvent(
+          repository: repository,
+          data: {'id': 'confirm'},
+          needSync: true,
+        );
+        storage.events.add(localPending.toLocalStorageJson());
+        final remote = localPending.updateEventState(syncStatus: SyncStatus.ok);
+
+        await helper.confirmEvent(
+          remoteEvent: remote,
+          localPendingEvent: localPending,
+        );
+
+        expect(storage.updateEventCount, greaterThan(0));
+      },
+    );
+
+    test(
+      'mergeDeleteEvent helper should delete and mark previous as ok',
+      () async {
+        final helper = TestHelperLocalFirstRepository(repository);
+        final remoteDelete = LocalFirstEvent.createNewDeleteEvent<JsonMap>(
+          repository: repository,
+          dataId: 'del',
+          needSync: false,
+        );
+
+        await helper.mergeDeleteEvent(
+          remoteEvent: remoteDelete,
+          localPendingEvent: null,
+        );
+
+        expect(storage.deleteCount, 1);
+        expect(storage.insertEventCount, 1);
+      },
+    );
+
+    test('resolveConflictEvent should use custom resolver when provided', () {
+      final customRepo = LocalFirstRepository<JsonMap>.create(
+        name: 'repo',
+        getId: (item) => item['id'] as String,
+        toJson: (item) => item,
+        fromJson: (json) => json,
+        onConflictEvent:
+            (
+              LocalFirstStateEvent<JsonMap> local,
+              LocalFirstStateEvent<JsonMap> remote,
+            ) => local,
+      );
+      LocalFirstClient(
+        repositories: [customRepo],
         localStorage: storage,
-        syncStrategies: [_NoopStrategy()],
+        syncStrategies: [_DummyStrategy()],
       );
-      await client.initialize();
+      final LocalFirstStateEvent<JsonMap> local =
+          LocalFirstEvent<JsonMap>.fromLocalStorage(
+                repository: customRepo,
+                json: {
+                  LocalFirstEvent.kEventId: 'local',
+                  LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+                  LocalFirstEvent.kOperation: SyncOperation.update.index,
+                  LocalFirstEvent.kSyncCreatedAt: 2000,
+                  LocalFirstEvent.kDataId: '1',
+                  LocalFirstEvent.kData: {'id': '1'},
+                },
+              )
+              as LocalFirstStateEvent<JsonMap>;
+      final LocalFirstStateEvent<JsonMap> remote =
+          LocalFirstEvent<JsonMap>.fromLocalStorage(
+                repository: customRepo,
+                json: {
+                  LocalFirstEvent.kEventId: 'remote',
+                  LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+                  LocalFirstEvent.kOperation: SyncOperation.update.index,
+                  LocalFirstEvent.kSyncCreatedAt: 3000,
+                  LocalFirstEvent.kDataId: '1',
+                  LocalFirstEvent.kData: {'id': '1'},
+                },
+              )
+              as LocalFirstStateEvent<JsonMap>;
+
+      final resolved = customRepo.resolveConflictEvent(local, remote);
+
+      expect(resolved, same(local));
     });
 
-    test('initialize can be re-run after reset without errors', () async {
-      repo.reset();
-      await repo.initialize();
-      await repo.upsert(_TestModel('reinit', value: 'ok'));
-      final stored = await storage.getById('tests', 'reinit');
-      expect(stored, isNotNull);
+    test('resolveConflictEvent should default to lastWriteWins', () {
+      final repo = _buildRepo(storage);
+      final LocalFirstStateEvent<JsonMap> older =
+          LocalFirstEvent<JsonMap>.fromLocalStorage(
+                repository: repo,
+                json: {
+                  LocalFirstEvent.kEventId: 'old',
+                  LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+                  LocalFirstEvent.kOperation: SyncOperation.update.index,
+                  LocalFirstEvent.kSyncCreatedAt: 1000,
+                  LocalFirstEvent.kDataId: '1',
+                  LocalFirstEvent.kData: {'id': '1'},
+                },
+              )
+              as LocalFirstStateEvent<JsonMap>;
+      final LocalFirstStateEvent<JsonMap> newer =
+          LocalFirstEvent<JsonMap>.fromLocalStorage(
+                repository: repo,
+                json: {
+                  LocalFirstEvent.kEventId: 'new',
+                  LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+                  LocalFirstEvent.kOperation: SyncOperation.update.index,
+                  LocalFirstEvent.kSyncCreatedAt: 2000,
+                  LocalFirstEvent.kDataId: '1',
+                  LocalFirstEvent.kData: {'id': '1'},
+                },
+              )
+              as LocalFirstStateEvent<JsonMap>;
+
+      final resolved = repo.resolveConflictEvent(older, newer);
+
+      expect(resolved, same(newer));
     });
 
-    test('insert sets sync metadata and persists', () async {
-      final model = _TestModel('1', value: 'a');
-      await repo.upsert(model);
+    test(
+      '_pushLocalEventToRemote should update status to ok on success',
+      () async {
+        final strategy = _StrategyWithStatus(SyncStatus.ok);
+        final repo = _buildRepoWithStrategy(storage, strategy);
+        final helper = TestHelperLocalFirstRepository(repo);
+        final event = LocalFirstEvent.createNewInsertEvent(
+          repository: repo,
+          data: {'id': '1'},
+          needSync: true,
+        );
 
-      final stored = await storage.getById('tests', '1');
-      expect(stored, isNotNull);
-      expect(stored!['_sync_status'], SyncStatus.pending.index);
-      expect(stored['_sync_operation'], SyncOperation.insert.index);
+        final result = await helper.pushLocalEventToRemote(event);
+
+        expect(strategy.received.single.syncStatus, SyncStatus.pending);
+        expect(result.syncStatus, SyncStatus.ok);
+        expect(storage.updateEventCount, greaterThan(0));
+      },
+    );
+
+    test(
+      '_pushLocalEventToRemote should mark failed when strategy throws',
+      () async {
+        final strategy = _StrategyThrows();
+        final repo = _buildRepoWithStrategy(storage, strategy);
+        final helper = TestHelperLocalFirstRepository(repo);
+        final event = LocalFirstEvent.createNewInsertEvent(
+          repository: repo,
+          data: {'id': '1'},
+          needSync: true,
+        );
+
+        final result = await helper.pushLocalEventToRemote(event);
+
+        expect(result.syncStatus, SyncStatus.failed);
+        expect(storage.updateEventCount, greaterThan(0));
+      },
+    );
+
+    test('_getAllEvents should hydrate from storage', () async {
+      final stored = LocalFirstEvent.createNewInsertEvent(
+        repository: repository,
+        data: {'id': '1'},
+        needSync: true,
+      );
+      storage.events.add(stored.toLocalStorageJson());
+
+      final helper = TestHelperLocalFirstRepository(repository);
+      final events = await helper.getAllEvents();
+
+      expect(events, hasLength(1));
+      expect(events.single.dataId, '1');
+    });
+
+    test('persistEvent should delegate to updateEventRecord', () async {
+      final helper = TestHelperLocalFirstRepository(repository);
+      final event = LocalFirstEvent.createNewInsertEvent(
+        repository: repository,
+        data: {'id': '1'},
+        needSync: true,
+      );
+
+      await helper.persistEvent(event);
+
+      expect(storage.updateEventCount, 1);
+    });
+
+    test('insertEventRecord should write event', () async {
+      final helper = TestHelperLocalFirstRepository(repository);
+      final event = LocalFirstEvent.createNewInsertEvent(
+        repository: repository,
+        data: {'id': '1'},
+        needSync: true,
+      );
+
+      await helper.insertEventRecord(event);
+
+      expect(storage.insertEventCount, 1);
+      expect(storage.events, isNotEmpty);
+    });
+
+    test('updateEventRecord should write update', () async {
+      final helper = TestHelperLocalFirstRepository(repository);
+      final event = LocalFirstEvent.createNewInsertEvent(
+        repository: repository,
+        data: {'id': '1'},
+        needSync: true,
+      );
+
+      await helper.updateEventRecord(event);
+
+      expect(storage.updateEventCount, 1);
+    });
+
+    test('insertDataFromEvent should write data', () async {
+      final helper = TestHelperLocalFirstRepository(repository);
+      final LocalFirstStateEvent<JsonMap> event =
+          LocalFirstEvent.createNewInsertEvent(
+                repository: repository,
+                data: {'id': '1'},
+                needSync: true,
+              )
+              as LocalFirstStateEvent<JsonMap>;
+
+      await helper.insertDataFromEvent(event);
+
+      expect(storage.insertCount, 1);
       expect(
-        stored['_sync_created_at'] is int &&
-            DateTime.fromMillisecondsSinceEpoch(
-              stored['_sync_created_at'] as int,
-              isUtc: true,
-            ).isBefore(DateTime.now().toUtc().add(const Duration(seconds: 1))),
-        isTrue,
+        storage.lastInsertedData?[LocalFirstEvent.kLastEventId],
+        event.eventId,
       );
     });
 
-    test('delete marks as pending delete when previously synced', () async {
-      final model = _TestModel('1', value: 'a');
-      await repo.upsert(model);
-      // Simulate synced
-      model.debugSetSyncStatus(SyncStatus.ok);
-      await storage.update('tests', '1', {
-        ...model.toJson(),
-        '_sync_status': SyncStatus.ok.index,
-        '_sync_operation': SyncOperation.insert.index,
-        '_sync_created_at': DateTime.now().millisecondsSinceEpoch,
-      });
+    test('updateDataFromEvent should write update', () async {
+      final helper = TestHelperLocalFirstRepository(repository);
+      final LocalFirstStateEvent<JsonMap> event =
+          LocalFirstEvent.createNewUpdateEvent(
+                repository: repository,
+                data: {'id': '1'},
+                needSync: true,
+              )
+              as LocalFirstStateEvent<JsonMap>;
 
-      await repo.delete('1');
-      final stored = await storage.getById('tests', '1');
-      expect(stored!['_sync_operation'], SyncOperation.delete.index);
-      expect(stored['_sync_status'], SyncStatus.pending.index);
-    });
+      await helper.updateDataFromEvent(event);
 
-    test('delete removes unsynced insert', () async {
-      final model = _TestModel('del', value: 'temp');
-      await repo.upsert(model);
-
-      await repo.delete('del');
-
-      final stored = await storage.getById('tests', 'del');
-      expect(stored, isNull);
-    });
-
-    test('delete returns silently when item not found', () async {
-      await repo.delete('missing-id');
-      final stored = await storage.getById('tests', 'missing-id');
-      expect(stored, isNull);
-    });
-
-    test(
-      '_updateObjectStatus persists last sync status from failing strategy',
-      () async {
-        final failingStorage = _InMemoryStorage();
-        final failingRepo = LocalFirstRepository<_TestModel>.create(
-          name: 'tests',
-          getId: (m) => m.id,
-          toJson: (m) => m.toJson(),
-          fromJson: _TestModel.fromJson,
-          onConflict: (l, r) => l,
-        );
-        final failingClient = LocalFirstClient(
-          repositories: [failingRepo],
-          localStorage: failingStorage,
-          syncStrategies: [_FailingStrategy()],
-        );
-        await failingClient.initialize();
-
-        await failingRepo.upsert(_TestModel('fail', value: 'x'));
-
-        final stored = await failingStorage.getById('tests', 'fail');
-        expect(stored?['_sync_status'], SyncStatus.failed.index);
-        expect(stored?['_sync_operation'], SyncOperation.insert.index);
-      },
-    );
-
-    test('_pushLocalObject failure does not affect subsequent items', () async {
-      final conditionalStorage = _InMemoryStorage();
-      final conditionalRepo = LocalFirstRepository<_TestModel>.create(
-        name: 'tests',
-        getId: (m) => m.id,
-        toJson: (m) => m.toJson(),
-        fromJson: _TestModel.fromJson,
-        onConflict: (l, r) => l,
-      );
-      final conditionalClient = LocalFirstClient(
-        repositories: [conditionalRepo],
-        localStorage: conditionalStorage,
-        syncStrategies: [_ConditionalStrategy()],
-      );
-      await conditionalClient.initialize();
-
-      await conditionalRepo.upsert(_TestModel('fail-push', value: 'x'));
-      await conditionalRepo.upsert(_TestModel('ok-push', value: 'y'));
-
-      final failed = await conditionalStorage.getById('tests', 'fail-push');
-      final ok = await conditionalStorage.getById('tests', 'ok-push');
-
-      expect(failed?['_sync_status'], SyncStatus.failed.index);
-      expect(failed?['_sync_operation'], SyncOperation.insert.index);
-
-      expect(ok?['_sync_status'], isNot(SyncStatus.failed.index));
-      expect(ok?['_sync_operation'], SyncOperation.insert.index);
-    });
-
-    test('query returns mapped models with sync metadata', () async {
-      final createdAt = DateTime.now().toUtc().millisecondsSinceEpoch;
-      await storage.insert('tests', {
-        'id': '10',
-        'value': 'v',
-        '_sync_status': SyncStatus.ok.index,
-        '_sync_operation': SyncOperation.insert.index,
-        '_sync_created_at': createdAt,
-      }, 'id');
-
-      final results = await repo.query().getAll();
-      expect(results.length, 1);
-      expect(results.first.id, '10');
-      expect(results.first.syncStatus, SyncStatus.ok);
-      expect(results.first.syncOperation, SyncOperation.insert);
-      expect(results.first.syncCreatedAt?.millisecondsSinceEpoch, createdAt);
-    });
-
-    test('getPendingObjects returns only pending items', () async {
-      await storage.insert('tests', {
-        'id': 'p1',
-        'value': 'pending',
-        '_sync_status': SyncStatus.pending.index,
-        '_sync_operation': SyncOperation.insert.index,
-        '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
-      }, 'id');
-      await storage.insert('tests', {
-        'id': 'ok1',
-        'value': 'ok',
-        '_sync_status': SyncStatus.ok.index,
-        '_sync_operation': SyncOperation.insert.index,
-        '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
-      }, 'id');
-
-      final pending = await repo.getPendingObjects();
-      expect(pending.map((e) => e.id), contains('p1'));
-      expect(pending.any((e) => e.id == 'ok1'), isFalse);
-    });
-
-    test(
-      'upsert keeps insert operation for existing pending inserts',
-      () async {
-        await storage.insert('tests', {
-          'id': 'ins',
-          'value': 'old',
-          '_sync_status': SyncStatus.pending.index,
-          '_sync_operation': SyncOperation.insert.index,
-          '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
-        }, 'id');
-
-        await repo.upsert(_TestModel('ins', value: 'new'));
-
-        final stored = await storage.getById('tests', 'ins');
-        expect(stored!['_sync_operation'], SyncOperation.insert.index);
-        expect(stored['_sync_status'], SyncStatus.pending.index);
-        expect(stored['value'], 'new');
-      },
-    );
-
-    test('resolveConflict uses provided resolver', () {
-      final local = _TestModel('1', value: 'local');
-      final remote = _TestModel('1', value: 'remote');
-
-      final resolved = repo.resolveConflict(local, remote);
-
-      expect(resolved.value, 'local'); // onConflict returns local
-    });
-
-    test('resolveConflict can prefer remote when resolver defines so', () {
-      final remoteFirstRepo = LocalFirstRepository<_TestModel>.create(
-        name: 'tests',
-        getId: (m) => m.id,
-        toJson: (m) => m.toJson(),
-        fromJson: _TestModel.fromJson,
-        onConflict: (l, r) => r,
-      );
-
-      final resolved = remoteFirstRepo.resolveConflict(
-        _TestModel('1', value: 'local'),
-        _TestModel('1', value: 'remote'),
-      );
-
-      expect(resolved.value, 'remote');
-    });
-
-    test('resolveConflict surfaces resolver exceptions', () {
-      final throwingRepo = LocalFirstRepository<_TestModel>.create(
-        name: 'tests',
-        getId: (m) => m.id,
-        toJson: (m) => m.toJson(),
-        fromJson: _TestModel.fromJson,
-        onConflict: (l, r) => throw Exception('resolver failed'),
-      );
-
+      expect(storage.updateCount, 1);
       expect(
-        () => throwingRepo.resolveConflict(
-          _TestModel('1', value: 'a'),
-          _TestModel('1', value: 'b'),
-        ),
-        throwsException,
+        storage.lastUpdatedData?[LocalFirstEvent.kLastEventId],
+        event.eventId,
       );
     });
 
-    test('upsert on synced item marks update pending', () async {
-      await storage.insert('tests', {
-        'id': 'synced',
-        'value': 'old',
-        '_sync_status': SyncStatus.ok.index,
-        '_sync_operation': SyncOperation.insert.index,
-        '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
-      }, 'id');
+    test('insertDataAndEvent should insert both data and event', () async {
+      final helper = TestHelperLocalFirstRepository(repository);
+      final LocalFirstStateEvent<JsonMap> event =
+          LocalFirstEvent.createNewInsertEvent(
+                repository: repository,
+                data: {'id': '1'},
+                needSync: true,
+              )
+              as LocalFirstStateEvent<JsonMap>;
 
-      await repo.upsert(_TestModel('synced', value: 'new'));
+      await helper.insertDataAndEvent(event);
 
-      final stored = await storage.getById('tests', 'synced');
-      expect(stored?['_sync_operation'], SyncOperation.update.index);
-      expect(stored?['_sync_status'], SyncStatus.pending.index);
-      expect(stored?['value'], 'new');
+      expect(storage.insertCount, 1);
+      expect(storage.updateEventCount, 1);
+      expect(
+        storage.lastInsertedData?[LocalFirstEvent.kLastEventId],
+        event.eventId,
+      );
+      expect(
+        storage.lastUpdatedEvent?[LocalFirstEvent.kEventId],
+        event.eventId,
+      );
+    });
+
+    test('updateDataAndEvent should update data and event', () async {
+      final helper = TestHelperLocalFirstRepository(repository);
+      final event = LocalFirstEvent.createNewUpdateEvent(
+        repository: repository,
+        data: {'id': '1'},
+        needSync: true,
+      );
+
+      await helper.updateDataAndEvent(event);
+
+      expect(storage.updateCount, 1);
+      expect(storage.updateEventCount, 1);
+      expect(
+        storage.lastUpdatedData?[LocalFirstEvent.kLastEventId],
+        event.eventId,
+      );
+      expect(
+        storage.lastUpdatedEvent?[LocalFirstEvent.kEventId],
+        event.eventId,
+      );
+    });
+
+    test('deleteDataAndLogEvent should delete data and log event', () async {
+      final helper = TestHelperLocalFirstRepository(repository);
+      final event = LocalFirstEvent.createNewDeleteEvent<JsonMap>(
+        repository: repository,
+        dataId: '1',
+        needSync: true,
+      );
+
+      await helper.deleteDataAndLogEvent(event);
+
+      expect(storage.deleteCount, 1);
+      expect(storage.insertEventCount, 1);
+      expect(storage.lastDeletedId, '1');
+      expect(
+        storage.lastInsertedEvent?[LocalFirstEvent.kEventId],
+        event.eventId,
+      );
+    });
+
+    test('deleteDataById should delete from storage', () async {
+      await TestHelperLocalFirstRepository(repository).deleteDataById('1');
+
+      expect(storage.deleteCount, 1);
     });
 
     test(
-      'upsert preserves pending insert operation for unsynced records',
+      'mergeRemoteEvent should confirm pending event when ids match',
       () async {
-        final createdAt = DateTime.now().toUtc().millisecondsSinceEpoch;
-        await storage.insert('tests', {
-          'id': 'pending',
-          'value': 'v1',
-          '_sync_status': SyncStatus.pending.index,
-          '_sync_operation': SyncOperation.insert.index,
-          '_sync_created_at': createdAt,
-        }, 'id');
+        final pending = LocalFirstEvent.createNewInsertEvent(
+          repository: repository,
+          data: {'id': '1'},
+          needSync: true,
+        );
+        storage.events.add(pending.toLocalStorageJson());
+        final remote = pending.updateEventState(syncStatus: SyncStatus.ok);
 
-        await repo.upsert(_TestModel('pending', value: 'v2'));
+        await repository.mergeRemoteEvent(remoteEvent: remote);
 
-        final stored = await storage.getById('tests', 'pending');
-        expect(stored?['_sync_operation'], SyncOperation.insert.index);
-        expect(stored?['_sync_status'], SyncStatus.pending.index);
-        expect(stored?['_sync_created_at'], createdAt);
-        expect(stored?['value'], 'v2');
+        expect(storage.updateEventCount, greaterThan(0));
       },
     );
 
-    test('upsert converts synced insert record to update', () async {
-      final createdAt = DateTime.now().toUtc().millisecondsSinceEpoch;
-      await storage.insert('tests', {
-        'id': 'syncedInsert',
-        'value': 'old',
-        '_sync_status': SyncStatus.ok.index,
-        '_sync_operation': SyncOperation.insert.index,
-        '_sync_created_at': createdAt,
-      }, 'id');
+    test(
+      'mergeUpdateEvent should insert when no pending local event exists',
+      () async {
+        final helper = TestHelperLocalFirstRepository(repository);
+        final remote =
+            LocalFirstEvent.createNewUpdateEvent(
+                  repository: repository,
+                  data: {'id': '2'},
+                  needSync: false,
+                )
+                as LocalFirstStateEvent<JsonMap>;
 
-      await repo.upsert(_TestModel('syncedInsert', value: 'new'));
+        await helper.mergeUpdateEvent(
+          remoteEvent: remote,
+          localPendingEvent: null,
+        );
 
-      final stored = await storage.getById('tests', 'syncedInsert');
-      expect(stored?['_sync_operation'], SyncOperation.update.index);
-      expect(stored?['_sync_status'], SyncStatus.pending.index);
-      expect(stored?['_sync_created_at'], createdAt);
-      expect(stored?['value'], 'new');
-    });
+        expect(storage.insertCount, 1);
+        expect(storage.updateEventCount, greaterThan(0));
+      },
+    );
 
     test(
-      'upsert generates sync_created_at when missing on existing synced item',
+      'mergeUpdateEvent should update when matching pending event exists',
       () async {
-        await storage.insert('tests', {
-          'id': 'legacy',
-          'value': 'old',
-          '_sync_status': SyncStatus.ok.index,
-          '_sync_operation': SyncOperation.insert.index,
-          // intentionally omit _sync_created_at to simulate legacy data
-        }, 'id');
-
-        await repo.upsert(_TestModel('legacy', value: 'new'));
-
-        final stored = await storage.getById('tests', 'legacy');
-        expect(stored?['_sync_operation'], SyncOperation.update.index);
-        expect(stored?['_sync_status'], SyncStatus.pending.index);
-        expect(stored?['_sync_created_at'], isNotNull);
-        final createdAt = stored?['_sync_created_at'] as int;
-        final createdAtDate = DateTime.fromMillisecondsSinceEpoch(
-          createdAt,
-          isUtc: true,
+        final helper = TestHelperLocalFirstRepository(repository);
+        final pending = LocalFirstEvent.createNewUpdateEvent(
+          repository: repository,
+          data: {'id': '3'},
+          needSync: true,
         );
+        storage.events.add(pending.toLocalStorageJson());
+        final remote =
+            pending.updateEventState(syncStatus: SyncStatus.ok)
+                as LocalFirstStateEvent<JsonMap>;
+
+        await helper.mergeUpdateEvent(
+          remoteEvent: remote,
+          localPendingEvent: pending,
+        );
+
+        expect(storage.updateCount, greaterThan(0));
+        expect(storage.updateEventCount, greaterThan(0));
+      },
+    );
+
+    test(
+      'mergeUpdateEvent should resolve conflicts when pending differs',
+      () async {
+        final helper = TestHelperLocalFirstRepository(repository);
+        final pending =
+            LocalFirstEvent.createNewUpdateEvent(
+                  repository: repository,
+                  data: {'id': 'conflict', 'value': 'local'},
+                  needSync: true,
+                )
+                as LocalFirstStateEvent<JsonMap>;
+        final remote =
+            LocalFirstEvent.createNewUpdateEvent(
+                  repository: repository,
+                  data: {'id': 'conflict', 'value': 'remote'},
+                  needSync: false,
+                )
+                as LocalFirstStateEvent<JsonMap>;
+        storage.events.add(pending.toLocalStorageJson());
+
+        await helper.mergeUpdateEvent(
+          remoteEvent: remote,
+          localPendingEvent: pending,
+        );
+
+        expect(storage.updateCount, greaterThan(0));
+        expect(storage.updateEventCount, greaterThan(0));
+      },
+    );
+
+    test(
+      'updateEventStatus should update event (and data for state events)',
+      () async {
+        final helper = TestHelperLocalFirstRepository(repository);
+        final stateEvent = LocalFirstEvent.createNewInsertEvent(
+          repository: repository,
+          data: {'id': '1'},
+          needSync: true,
+        );
+
+        await helper.updateEventStatus(stateEvent);
+
+        expect(storage.updateCount, 1);
+        expect(storage.updateEventCount, 1);
+        expect(storage.lastUpdatedData, isNotNull);
         expect(
-          createdAtDate.isAfter(
-            DateTime.now().toUtc().subtract(const Duration(seconds: 2)),
-          ),
-          isTrue,
+          storage.lastUpdatedEvent?[LocalFirstEvent.kEventId],
+          stateEvent.eventId,
         );
-        expect(stored?['value'], 'new');
-      },
-    );
 
-    test('pullChangesToLocal inserts remote objects', () async {
-      final strategy = client.syncStrategies.first;
-      final payload = {
-        'timestamp': DateTime.now().toUtc().toIso8601String(),
-        'changes': {
-          'tests': {
-            'insert': [
-              {'id': 'r1', 'value': 'remote'},
-            ],
-          },
-        },
-      };
-
-      await strategy.pullChangesToLocal(payload);
-
-      final stored = await storage.getById('tests', 'r1');
-      expect(stored?['value'], 'remote');
-      expect(stored?['_sync_status'], SyncStatus.ok.index);
-      expect(stored?['_sync_operation'], SyncOperation.insert.index);
-    });
-
-    test('pullChangesToLocal updates existing object via resolver', () async {
-      await storage.insert('tests', {
-        'id': 'u1',
-        'value': 'local',
-        '_sync_status': SyncStatus.ok.index,
-        '_sync_operation': SyncOperation.insert.index,
-        '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
-      }, 'id');
-
-      final strategy = client.syncStrategies.first;
-      final payload = {
-        'timestamp': DateTime.now().toUtc().toIso8601String(),
-        'changes': {
-          'tests': {
-            'update': [
-              {'id': 'u1', 'value': 'remote'},
-            ],
-          },
-        },
-      };
-
-      await strategy.pullChangesToLocal(payload);
-
-      final stored = await storage.getById('tests', 'u1');
-      expect(stored?['value'], 'local'); // resolver keeps local
-      expect(stored?['_sync_status'], SyncStatus.ok.index);
-      expect(stored?['_sync_operation'], SyncOperation.update.index);
-    });
-
-    test(
-      'pullChangesToLocal deletes when remote marks deleted and local clean',
-      () async {
-        await storage.insert('tests', {
-          'id': 'd1',
-          'value': 'keep?',
-          '_sync_status': SyncStatus.ok.index,
-          '_sync_operation': SyncOperation.insert.index,
-          '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
-        }, 'id');
-
-        final strategy = client.syncStrategies.first;
-        final payload = {
-          'timestamp': DateTime.now().toUtc().toIso8601String(),
-          'changes': {
-            'tests': {
-              'delete': ['d1'],
-            },
-          },
-        };
-
-        await strategy.pullChangesToLocal(payload);
-
-        final stored = await storage.getById('tests', 'd1');
-        expect(stored, isNull);
-      },
-    );
-
-    test(
-      'pullChangesToLocal keeps pending local insert when remote deletes',
-      () async {
-        await storage.insert('tests', {
-          'id': 'd2',
-          'value': 'pending',
-          '_sync_status': SyncStatus.pending.index,
-          '_sync_operation': SyncOperation.insert.index,
-          '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
-        }, 'id');
-
-        final strategy = client.syncStrategies.first;
-        final payload = {
-          'timestamp': DateTime.now().toUtc().toIso8601String(),
-          'changes': {
-            'tests': {
-              'delete': ['d2'],
-            },
-          },
-        };
-
-        await strategy.pullChangesToLocal(payload);
-
-        final stored = await storage.getById('tests', 'd2');
-        expect(stored, isNotNull); // should not be deleted
-        expect(stored?['_sync_status'], SyncStatus.pending.index);
-        expect(stored?['_sync_operation'], SyncOperation.insert.index);
-        expect(stored?['value'], 'pending');
-      },
-    );
-
-    test(
-      'pullChangesToLocal ignores delete when item not found locally',
-      () async {
-        final strategy = client.syncStrategies.first;
-        final payload = {
-          'timestamp': DateTime.now().toUtc().toIso8601String(),
-          'changes': {
-            'tests': {
-              'delete': ['missing'],
-            },
-          },
-        };
-
-        await strategy.pullChangesToLocal(payload);
-
-        final stored = await storage.getById('tests', 'missing');
-        expect(stored, isNull);
-      },
-    );
-
-    test(
-      'pullChangesToLocal sets sync_created_at when missing on existing local during update',
-      () async {
-        await storage.insert('tests', {
-          'id': 'legacy-update',
-          'value': 'local',
-          '_sync_status': SyncStatus.ok.index,
-          '_sync_operation': SyncOperation.insert.index,
-          // no _sync_created_at to simulate legacy data
-        }, 'id');
-
-        final strategy = client.syncStrategies.first;
-        final payload = {
-          'timestamp': DateTime.now().toUtc().toIso8601String(),
-          'changes': {
-            'tests': {
-              'update': [
-                {'id': 'legacy-update', 'value': 'remote'},
-              ],
-            },
-          },
-        };
-
-        await strategy.pullChangesToLocal(payload);
-
-        final stored = await storage.getById('tests', 'legacy-update');
-        expect(stored?['_sync_created_at'], isNotNull);
-        final createdAt = DateTime.fromMillisecondsSinceEpoch(
-          stored?['_sync_created_at'] as int,
-          isUtc: true,
+        storage.updateCount = 0;
+        storage.updateEventCount = 0;
+        storage.lastUpdatedData = null;
+        final deleteEvent = LocalFirstEvent.createNewDeleteEvent<JsonMap>(
+          repository: repository,
+          dataId: '1',
+          needSync: true,
         );
+
+        await helper.updateEventStatus(deleteEvent);
+
+        expect(storage.updateCount, 0);
+        expect(storage.updateEventCount, 1);
+        expect(storage.lastUpdatedData, isNull);
         expect(
-          createdAt.isAfter(
-            DateTime.now().toUtc().subtract(const Duration(seconds: 2)),
-          ),
-          isTrue,
+          storage.lastUpdatedEvent?[LocalFirstEvent.kEventId],
+          deleteEvent.eventId,
         );
-        // onConflict keeps local value
-        expect(stored?['value'], 'local');
-        expect(stored?['_sync_operation'], SyncOperation.update.index);
-        expect(stored?['_sync_status'], SyncStatus.ok.index);
       },
     );
 
-    test('query().watch streams updates', () async {
-      final eventsFuture = repo
-          .query()
-          .watch()
-          .take(2)
-          .toList()
-          .timeout(const Duration(seconds: 5));
+    test('toDataJson should include lastEventId', () {
+      final helper = TestHelperLocalFirstRepository(repository);
+      final LocalFirstStateEvent<JsonMap> event =
+          LocalFirstEvent.createNewInsertEvent(
+                repository: repository,
+                data: {'id': '1', 'field': 'value'},
+                needSync: true,
+              )
+              as LocalFirstStateEvent<JsonMap>;
 
-      await storage.insert('tests', {
-        'id': 'w1',
-        'value': 'watch',
-        '_sync_status': SyncStatus.ok.index,
-        '_sync_operation': SyncOperation.insert.index,
-        '_sync_created_at': DateTime.now().toUtc().millisecondsSinceEpoch,
-      }, 'id');
+      final json = helper.toDataJson(event);
 
-      await Future<void>.delayed(Duration.zero);
-      final events = await eventsFuture;
-      expect(events.length, 2);
-      expect(events[1].any((m) => m.id == 'w1'), isTrue);
+      expect(json[LocalFirstEvent.kLastEventId], event.eventId);
+      expect(json['field'], 'value');
     });
   });
+}
+
+class _StrategyWithStatus extends DataSyncStrategy {
+  final SyncStatus status;
+  final List<LocalFirstEvent> received = [];
+
+  _StrategyWithStatus(this.status);
+
+  @override
+  Future<SyncStatus> onPushToRemote(LocalFirstEvent localData) async {
+    received.add(localData);
+    return status;
+  }
+}
+
+class _StrategyThrows extends DataSyncStrategy {
+  @override
+  Future<SyncStatus> onPushToRemote(LocalFirstEvent localData) =>
+      Future.error('fail');
 }

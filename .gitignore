@@ -3,7 +3,15 @@ pubspec.lock
 *.idea
 *.DS_Store
 .dart_tool
+.flutter-plugins-dependencies
 *.dll
 
 # Melos
 pubspec_overrides.yaml
+build/
+
+# Coverage
+coverage/
+
+# Server logs
+server/*.log

@@ -1,3 +1,31 @@
+## 0.7.2
+
+- Updated README with absolute GitHub URLs for proper rendering on pub.dev
+- Added sync strategy packages to Installation section (periodic and websocket)
+- Reorganized Running examples section with storage adapters and sync strategies categories
+- Updated package versions in Installation documentation
+
+## 0.7.1
+
+- Added chat app example with real-time messaging using dual sync strategy (WebSocket + Periodic)
+- Enhanced documentation with data flow diagram and fixed pub.dev package links
+- Improved code examples in README with corrected syntax and API usage
+- Tuned counter app sync intervals for better performance (60s heartbeat, 30s periodic)
+
+## 0.7.0
+
+- Added comprehensive counter app example demonstrating real-time WebSocket synchronization
+- Improved test coverage and reliability across the framework
+- Enhanced documentation and code examples
+
+## 0.6.0
+
+- Added `local_first_shared_preferences` adapter with namespaced config storage and example app.
+- Unified example apps across adapters and defaulted core example to in-memory storage.
+- Expanded documentation with supported config types tables, example run instructions, and contribution links.
+- Refined config storage APIs (optional delegate, namespace propagation) and achieved full test coverage.
+- Simplified remote pull API to make per-repository backend integrations easier.
+
 ## 0.5.0
 
 - Split storage adapters into separate publishable packages:

@@ -3,9 +3,9 @@
 This repository hosts the local-first data layer for Flutter and its optional storage adapters.
 
 Packages:
-- `local_first`: core client, repositories, sync contracts, utilities.
-- `local_first_hive_storage`: Hive adapter (schema-less boxes).
-- `local_first_sqlite_storage`: SQLite adapter (structured tables with indexes).
+- [`local_first`](https://pub.dev/packages/local_first): core client, repositories, sync contracts, utilities.
+- [`local_first_hive_storage`](https://pub.dev/packages/local_first_hive_storage): Hive adapter (schema-less boxes).
+- [`local_first_sqlite_storage`](https://pub.dev/packages/local_first_sqlite_storage): SQLite adapter (structured tables with indexes).
 
 Examples:
 - `local_first/example/lib/main.dart`: Hive-based sample.

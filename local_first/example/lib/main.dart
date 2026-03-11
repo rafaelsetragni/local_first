@@ -1,31 +1,60 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:developer' as dev;
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:local_first/local_first.dart';
-import 'package:local_first_hive_storage/local_first_hive_storage.dart';
-import 'package:mongo_dart/mongo_dart.dart' hide State, Center;
+import 'package:local_first_websocket/local_first_websocket.dart';
+import 'package:http/http.dart' as http;
 
-typedef JsonMap<T> = Map<String, T>;
-
-// To use this example, first you need to start a MongoDB service, and
-// you can do it easily creating an container instance using Docker.
-// First, install docker desktop on your machine, then copy and
-// paste the command bellow at your terminal:
+// To use this example, first you need to start the WebSocket server.
+// From the monorepo root, run:
 //
-// docker run -d --name mongo_local -p 27017:27017 \
+// melos server:start
+//
+// The server will start on port 8080 with MongoDB backend.
+// Make sure MongoDB is running using Docker:
+//
+// docker run -d --name local_first_mongodb -p 27017:27017 \
 //   -e MONGO_INITDB_ROOT_USERNAME=admin \
 //   -e MONGO_INITDB_ROOT_PASSWORD=admin mongo:7
-//
-// You can check the service status using the command bellow:
-//
-// docker stats mongo_local
-//
-// The URI below authenticates against the admin database and targets
-// the "remote_counter_db" database for reads/writes.
-const mongoConnectionString =
-    'mongodb://admin:admin@127.0.0.1:27017/remote_counter_db?authSource=admin';
+const websocketServerUrl = 'ws://127.0.0.1:8080/ws';
+const httpServerUrl = 'http://127.0.0.1:8080';
 
+const appName = 'LF InMemory';
+const appNameFull = 'Local First\nInMemory';
+
+/// Centralized string keys to avoid magic field names.
+class RepositoryNames {
+  static const user = 'user';
+  static const counterLog = 'counter_log';
+  static const sessionCounter = 'session_counter';
+}
+
+class CommonFields {
+  static const id = 'id';
+  static const username = 'username';
+  static const createdAt = 'created_at';
+  static const updatedAt = 'updated_at';
+}
+
+class UserFields {
+  static const avatarUrl = 'avatar_url';
+}
+
+class CounterLogFields {
+  static const sessionId = 'session_id';
+  static const increment = 'increment';
+}
+
+/// Field keys used by session counter events/records.
+class SessionCounterFields {
+  static const sessionId = 'session_id';
+  static const count = 'count';
+}
+
+/// Entry point that initializes the local-first stack then opens the right page.
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   RepositoryService().initialize().then((signedUser) {
@@ -44,7 +73,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Offline Counter',
+      title: appName,
       navigatorKey: NavigatorService().navigatorKey,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
@@ -65,6 +94,7 @@ class SignInPage extends StatefulWidget {
 class _SignInPageState extends State<SignInPage> {
   final _formKey = GlobalKey<FormState>();
   final _usernameController = TextEditingController();
+  bool _isSigningIn = false;
 
   @override
   void dispose() {
@@ -72,10 +102,28 @@ class _SignInPageState extends State<SignInPage> {
     super.dispose();
   }
 
-  Future<void> _signIn() async {
+  /// Handles sign-in by persisting the user and navigating to home.
+  Future<void> _signIn(BuildContext context) async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
+    final errorColor = Theme.of(context).colorScheme.error;
+    final scafold = ScaffoldMessenger.of(context);
     final username = _usernameController.text;
-    await RepositoryService().signIn(username: username);
+
+    setState(() => _isSigningIn = true);
+    try {
+      await RepositoryService().signIn(username: username);
+    } catch (_) {
+      scafold.showSnackBar(
+        SnackBar(
+          backgroundColor: errorColor,
+          content: Text('No connection to the server. Please try again.'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isSigningIn = false);
+      }
+    }
   }
 
   @override
@@ -94,7 +142,8 @@ class _SignInPageState extends State<SignInPage> {
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     Text(
-                      'Offline Counter',
+                      appNameFull,
+                      textAlign: TextAlign.center,
                       style: TextTheme.of(context).headlineMedium,
                     ),
                     SizedBox(height: 4),
@@ -115,7 +164,7 @@ class _SignInPageState extends State<SignInPage> {
                         labelText: 'Username',
                         border: OutlineInputBorder(),
                       ),
-                      onFieldSubmitted: (_) => _signIn(),
+                      onFieldSubmitted: (_) => _signIn(context),
                       validator: (value) =>
                           (value == null || value.trim().isEmpty)
                           ? 'Please enter a username.'
@@ -123,8 +172,14 @@ class _SignInPageState extends State<SignInPage> {
                     ),
                     SizedBox(height: 24),
                     ElevatedButton(
-                      onPressed: _signIn,
-                      child: const Text('Sign In'),
+                      onPressed: _isSigningIn ? null : () => _signIn(context),
+                      child: _isSigningIn
+                          ? const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Sign In'),
                     ),
                   ],
                 ),
@@ -149,6 +204,11 @@ class _MyHomePageState extends State<MyHomePage> {
   late final Stream<int> _counterStream;
   late final Stream<List<UserModel>> _usersStream;
   late final Stream<List<CounterLogModel>> _recentLogsStream;
+  final GlobalKey<AnimatedListState> _logsListKey =
+      GlobalKey<AnimatedListState>();
+  late final StreamSubscription<List<CounterLogModel>> _logsSubscription;
+  final List<CounterLogModel> _logs = [];
+  JsonMap<String?> _avatarMap = {};
 
   @override
   void initState() {
@@ -157,14 +217,105 @@ class _MyHomePageState extends State<MyHomePage> {
     _usersStream = service.watchUsers();
     _counterStream = service.watchCounter();
     _recentLogsStream = service.watchRecentLogs(limit: 5);
+    _logsSubscription = _recentLogsStream.listen(_onLogsUpdate);
   }
 
+  /// Opens dialog to update the current user's avatar URL.
   Future<void> _onAvatarTap(BuildContext context, String currentAvatar) async {
     final url = await _promptAvatarDialog(context, currentAvatar);
     if (url == null) return;
     await RepositoryService().updateAvatarUrl(url);
   }
 
+  @override
+  void dispose() {
+    _logsSubscription.cancel();
+    super.dispose();
+  }
+
+  /// Reconciles AnimatedList items with the latest logs to animate inserts/removes.
+  void _onLogsUpdate(List<CounterLogModel> newLogs) {
+    final listState = _logsListKey.currentState;
+
+    if (listState == null) {
+      _logs
+        ..clear()
+        ..addAll(newLogs);
+      if (mounted) setState(() {});
+      return;
+    }
+
+    // Remove items no longer present (fade out).
+    for (int i = _logs.length - 1; i >= 0; i--) {
+      final log = _logs[i];
+      final stillPresent = newLogs.any((l) => l.id == log.id);
+      if (!stillPresent) {
+        final removed = _logs.removeAt(i);
+        listState.removeItem(
+          i,
+          (context, animation) =>
+              _buildAnimatedLogTile(removed, animation, appearing: false),
+          duration: const Duration(milliseconds: 250),
+        );
+      }
+    }
+
+    // Insert new items and adjust order to match new list.
+    for (int targetIndex = 0; targetIndex < newLogs.length; targetIndex++) {
+      final incoming = newLogs[targetIndex];
+      final currentIndex = _logs.indexWhere((l) => l.id == incoming.id);
+
+      if (currentIndex == -1) {
+        _logs.insert(targetIndex, incoming);
+        listState.insertItem(
+          targetIndex,
+          duration: const Duration(milliseconds: 250),
+        );
+      } else if (currentIndex != targetIndex) {
+        final item = _logs.removeAt(currentIndex);
+        _logs.insert(targetIndex, item);
+      }
+    }
+
+    // Trim extras if new list is shorter.
+    while (_logs.length > newLogs.length) {
+      final lastIndex = _logs.length - 1;
+      final removed = _logs.removeAt(lastIndex);
+      listState.removeItem(
+        lastIndex,
+        (context, animation) =>
+            _buildAnimatedLogTile(removed, animation, appearing: false),
+        duration: const Duration(milliseconds: 250),
+      );
+    }
+    if (mounted) setState(() {});
+  }
+
+  /// Builds a single log tile with fade/slide animations for list changes.
+  Widget _buildAnimatedLogTile(
+    CounterLogModel log,
+    Animation<double> animation, {
+    required bool appearing,
+  }) {
+    final curved = CurvedAnimation(parent: animation, curve: Curves.easeOut);
+    final avatar = _avatarMap[log.username] ?? '';
+    return FadeTransition(
+      opacity: appearing ? curved : animation,
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: appearing ? const Offset(0.15, 0) : Offset.zero,
+          end: appearing ? Offset.zero : const Offset(-0.05, 0),
+        ).animate(curved),
+        child: CounterLogTile(
+          key: ValueKey('tile-${log.id}'),
+          log: log,
+          avatarUrl: avatar,
+        ),
+      ),
+    );
+  }
+
+  /// Prompts the user to type a new avatar URL and returns it.
   Future<String?> _promptAvatarDialog(
     BuildContext context,
     String currentAvatar,
@@ -222,7 +373,7 @@ class _MyHomePageState extends State<MyHomePage> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            _buildAvatarAndGlobalCounter(user),
+            Expanded(child: _buildAvatarAndGlobalCounter(user)),
             Column(
               children: [
                 _buildUserList(context),
@@ -253,6 +404,7 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
+  /// Renders connection badge, avatar, greeting, and aggregate counters.
   StreamBuilder<List<UserModel>> _buildAvatarAndGlobalCounter(UserModel user) {
     return StreamBuilder(
       stream: _usersStream,
@@ -262,48 +414,86 @@ class _MyHomePageState extends State<MyHomePage> {
         final currentUserAvatar =
             avatarMap[user.username] ?? user.avatarUrl ?? '';
 
-        return Column(
-          children: [
-            GestureDetector(
-              onTap: () => _onAvatarTap(context, currentUserAvatar),
-              child: AvatarPreview(
-                avatarUrl: currentUserAvatar,
-                showEditIndicator: true,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'Hello, ${user.username}!',
-              textAlign: TextAlign.center,
-              style: Theme.of(
-                context,
-              ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 48),
-            const Text('Global counter updated by all users:'),
-            StreamBuilder<int>(
-              stream: _counterStream,
-              builder: (context, counterSnapshot) {
-                final total = counterSnapshot.data ?? 0;
-                if (counterSnapshot.connectionState ==
-                    ConnectionState.waiting) {
-                  return const Padding(
-                    padding: EdgeInsets.all(8.0),
-                    child: CircularProgressIndicator(),
-                  );
-                }
-                return Text(
-                  '$total',
-                  style: Theme.of(context).textTheme.headlineLarge,
-                );
-              },
-            ),
-          ],
+        return StreamBuilder<bool>(
+          stream: RepositoryService().connectionState,
+          initialData: false,
+          builder: (context, connectionSnapshot) {
+            final isConnected = connectionSnapshot.data ?? false;
+            return Column(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Column(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      margin: const EdgeInsets.only(bottom: 8),
+                      decoration: BoxDecoration(
+                        color: isConnected
+                            ? Colors.green.shade100
+                            : Colors.red.shade100,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        isConnected ? 'Connected' : 'Disconnected',
+                        style: TextStyle(
+                          color: isConnected
+                              ? Colors.green.shade800
+                              : Colors.red.shade800,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: () => _onAvatarTap(context, currentUserAvatar),
+                      child: AvatarPreview(
+                        avatarUrl: currentUserAvatar,
+                        showEditIndicator: true,
+                        connectionStatus: isConnected,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Hello, ${user.username}!',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.headlineMedium
+                          ?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+                Column(
+                  children: [
+                    const Text('Global counter updated by all users:'),
+                    StreamBuilder<int>(
+                      stream: _counterStream,
+                      builder: (context, counterSnapshot) {
+                        final total = counterSnapshot.data ?? 0;
+                        if (counterSnapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return const Padding(
+                            padding: EdgeInsets.all(8.0),
+                            child: CircularProgressIndicator(),
+                          );
+                        }
+                        return Text(
+                          '$total',
+                          style: Theme.of(context).textTheme.headlineLarge,
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
         );
       },
     );
   }
 
+  /// App bar with logout action.
   AppBar _buildSignOutAppBar() {
     return AppBar(
       actions: [
@@ -316,6 +506,7 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
+  /// Shows the animated list of recent counter logs.
   Column _buildRecentActivities(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -335,26 +526,25 @@ class _MyHomePageState extends State<MyHomePage> {
               for (final u in usersSnapshot.data ?? const [])
                 u.username: u.avatarUrl,
             };
-            return Container(
-              color: ColorScheme.of(context).surfaceContainerLow,
-              padding: const EdgeInsets.all(24.0),
+            _avatarMap = JsonMap<String?>.from(avatarMap);
+            return SizedBox(
               height: MediaQuery.of(context).size.height * 0.35,
-              child: StreamBuilder(
-                stream: _recentLogsStream,
-                builder: (context, logsSnapshot) {
-                  final recentLogs = logsSnapshot.data ?? const [];
-                  if (logsSnapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  return ListView.builder(
-                    itemCount: recentLogs.length,
-                    itemBuilder: (context, index) {
-                      final log = recentLogs[index];
-                      final avatar = avatarMap[log.username] ?? '';
-                      return CounterLogTile(log: log, avatarUrl: avatar);
-                    },
-                  );
-                },
+              child: Container(
+                color: ColorScheme.of(context).surfaceContainerLow,
+                padding: const EdgeInsets.all(24.0),
+                child: AnimatedList(
+                  key: _logsListKey,
+                  initialItemCount: _logs.length,
+                  itemBuilder: (context, index, animation) {
+                    if (index >= _logs.length) return const SizedBox.shrink();
+                    final log = _logs[index];
+                    return _buildAnimatedLogTile(
+                      log,
+                      animation,
+                      appearing: true,
+                    );
+                  },
+                ),
               ),
             );
           },
@@ -363,6 +553,7 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
+  /// Displays all known users horizontally with their avatars.
   SizedBox _buildUserList(BuildContext context) {
     return SizedBox(
       height: MediaQuery.of(context).size.height * 0.15,
@@ -412,6 +603,7 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 }
 
+/// Visualizes a single counter log entry with avatar and timestamp.
 class CounterLogTile extends StatelessWidget {
   final CounterLogModel log;
   final String avatarUrl;
@@ -455,50 +647,74 @@ class AvatarPreview extends StatelessWidget {
   final String avatarUrl;
   final double radius;
   final bool showEditIndicator;
+  final bool? connectionStatus;
   const AvatarPreview({
     super.key,
     required this.avatarUrl,
     this.showEditIndicator = false,
     this.radius = 50,
+    this.connectionStatus,
   });
 
   @override
   Widget build(BuildContext context) {
     final hasAvatar = avatarUrl.isNotEmpty;
-    return Stack(
-      children: [
-        CircleAvatar(
-          radius: radius,
-          backgroundColor: ColorScheme.of(context).surfaceContainerHighest,
-          backgroundImage: hasAvatar ? NetworkImage(avatarUrl) : null,
-          child: hasAvatar ? null : Icon(Icons.person, size: radius),
-        ),
-        if (showEditIndicator)
-          Positioned(
-            bottom: 4,
-            right: 4,
-            child: PhysicalModel(
-              color: Colors.transparent,
-              elevation: 4,
-              shadowColor: ColorScheme.of(context).shadow,
-              shape: BoxShape.circle,
-              child: CircleAvatar(
-                radius: 14,
-                backgroundColor: ColorScheme.of(context).primaryFixed,
-                child: Icon(
-                  Icons.edit,
-                  size: 16,
-                  color: ColorScheme.of(context).onPrimaryFixed,
+    final indicatorColor = connectionStatus == null
+        ? null
+        : (connectionStatus! ? Colors.green : Colors.red);
+    final ringDiameter = radius * 2 + 8; // 4px gap each side
+    return SizedBox(
+      width: ringDiameter,
+      height: ringDiameter,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          if (indicatorColor != null)
+            IgnorePointer(
+              child: Container(
+                width: ringDiameter,
+                height: ringDiameter,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: indicatorColor, width: 4),
                 ),
               ),
             ),
+          CircleAvatar(
+            radius: radius - (indicatorColor != null ? 4 : 0),
+            backgroundColor: ColorScheme.of(context).surfaceContainerHighest,
+            backgroundImage: hasAvatar ? NetworkImage(avatarUrl) : null,
+            child: hasAvatar ? null : Icon(Icons.person, size: radius),
           ),
-      ],
+          if (showEditIndicator)
+            Positioned(
+              bottom: 0,
+              right: 0,
+              child: PhysicalModel(
+                color: Colors.transparent,
+                elevation: 4,
+                shadowColor: ColorScheme.of(context).shadow,
+                shape: BoxShape.circle,
+                child: CircleAvatar(
+                  radius: radius / 2.5,
+                  backgroundColor: ColorScheme.of(context).primaryFixed,
+                  child: Icon(
+                    Icons.edit,
+                    size: radius / 2.5,
+                    color: ColorScheme.of(context).onPrimaryFixed,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
 
-/// Handles navigation concerns with a shared navigator key.
+/// Centralized navigation helper that exposes a shared navigator key and
+/// simple push/pop helpers so the example can navigate from anywhere without
+/// passing BuildContext around.
 class NavigatorService {
   NavigatorService._internal();
   static NavigatorService? _instance;
@@ -528,7 +744,55 @@ class NavigatorService {
   void navigateToSignIn() => pushReplacement(const SignInPage());
 }
 
-/// Central orchestrator for auth, persistence, and sync.
+/// Manages sync state using server sequences per repository
+///
+/// IMPORTANT: Sequences are stored per namespace to ensure proper isolation
+/// between different users. Each user has their own set of lastSequence values.
+class SyncStateManager {
+  final LocalFirstClient client;
+  final String Function() getNamespace;
+  final _sequenceKeyPrefix = '__last_sequence__';
+
+  SyncStateManager(this.client, this.getNamespace);
+
+  /// Builds a namespace-aware key for storing sequence numbers
+  /// Format: `{namespace}__last_sequence__{repositoryName}`
+  String _buildSequenceKey(String repositoryName) {
+    final namespace = getNamespace();
+    return '${namespace}_$_sequenceKeyPrefix$repositoryName';
+  }
+
+  /// Gets the last synced sequence for a repository in the current namespace
+  Future<int?> getLastSequence(String repositoryName) async {
+    final key = _buildSequenceKey(repositoryName);
+    final value = await client.getConfigValue(key);
+    return value != null ? int.tryParse(value) : null;
+  }
+
+  /// Saves the last synced sequence for a repository in the current namespace
+  Future<void> saveLastSequence(String repositoryName, int sequence) async {
+    final key = _buildSequenceKey(repositoryName);
+    await client.setConfigValue(key, sequence.toString());
+  }
+
+  /// Extracts the maximum server sequence from a list of events
+  int? extractMaxSequence(List<JsonMap<dynamic>> events) {
+    if (events.isEmpty) return null;
+
+    int? maxSequence;
+    for (final event in events) {
+      final seq = event['serverSequence'];
+      if (seq is int) {
+        maxSequence = maxSequence == null ? seq : (seq > maxSequence ? seq : maxSequence);
+      }
+    }
+    return maxSequence;
+  }
+}
+
+/// Central orchestrator that wires repositories, storage, and sync strategies,
+/// handling auth flow, namespace switching per user, session-id management per
+/// device, and provides the high-level API used by the UI to read/write data.
 class RepositoryService {
   static const tag = 'RepositoryService';
 
@@ -539,120 +803,329 @@ class RepositoryService {
   UserModel? authenticatedUser;
   String _currentNamespace = 'default';
   final _lastUsernameKey = '__last_username__';
+  final _sessionIdPrefix = '__session_id__';
+  String? _currentSessionId;
+  SyncStateManager? _syncStateManager;
 
   final LocalFirstRepository<UserModel> userRepository;
   final LocalFirstRepository<CounterLogModel> counterLogRepository;
-  final MongoPeriodicSyncStrategy syncStrategy;
+  final LocalFirstRepository<SessionCounterModel> sessionCounterRepository;
+  late final WebSocketSyncStrategy syncStrategy;
 
+  // Central orchestrator for the demo: wires repositories, storage, sync
+  // strategy and handles auth/session (namespace) switching.
   RepositoryService._internal()
     : userRepository = _buildUserRepository(),
       counterLogRepository = _buildCounterLogRepository(),
-      syncStrategy = MongoPeriodicSyncStrategy();
+      sessionCounterRepository = _buildSessionCounterRepository() {
+    // Initialize WebSocketSyncStrategy with callbacks
+    syncStrategy = WebSocketSyncStrategy(
+      websocketUrl: websocketServerUrl,
+      reconnectDelay: Duration(seconds: 3),
+      heartbeatInterval: Duration(seconds: 30),
+      onBuildSyncFilter: _buildSyncFilter,
+      onSyncCompleted: _onSyncCompleted,
+    );
+  }
 
+  String get namespace => _currentNamespace;
+
+  Stream<bool> get connectionState => syncStrategy.connectionChanges;
+
+  /// Builds sync filter using server sequence numbers
+  Future<JsonMap<dynamic>?> _buildSyncFilter(String repositoryName) async {
+    final manager = _syncStateManager;
+    if (manager == null) return null;
+
+    final lastSequence = await manager.getLastSequence(repositoryName);
+    if (lastSequence == null) {
+      // No previous sync - request all events
+      return null;
+    }
+
+    // Request events after last known sequence
+    return {'afterSequence': lastSequence};
+  }
+
+  /// Called when sync is completed - saves the latest sequence
+  Future<void> _onSyncCompleted(
+    String repositoryName,
+    List<JsonMap<dynamic>> events,
+  ) async {
+    final manager = _syncStateManager;
+    if (manager == null || events.isEmpty) return;
+
+    final maxSequence = manager.extractMaxSequence(events);
+    if (maxSequence != null) {
+      await manager.saveLastSequence(repositoryName, maxSequence);
+    }
+  }
+
+  /// Initializes the client/storage and restores last logged user if possible.
   Future<UserModel?> initialize() async {
     final localFirst = this.localFirst ??= LocalFirstClient(
-      repositories: [userRepository, counterLogRepository],
-      localStorage: HiveLocalFirstStorage(),
+      repositories: [
+        userRepository,
+        counterLogRepository,
+        sessionCounterRepository,
+      ],
+      localStorage: InMemoryLocalFirstStorage(),
       syncStrategies: [syncStrategy],
     );
 
     await localFirst.initialize();
+
+    // Initialize sync state manager after client is ready
+    _syncStateManager = SyncStateManager(localFirst, () => _currentNamespace);
+
     return await restoreLastUser();
   }
 
+  List<UserModel> _usersFromEvents(List<LocalFirstEvent<UserModel>> events) =>
+      events
+          .whereType<LocalFirstStateEvent<UserModel>>()
+          .map((e) => e.data)
+          .toList();
+
+  List<CounterLogModel> _logsFromEvents(
+    List<LocalFirstEvent<CounterLogModel>> events,
+  ) => events
+      .whereType<LocalFirstStateEvent<CounterLogModel>>()
+      .map((e) => e.data)
+      .toList();
+
+  List<SessionCounterModel> _sessionCountersFromEvents(
+    List<LocalFirstEvent<SessionCounterModel>> events,
+  ) => events
+      .whereType<LocalFirstStateEvent<SessionCounterModel>>()
+      .map((e) => e.data)
+      .toList();
+
+  /// Signs in a user, switches namespace, preloads remote users, and starts sync.
   Future<void> signIn({required String username}) async {
+    // On sign in, swap namespace to the user, prefetch users from remote,
+    // and persist the new user.
     syncStrategy.stop();
-    await _switchUserDatabase('');
+    final localUser = UserModel(username: username, avatarUrl: null);
+    await _switchUserDatabase(localUser.id);
     await _syncRemoteUsersToLocal();
     final existing = await userRepository
         .query()
-        .where('username', isEqualTo: username)
+        .where(userRepository.idFieldName, isEqualTo: localUser.id)
         .getAll();
-    final preservedAvatar = existing.isNotEmpty
-        ? existing.first.avatarUrl
-        : null;
-    final user = authenticatedUser = UserModel(
-      username: username,
-      avatarUrl: preservedAvatar,
-    );
-    await userRepository.upsert(user);
+    if (existing.isNotEmpty) {
+      authenticatedUser = existing.first.data;
+    } else {
+      authenticatedUser = localUser;
+      await userRepository.upsert(localUser, needSync: true);
+    }
+    await _prepareSession(authenticatedUser!);
     await _persistLastUsername(username);
     syncStrategy.start();
     NavigatorService().navigateToHome();
   }
 
-  Future<void> _syncRemoteUsersToLocal() async {
-    final remote = await syncStrategy.fetchUsers();
-    for (final data in remote) {
-      try {
-        final user = userRepository.fromJson(data);
-        await userRepository.upsert(user);
-      } catch (_) {
-        // ignore malformed user entries
+  Future<List<UserModel>> _syncRemoteUsersToLocal() async {
+    try {
+      // Fetch users from HTTP REST API
+      final response = await http.get(Uri.parse('$httpServerUrl/api/events/${RepositoryNames.user}'));
+      if (response.statusCode != 200) {
+        dev.log('Failed to fetch users: ${response.statusCode}', name: tag);
+        return [];
       }
+
+      final json = jsonDecode(response.body) as Map<String, dynamic>;
+      final events = (json['events'] as List).cast<Map<String, dynamic>>();
+
+      final syncedUsers = <UserModel>[];
+      for (final event in events) {
+        final data = event['data'] as Map<String, dynamic>;
+        final user = userRepository.fromJson(data);
+        syncedUsers.add(user);
+        final exists = await userRepository
+            .query()
+            .where(userRepository.idFieldName, isEqualTo: user.id)
+            .getAll();
+        if (exists.isNotEmpty) continue;
+        await userRepository.upsert(user, needSync: false);
+      }
+      return syncedUsers;
+    } catch (e, s) {
+      dev.log('Error syncing users: $e', name: tag, error: e, stackTrace: s);
+      return [];
     }
   }
 
+  /// Clears auth/session state and navigates back to sign-in.
   Future<void> signOut() async {
+    // Stops sync and resets session-specific state.
     syncStrategy.stop();
     authenticatedUser = null;
+    _currentSessionId = null;
     await _switchUserDatabase('');
-    await localFirst?.setKeyValue(_lastUsernameKey, '');
+    await _setGlobalString(_lastUsernameKey, '');
     NavigatorService().navigateToSignIn();
   }
 
+  /// Rehydrates a user by username (used during app restart).
   Future<UserModel?> restoreUser(String username) async {
-    await _switchUserDatabase('');
+    final normalizedId = UserModel(username: username, avatarUrl: null).id;
+    await _switchUserDatabase(normalizedId);
     final results = await userRepository
         .query()
-        .where('username', isEqualTo: username)
+        .where(userRepository.idFieldName, isEqualTo: normalizedId)
         .getAll();
     if (results.isEmpty) return null;
-    authenticatedUser = results.first;
+    authenticatedUser = (results.first as LocalFirstStateEvent<UserModel>).data;
+    await _prepareSession(authenticatedUser!);
     syncStrategy.start();
     return authenticatedUser;
   }
 
+  /// Rehydrates the most recently logged-in user, if any.
   Future<UserModel?> restoreLastUser() async {
-    final username = await localFirst?.getMeta(_lastUsernameKey);
+    final username = await _getGlobalString(_lastUsernameKey);
     if (username == null || username.isEmpty) return null;
     return restoreUser(username);
   }
 
+  /// Saves the last username to meta storage so we can auto-restore.
   Future<void> _persistLastUsername(String username) =>
-      localFirst?.setKeyValue(_lastUsernameKey, username) ?? Future.value();
+      _setGlobalString(_lastUsernameKey, username);
 
-  Future<List<UserModel>> getUsers() => userRepository.query().getAll();
+  Future<String?> _getGlobalString(String key) async {
+    if (localFirst == null) return null;
+    return _withGlobalString(() => localFirst!.getConfigValue(key));
+  }
 
-  Future<List<CounterLogModel>> getLogs() => counterLogRepository
-      .query()
-      .orderBy('created_at', descending: true)
-      .getAll();
+  Future<void> _setGlobalString(String key, String value) async {
+    if (localFirst == null) return;
+    await _withGlobalString(() => localFirst!.setConfigValue(key, value));
+  }
 
-  Stream<List<CounterLogModel>> watchLogs() => counterLogRepository
-      .query()
-      .orderBy('created_at', descending: true)
-      .watch();
+  Future<T> _withGlobalString<T>(Future<T> Function() action) async {
+    final storage = localFirst?.localStorage;
+    if (storage == null) return await action();
+    final previous = _currentNamespace;
+    await storage.useNamespace('default');
+    try {
+      return await action();
+    } finally {
+      await storage.useNamespace(previous);
+    }
+  }
 
-  Stream<int> watchCounter() => watchLogs().map(
-    (logs) => logs.fold<int>(0, (sum, log) => sum + log.increment),
+  String _sessionMetaKey(String username) {
+    final sanitized = _sanitizeNamespace(username);
+    return '$_sessionIdPrefix$sanitized';
+  }
+
+  /// Builds a deterministic-ish session id with random salt for uniqueness.
+  String _generateSessionId(String username) {
+    final random = Random();
+    final randomBits = random
+        .nextInt(0x7fffffff)
+        .toRadixString(16)
+        .padLeft(8, '0');
+    final timestamp = DateTime.now().millisecondsSinceEpoch.toRadixString(16);
+    return 'sess_${_sanitizeNamespace(username)}_${timestamp}_$randomBits';
+  }
+
+  /// Retrieves the persisted session id for this device/user or creates one.
+  Future<String> _getOrCreateSessionId(String username) async {
+    final existing = await _getGlobalString(_sessionMetaKey(username));
+    if (existing is String && existing.isNotEmpty) return existing;
+    final generated = _generateSessionId(username);
+    await _setGlobalString(_sessionMetaKey(username), generated);
+    return generated;
+  }
+
+  /// Ensures the device has a stable session id and session counter for a user.
+  Future<void> _prepareSession(UserModel user) async {
+    final sessionId = await _getOrCreateSessionId(user.username);
+    _currentSessionId = sessionId;
+    await _ensureSessionCounterForSession(
+      username: user.username,
+      sessionId: sessionId,
+    );
+  }
+
+  /// Fetches or creates the session counter for a given session id.
+  Future<SessionCounterModel> _ensureSessionCounterForSession({
+    required String username,
+    required String sessionId,
+  }) async {
+    final results = await sessionCounterRepository
+        .query()
+        .where(sessionCounterRepository.idFieldName, isEqualTo: sessionId)
+        .limitTo(1)
+        .getAll();
+    if (results.isNotEmpty) {
+      return (results.first as LocalFirstStateEvent<SessionCounterModel>).data;
+    }
+    final counter = SessionCounterModel(
+      sessionId: sessionId,
+      username: username,
+      count: 0,
+    );
+    await sessionCounterRepository.upsert(counter, needSync: true);
+    return counter;
+  }
+
+  /// Returns all users stored locally.
+  Future<List<UserModel>> getUsers() async =>
+      _usersFromEvents(await userRepository.query().getAll());
+
+  /// Returns the latest logs (capped) synchronously.
+  Future<List<CounterLogModel>> getLogs() async => _logsFromEvents(
+    await counterLogRepository
+        .query()
+        .orderBy(CommonFields.createdAt, descending: true)
+        .limitTo(5)
+        .getAll(),
   );
 
+  /// Streams capped log list sorted by recency.
+  Stream<List<CounterLogModel>> watchLogs({int limit = 5}) =>
+      counterLogRepository
+          .query()
+          .orderBy(CommonFields.createdAt, descending: true)
+          .limitTo(min(limit, 5))
+          .watch()
+          .map(_logsFromEvents);
+
+  /// Streams the global counter summed across all session counters.
+  Stream<int> watchCounter() => sessionCounterRepository
+      .query()
+      .watch()
+      .map(_sessionCountersFromEvents)
+      .map(
+        (sessions) =>
+            sessions.fold<int>(0, (sum, counter) => sum + counter.count),
+      );
+
+  /// Streams a limited view of the most recent logs.
   Stream<List<CounterLogModel>> watchRecentLogs({int limit = 5}) =>
-      watchLogs().map((logs) => logs.take(limit).toList());
+      watchLogs(limit: min(limit, 5));
 
-  Stream<List<UserModel>> watchUsers() =>
-      userRepository.query().orderBy('username').watch();
+  /// Streams all known users ordered by username.
+  Stream<List<UserModel>> watchUsers() => userRepository
+      .query()
+      .orderBy(CommonFields.username)
+      .watch()
+      .map(_usersFromEvents);
 
+  /// Returns avatar URLs for the provided usernames (missing ones mapped to null).
   Future<JsonMap<String?>> getAvatarsForUsers(Set<String> usernames) async {
     if (usernames.isEmpty) return {};
     final results = await userRepository
         .query()
-        .where('username', whereIn: usernames.toList())
+        .where(CommonFields.username, whereIn: usernames.toList())
         .getAll();
 
     final map = <String, String?>{
-      for (final user in results) user.username: user.avatarUrl,
+      for (final user in _usersFromEvents(results))
+        user.username: user.avatarUrl,
     };
 
     for (final username in usernames) {
@@ -662,6 +1135,7 @@ class RepositoryService {
     return map;
   }
 
+  /// Updates the authenticated user's avatar URL and syncs it.
   Future<UserModel> updateAvatarUrl(String avatarUrl) async {
     final user = authenticatedUser;
     if (user == null) throw Exception('User not authenticated');
@@ -670,25 +1144,51 @@ class RepositoryService {
       username: user.username,
       avatarUrl: avatarUrl.isEmpty ? null : avatarUrl,
       createdAt: user.createdAt,
-      updatedAt: DateTime.now(),
+      updatedAt: DateTime.now().toUtc(),
     );
 
-    await userRepository.upsert(updated);
+    await userRepository.upsert(updated, needSync: true);
     authenticatedUser = updated;
     return updated;
   }
 
+  /// Increments the current session counter and logs the change.
   void incrementCounter() => _createLogRegistry(1);
+
+  /// Decrements the current session counter and logs the change.
   void decrementCounter() => _createLogRegistry(-1);
 
+  /// Creates both a log entry and a session counter update for a delta.
   Future<void> _createLogRegistry(int amount) async {
     final username = authenticatedUser?.username;
     if (username == null) {
       throw Exception('User not authenticated');
     }
 
-    final log = CounterLogModel(username: username, increment: amount);
-    await counterLogRepository.upsert(log);
+    final sessionId = _currentSessionId;
+    if (sessionId == null) {
+      throw Exception('Session not initialized');
+    }
+
+    final sessionCounter = await _ensureSessionCounterForSession(
+      username: username,
+      sessionId: sessionId,
+    );
+    final updatedCounter = sessionCounter.copyWith(
+      count: sessionCounter.count + amount,
+      updatedAt: DateTime.now().toUtc(),
+    );
+
+    final log = CounterLogModel(
+      username: username,
+      increment: amount,
+      sessionId: sessionId,
+    );
+
+    await Future.wait([
+      counterLogRepository.upsert(log, needSync: true),
+      sessionCounterRepository.upsert(updatedCounter, needSync: true),
+    ]);
   }
 
   Future<void> _switchUserDatabase(String username) async {
@@ -699,12 +1199,10 @@ class RepositoryService {
     if (_currentNamespace == namespace) return;
     _currentNamespace = namespace;
 
-    final storage = db.localStorage;
-    if (storage is HiveLocalFirstStorage) {
-      await storage.useNamespace(namespace);
-    }
+    await db.localStorage.useNamespace(namespace);
   }
 
+  /// Normalizes a username into a namespace-safe string.
   String _sanitizeNamespace(String username) {
     if (username.isEmpty) return 'default';
     final sanitized = username.toLowerCase().replaceAll(
@@ -716,7 +1214,7 @@ class RepositoryService {
 }
 
 /// Domain model for a user with avatar metadata.
-class UserModel with LocalFirstModel {
+class UserModel {
   final String id;
   final String username;
   final String? avatarUrl;
@@ -738,36 +1236,41 @@ class UserModel with LocalFirstModel {
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
-    final now = DateTime.now();
+    final now = DateTime.now().toUtc();
+    final created = createdAt ?? now;
+    final updated = updatedAt ?? created;
+    final normalizedId = (id ?? username).trim().toLowerCase();
     return UserModel._(
-      id: id ?? username,
+      id: normalizedId,
       username: username,
       avatarUrl: avatarUrl,
-      createdAt: createdAt ?? now,
-      updatedAt: updatedAt ?? now,
+      createdAt: created,
+      updatedAt: updated,
     );
   }
 
-  @override
-  @override
-  JsonMap<dynamic> toJson() {
+  JsonMap toJson() {
     return {
-      'id': id,
-      'username': username,
-      'avatar_url': avatarUrl,
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
+      CommonFields.id: id,
+      CommonFields.username: username,
+      UserFields.avatarUrl: avatarUrl,
+      CommonFields.createdAt: createdAt.toUtc().toIso8601String(),
+      CommonFields.updatedAt: updatedAt.toUtc().toIso8601String(),
     };
   }
 
-  factory UserModel.fromJson(JsonMap<dynamic> json) {
-    final username = json['username'] ?? json['id'];
+  factory UserModel.fromJson(JsonMap json) {
+    final username = json[CommonFields.username] ?? json[CommonFields.id];
+    final created = DateTime.parse(json[CommonFields.createdAt]).toUtc();
+    final updated = json[CommonFields.updatedAt] != null
+        ? DateTime.parse(json[CommonFields.updatedAt]).toUtc()
+        : created;
     return UserModel(
-      id: json['id'] ?? username,
+      id: (json[CommonFields.id] ?? username).toString().trim().toLowerCase(),
       username: username,
-      avatarUrl: json['avatar_url'],
-      createdAt: DateTime.parse(json['created_at']),
-      updatedAt: DateTime.parse(json['updated_at']),
+      avatarUrl: json[UserFields.avatarUrl],
+      createdAt: created,
+      updatedAt: updated,
     );
   }
 
@@ -789,9 +1292,103 @@ class UserModel with LocalFirstModel {
   }
 }
 
-class CounterLogModel with LocalFirstModel {
+/// Aggregated counter per (user, device session) combination.
+class SessionCounterModel {
   final String id;
   final String username;
+  final String sessionId;
+  final int count;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  SessionCounterModel._({
+    required this.id,
+    required this.username,
+    required this.sessionId,
+    required this.count,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  factory SessionCounterModel({
+    String? id,
+    required String username,
+    required String sessionId,
+    int count = 0,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) {
+    final now = DateTime.now().toUtc();
+    final created = createdAt ?? now;
+    final updated = updatedAt ?? created;
+    final normalizedId = id ?? sessionId;
+    return SessionCounterModel._(
+      id: normalizedId,
+      username: username,
+      sessionId: sessionId,
+      count: count,
+      createdAt: created,
+      updatedAt: updated,
+    );
+  }
+
+  SessionCounterModel copyWith({
+    String? id,
+    String? username,
+    String? sessionId,
+    int? count,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) {
+    return SessionCounterModel(
+      id: id ?? this.id,
+      username: username ?? this.username,
+      sessionId: sessionId ?? this.sessionId,
+      count: count ?? this.count,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  JsonMap toJson() {
+    return {
+      CommonFields.id: id,
+      CommonFields.username: username,
+      SessionCounterFields.sessionId: sessionId,
+      SessionCounterFields.count: count,
+      CommonFields.createdAt: createdAt.toUtc().toIso8601String(),
+      CommonFields.updatedAt: updatedAt.toUtc().toIso8601String(),
+    };
+  }
+
+  factory SessionCounterModel.fromJson(JsonMap json) {
+    final created = DateTime.parse(json[CommonFields.createdAt]).toUtc();
+    final updated = json[CommonFields.updatedAt] != null
+        ? DateTime.parse(json[CommonFields.updatedAt]).toUtc()
+        : created;
+    final sessionId =
+        json[SessionCounterFields.sessionId] ?? json[CommonFields.id];
+    return SessionCounterModel(
+      id: json[CommonFields.id] ?? sessionId,
+      username: json[CommonFields.username],
+      sessionId: sessionId,
+      count: json[SessionCounterFields.count] ?? 0,
+      createdAt: created,
+      updatedAt: updated,
+    );
+  }
+
+  static SessionCounterModel resolveConflict(
+    SessionCounterModel local,
+    SessionCounterModel remote,
+  ) => local.updatedAt.isAfter(remote.updatedAt) ? local : remote;
+}
+
+/// Immutable record describing a single counter increment/decrement.
+class CounterLogModel {
+  final String id;
+  final String username;
+  final String? sessionId;
   final int increment;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -799,6 +1396,7 @@ class CounterLogModel with LocalFirstModel {
   CounterLogModel._({
     required this.id,
     required this.username,
+    required this.sessionId,
     required this.increment,
     required this.createdAt,
     required this.updatedAt,
@@ -807,38 +1405,47 @@ class CounterLogModel with LocalFirstModel {
   factory CounterLogModel({
     String? id,
     required String username,
+    required String? sessionId,
     required int increment,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
-    final now = DateTime.now();
+    final now = DateTime.now().toUtc();
+    final created = createdAt ?? now;
+    final updated = updatedAt ?? created;
     return CounterLogModel._(
       id: id ?? '${username}_${now.millisecondsSinceEpoch}',
       username: username,
+      sessionId: sessionId,
       increment: increment,
-      createdAt: createdAt ?? now,
-      updatedAt: updatedAt ?? now,
+      createdAt: created,
+      updatedAt: updated,
     );
   }
 
-  @override
-  JsonMap<dynamic> toJson() {
+  JsonMap toJson() {
     return {
-      'id': id,
-      'username': username,
-      'increment': increment,
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
+      CommonFields.id: id,
+      CommonFields.username: username,
+      CounterLogFields.sessionId: sessionId,
+      CounterLogFields.increment: increment,
+      CommonFields.createdAt: createdAt.toUtc().toIso8601String(),
+      CommonFields.updatedAt: updatedAt.toUtc().toIso8601String(),
     };
   }
 
-  factory CounterLogModel.fromJson(JsonMap<dynamic> json) {
+  factory CounterLogModel.fromJson(JsonMap json) {
+    final created = DateTime.parse(json[CommonFields.createdAt]).toUtc();
+    final updated = json[CommonFields.updatedAt] != null
+        ? DateTime.parse(json[CommonFields.updatedAt]).toUtc()
+        : created;
     return CounterLogModel(
-      id: json['id'],
-      username: json['username'],
-      increment: json['increment'],
-      createdAt: DateTime.parse(json['created_at']),
-      updatedAt: DateTime.parse(json['updated_at']),
+      id: json[CommonFields.id],
+      username: json[CommonFields.username],
+      sessionId: json[CounterLogFields.sessionId],
+      increment: json[CounterLogFields.increment],
+      createdAt: created,
+      updatedAt: updated,
     );
   }
 
@@ -854,357 +1461,66 @@ class CounterLogModel with LocalFirstModel {
     return '$verb by $change by $username';
   }
 
-  String toFormattedDate() =>
-      '${createdAt.day.toString().padLeft(2, '0')}/${createdAt.month.toString().padLeft(2, '0')}/${createdAt.year} '
-      '${createdAt.hour.toString().padLeft(2, '0')}:${createdAt.minute.toString().padLeft(2, '0')}';
+  String toFormattedDate() => () {
+    final local = createdAt.toLocal();
+    String two(int v) => v.toString().padLeft(2, '0');
+    String three(int v) => v.toString().padLeft(3, '0');
+    return '${two(local.day)}/${two(local.month)}/${local.year} '
+        '${two(local.hour)}:${two(local.minute)}:${two(local.second)}.${three(local.millisecond)}';
+  }();
 }
 
 LocalFirstRepository<UserModel> _buildUserRepository() {
   return LocalFirstRepository.create(
-    name: 'user',
+    name: RepositoryNames.user,
     getId: (user) => user.id,
     toJson: (user) => user.toJson(),
     fromJson: (json) => UserModel.fromJson(json),
-    onConflict: UserModel.resolveConflict,
+    onConflictEvent: (local, remote) {
+      final winner = UserModel.resolveConflict(local.data, remote.data);
+      final source = identical(winner, local.data) ? local : remote;
+      return source.updateEventState(
+        syncStatus: SyncStatus.ok,
+        syncOperation: source.syncOperation,
+      );
+    },
   );
 }
 
 LocalFirstRepository<CounterLogModel> _buildCounterLogRepository() {
   return LocalFirstRepository.create(
-    name: 'counter_log',
+    name: RepositoryNames.counterLog,
     getId: (log) => log.id,
     toJson: (log) => log.toJson(),
     fromJson: (json) => CounterLogModel.fromJson(json),
-    onConflict: CounterLogModel.resolveConflict,
-  );
-}
-
-/// Periodically syncs pending changes with MongoDB and pulls updates.
-class MongoPeriodicSyncStrategy extends DataSyncStrategy {
-  static const logTag = 'MongoPeriodicSyncStrategy';
-  final Duration period = const Duration(milliseconds: 500);
-  final MongoApi mongoApi = MongoApi(
-    uri: mongoConnectionString,
-    repositoryNames: const ['counter_log', 'user'],
-  );
-
-  Timer? _timer;
-  final JsonMap<DateTime?> lastSyncedAt = {};
-  final JsonMap<List<LocalFirstModel>> pendingChanges = {};
-
-  void start() {
-    stop();
-    client.awaitInitialization.then((_) async {
-      dev.log('Starting periodic sync', name: logTag);
-      final pendingObjects = await getPendingObjects();
-      for (final object in pendingObjects) {
-        _addPending(object);
-      }
-      for (final repository in mongoApi.repositoryNames) {
-        final value = await client.getMeta('__last_sync__$repository');
-        lastSyncedAt[repository] = value != null
-            ? DateTime.tryParse(value)
-            : null;
-      }
-      _timer = Timer.periodic(period, _onTimerTick);
-    });
-  }
-
-  void stop() {
-    _timer?.cancel();
-    _timer = null;
-    pendingChanges.clear();
-    lastSyncedAt.clear();
-  }
-
-  void dispose() {
-    stop();
-  }
-
-  void _addPending(LocalFirstModel object) {
-    pendingChanges.putIfAbsent(object.repositoryName, () => []).add(object);
-  }
-
-  @override
-  Future<SyncStatus> onPushToRemote(LocalFirstModel object) async {
-    _addPending(object);
-    return SyncStatus.pending;
-  }
-
-  Future<void> _onTimerTick(_) async {
-    if (pendingChanges.isNotEmpty) {
-      final changes = JsonMap<List<LocalFirstModel>>.from(pendingChanges);
-      pendingChanges.clear();
-
-      await _pushToRemote(changes);
-    }
-    final remoteChanges = await mongoApi.pull(lastSyncedAt);
-    if (remoteChanges['changes']?.isNotEmpty) {
-      await pullChangesToLocal(remoteChanges);
-
-      // Use the latest updated_at seen in this pull as the new lastSyncedAt
-      final latest = mongoApi.latestUpdatedAt(remoteChanges);
-      if (latest != null) {
-        for (final repo in mongoApi.repositoryNames) {
-          lastSyncedAt[repo] = latest;
-          await client.setKeyValue(
-            '__last_sync__$repo',
-            latest.toIso8601String(),
-          );
-        }
-      }
-    }
-  }
-
-  Future<void> _pushToRemote(JsonMap<List<LocalFirstModel>> changes) async {
-    if (changes.isEmpty) return;
-    dev.log(
-      'Pushing changes for ${changes.length} repository(ies)',
-      name: logTag,
-    );
-    await mongoApi.push(_buildUploadPayload(changes));
-  }
-
-  JsonMap<dynamic> _buildUploadPayload(JsonMap<List<LocalFirstModel>> changes) {
-    return {
-      'lastSyncedAt': DateTime.now().toIso8601String(),
-      'changes': {
-        for (final entry in changes.entries) entry.key: entry.value.toJson(),
-      },
-    };
-  }
-
-  Future<List<JsonMap<dynamic>>> fetchUsers() {
-    return mongoApi.fetchUsers();
-  }
-}
-
-/// Low-level helper to push/pull changes against MongoDB.
-class MongoApi {
-  static const logTag = 'MongoApi';
-  final String uri;
-  final List<String> repositoryNames;
-  final String collectionPrefix;
-
-  Db? _db;
-
-  MongoApi({
-    required this.uri,
-    required this.repositoryNames,
-    this.collectionPrefix = 'offline_',
-  });
-
-  Future<Db> _getDb() async {
-    final current = _db;
-    if (current != null && current.isConnected) return current;
-
-    final db = await Db.create(uri);
-    await db.open();
-    dev.log('Connected to MongoDB at $uri', name: logTag);
-    _db = db;
-    return db;
-  }
-
-  Future<DbCollection> _collection(String repositoryName) async {
-    final db = await _getDb();
-    final collection = db.collection('$collectionPrefix$repositoryName');
-
-    try {
-      await collection.createIndex(keys: {'updated_at': 1});
-    } catch (_) {
-      // Ignora erros de índice existente
-    }
-
-    return collection;
-  }
-
-  Future<void> push(JsonMap<dynamic> payload) async {
-    final operationsByNode = payload['changes'];
-    if (operationsByNode is! JsonMap<dynamic>) return;
-
-    final now = DateTime.now();
-    final hasChanges = operationsByNode.values.any((op) {
-      if (op is! JsonMap) return false;
-      return (op['insert'] as List?)?.isNotEmpty == true ||
-          (op['update'] as List?)?.isNotEmpty == true ||
-          (op['delete'] as List?)?.isNotEmpty == true;
-    });
-    if (!hasChanges) return;
-
-    dev.log('Uploading changes to Mongo', name: logTag);
-    for (final entry in operationsByNode.entries) {
-      final repositoryName = entry.key;
-      final operations = entry.value;
-      if (operations is! JsonMap<dynamic>) continue;
-      final collection = await _collection(repositoryName);
-
-      final insertItems = operations['insert'];
-      if (insertItems is List) {
-        for (final item in insertItems) {
-          if (item is! JsonMap<dynamic>) continue;
-          final id = item['id']?.toString();
-          if (id == null) continue;
-          final doc = {
-            ..._toMongoDateFields(item),
-            'operation': 'insert',
-            'updated_at': now,
-          };
-          await collection.replaceOne(where.eq('id', id), doc, upsert: true);
-        }
-      }
-
-      final updateItems = operations['update'];
-      if (updateItems is List) {
-        for (final item in updateItems) {
-          if (item is! JsonMap<dynamic>) continue;
-          final id = item['id']?.toString();
-          if (id == null) continue;
-          final doc = {
-            ..._toMongoDateFields(item),
-            'operation': 'update',
-            'updated_at': now,
-          };
-          await collection.replaceOne(where.eq('id', id), doc, upsert: true);
-        }
-      }
-
-      final deleteItems = operations['delete'];
-      if (deleteItems is List) {
-        for (final id in deleteItems) {
-          if (id == null) continue;
-          await collection.replaceOne(where.eq('id', id.toString()), {
-            'id': id.toString(),
-            'operation': 'delete',
-            'updated_at': now,
-          }, upsert: true);
-        }
-      }
-    }
-  }
-
-  Future<JsonMap<dynamic>> pull(JsonMap<DateTime?> lastSyncByNode) async {
-    final timestamp = DateTime.now();
-
-    final changes = <String, JsonMap<List<dynamic>>>{};
-
-    for (final repositoryName in repositoryNames) {
-      final cutoff =
-          lastSyncByNode[repositoryName] ??
-          DateTime.fromMillisecondsSinceEpoch(0);
-      final collection = await _collection(repositoryName);
-      final cursor = collection.find(
-        where.gt('updated_at', cutoff).sortBy('updated_at'),
+    onConflictEvent: (local, remote) {
+      final winner = CounterLogModel.resolveConflict(local.data, remote.data);
+      final source = identical(winner, local.data) ? local : remote;
+      return source.updateEventState(
+        syncStatus: SyncStatus.ok,
+        syncOperation: source.syncOperation,
       );
-
-      final inserts = <dynamic>[];
-      final updates = <dynamic>[];
-      final deletes = <dynamic>[];
-
-      await cursor.forEach((doc) {
-        final op = doc['operation'];
-        if (op == 'delete') {
-          if (doc['id'] != null) deletes.add(doc['id']);
-          return;
-        }
-        final item = Map<String, dynamic>.from(doc)
-          ..remove('operation')
-          ..remove('_id');
-        if (op == 'insert') {
-          inserts.add(_fromMongoDateFields(item));
-        } else {
-          updates.add(_fromMongoDateFields(item));
-        }
-      });
-
-      final finalChanges = {
-        if (inserts.isNotEmpty) 'insert': inserts,
-        if (updates.isNotEmpty) 'update': updates,
-        if (deletes.isNotEmpty) 'delete': deletes,
-      };
-      if (finalChanges.isNotEmpty) {
-        dev.log(
-          'Pulling changes for $repositoryName since ${lastSyncByNode[repositoryName]}',
-          name: logTag,
-        );
-        changes[repositoryName] = finalChanges;
-      }
-    }
-
-    return {'timestamp': timestamp.toIso8601String(), 'changes': changes};
-  }
-
-  Future<List<JsonMap<dynamic>>> fetchUsers() async {
-    dev.log('Fetching users snapshot', name: logTag);
-    final collection = await _collection('user');
-    final cursor = collection.find(where.ne('operation', 'delete'));
-
-    final users = <String, JsonMap<dynamic>>{};
-
-    await cursor.forEach((doc) {
-      final id = doc['id'];
-      if (id is! String) return;
-      final data = Map<String, dynamic>.from(doc)
-        ..remove('_id')
-        ..remove('operation');
-      users[id] = _fromMongoDateFields(data);
-    });
-
-    return users.values.toList();
-  }
-
-  DateTime? latestUpdatedAt(JsonMap<dynamic> pullResult) {
-    final changes = pullResult['changes'];
-    if (changes is! JsonMap) return null;
-    DateTime? latest;
-
-    for (final repositoryEntry in changes.entries) {
-      final repositoryChanges = repositoryEntry.value;
-      if (repositoryChanges is! JsonMap) continue;
-
-      for (final key in ['insert', 'update']) {
-        final list = repositoryChanges[key];
-        if (list is! List) continue;
-        for (final item in list) {
-          if (item is! Map<String, dynamic>) continue;
-          final updatedValue = item['updated_at'];
-          DateTime? candidate;
-          if (updatedValue is DateTime) {
-            candidate = updatedValue;
-          } else if (updatedValue is String) {
-            candidate = DateTime.tryParse(updatedValue);
-          }
-          if (candidate != null &&
-              (latest == null || candidate.isAfter(latest))) {
-            latest = candidate;
-          }
-        }
-      }
-    }
-    return latest;
-  }
-
-  JsonMap<dynamic> _toMongoDateFields(JsonMap<dynamic> item) {
-    final map = Map<String, dynamic>.from(item);
-    for (final key in ['created_at', 'updated_at']) {
-      final value = map[key];
-      if (value is String) {
-        final parsed = DateTime.tryParse(value);
-        if (parsed != null) {
-          map[key] = parsed;
-        }
-      }
-    }
-    return map;
-  }
-
-  JsonMap<dynamic> _fromMongoDateFields(JsonMap<dynamic> item) {
-    final map = Map<String, dynamic>.from(item);
-    for (final key in ['created_at', 'updated_at']) {
-      final value = map[key];
-      if (value is DateTime) {
-        map[key] = value.toIso8601String();
-      }
-    }
-    return map;
-  }
+    },
+  );
 }
+
+LocalFirstRepository<SessionCounterModel> _buildSessionCounterRepository() {
+  return LocalFirstRepository.create(
+    name: RepositoryNames.sessionCounter,
+    getId: (session) => session.id,
+    toJson: (session) => session.toJson(),
+    fromJson: (json) => SessionCounterModel.fromJson(json),
+    onConflictEvent: (local, remote) {
+      final winner = SessionCounterModel.resolveConflict(
+        local.data,
+        remote.data,
+      );
+      final source = identical(winner, local.data) ? local : remote;
+      return source.updateEventState(
+        syncStatus: SyncStatus.ok,
+        syncOperation: source.syncOperation,
+      );
+    },
+  );
+}
+

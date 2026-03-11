@@ -1,0 +1,1206 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:developer' as dev;
+import 'dart:io';
+
+import 'database_service.dart';
+import 'mongo_database_service.dart';
+
+/// Hybrid WebSocket + REST API server for local_first synchronization.
+///
+/// This server handles:
+/// - Client authentication
+/// - Pushing local events to MongoDB
+/// - Pulling remote events from MongoDB
+/// - Broadcasting events to connected clients via WebSocket
+/// - Heartbeat/ping-pong for connection health
+/// - REST API endpoints for HTTP clients
+///
+/// REST API Endpoints:
+/// - GET /api/health - Health check
+/// - GET /api/repositories - List available repositories
+/// - GET /api/events/{repository}?seq={n} - Get events after sequence
+/// - GET /api/events/{repository}/{eventId} - Get specific event
+/// - GET /api/events/{repository}/byDataId/{dataId} - Get event by dataId
+/// - POST /api/events/{repository} - Create single event
+/// - POST /api/events/{repository}/batch - Create multiple events
+///
+/// To run this server:
+/// ```bash
+/// # From the monorepo root (recommended):
+/// melos server:start
+///
+/// # Or directly:
+/// cd server && dart run websocket_server.dart
+///
+/// # Test mode (uses port 8081 and test database):
+/// dart run websocket_server.dart --test
+/// ```
+///
+/// The recommended `melos server:start` command automatically:
+/// - Starts MongoDB with Docker Compose
+/// - Configures networking between services
+/// - Shows real-time logs
+void main(List<String> args) async {
+  // Check if running in test mode
+  final isTestMode = args.contains('--test');
+
+  final server = WebSocketSyncServer(isTestMode: isTestMode);
+  await server.start();
+}
+
+/// Configuration for repository-specific behavior
+class RepositoryConfig {
+  final bool shouldDeduplicate;
+  final bool sortDescending;
+  final int? defaultLimit;
+
+  const RepositoryConfig({
+    required this.shouldDeduplicate,
+    required this.sortDescending,
+    this.defaultLimit,
+  });
+}
+
+class WebSocketSyncServer {
+  static const logTag = 'WebSocketSyncServer';
+  static const _productionPort = 8080;
+  static const _testPort = 18081;
+  static const _productionDb = 'remote_counter_db';
+  static const _testDb = 'remote_counter_db_test';
+
+  /// Repository-specific configurations
+  /// Defines behavior for deduplication, sorting, and limits per repository
+  static const Map<String, RepositoryConfig> _repositoryConfigs = {
+    'counter_log': RepositoryConfig(
+      shouldDeduplicate: false,
+      sortDescending: true,
+      defaultLimit: 5,
+    ),
+    // Default config for other repositories
+    '_default': RepositoryConfig(
+      shouldDeduplicate: true,
+      sortDescending: false,
+      defaultLimit: 100,
+    ),
+  };
+
+  final bool isTestMode;
+  final DatabaseService? _injectedDbService;
+
+  /// Ping/pong intervals - shorter in test mode for faster tests
+  Duration get pingInterval =>
+      isTestMode ? const Duration(seconds: 3) : const Duration(seconds: 30);
+  Duration get pongTimeout =>
+      isTestMode ? const Duration(seconds: 5) : const Duration(seconds: 10);
+
+  WebSocketSyncServer({this.isTestMode = false, DatabaseService? dbService})
+      : _injectedDbService = dbService;
+
+  /// Gets configuration for a specific repository
+  static RepositoryConfig _getRepositoryConfig(String repositoryName) {
+    return _repositoryConfigs[repositoryName] ?? _repositoryConfigs['_default']!;
+  }
+
+  /// Gets the port to use based on test mode
+  int get port => isTestMode ? _testPort : _productionPort;
+
+  /// Gets the database name based on test mode
+  String get databaseName => isTestMode ? _testDb : _productionDb;
+
+  // Support both Docker (mongodb service name) and local (127.0.0.1)
+  String get mongoConnectionString {
+    final host = Platform.environment['MONGO_HOST'] ?? '127.0.0.1';
+    final port = Platform.environment['MONGO_PORT'] ?? '27017';
+    final db = Platform.environment['MONGO_DB'] ?? databaseName;
+    return 'mongodb://admin:admin@$host:$port/$db?authSource=admin';
+  }
+
+  HttpServer? _httpServer;
+  late DatabaseService _dbService;
+  final Set<ConnectedClient> _clients = {};
+
+  /// Starts the WebSocket server.
+  Future<void> start() async {
+    try {
+      // Log server mode
+      if (isTestMode) {
+        dev.log('Starting server in TEST MODE', name: logTag);
+        dev.log('Port: $port (test)', name: logTag);
+        dev.log('Database: $databaseName (test)', name: logTag);
+      } else {
+        dev.log('Starting server in PRODUCTION MODE', name: logTag);
+        dev.log('Port: $port', name: logTag);
+        dev.log('Database: $databaseName', name: logTag);
+      }
+
+      // Initialize database service
+      _dbService = _injectedDbService ??
+          MongoDatabaseService(connectionString: mongoConnectionString);
+      await _dbService.open();
+      dev.log('Database connected', name: logTag);
+
+      // Ensure indexes
+      await _dbService.ensureIndexes(
+        ['user', 'counter_log', 'session_counter', 'chat', 'message'],
+      );
+
+      // Start HTTP server for WebSocket upgrade
+      final httpServer = await HttpServer.bind(InternetAddress.anyIPv4, port);
+      _httpServer = httpServer;
+      dev.log('WebSocket server listening on ws://0.0.0.0:$port', name: logTag);
+
+      await for (final HttpRequest request in httpServer) {
+        if (WebSocketTransformer.isUpgradeRequest(request)) {
+          _handleWebSocketConnection(request);
+        } else {
+          // Handle REST API requests
+          await _handleHttpRequest(request);
+        }
+      }
+    } catch (e, s) {
+      dev.log(
+        'Error starting server: $e',
+        name: logTag,
+        error: e,
+        stackTrace: s,
+      );
+      rethrow;
+    }
+  }
+
+  /// Stops the server.
+  Future<void> stop() async {
+    await _httpServer?.close();
+    await _dbService.close();
+    for (final client in _clients) {
+      await client.close();
+    }
+    _clients.clear();
+  }
+
+  /// Handles new WebSocket connection.
+  Future<void> _handleWebSocketConnection(HttpRequest request) async {
+    try {
+      final webSocket = await WebSocketTransformer.upgrade(request);
+      final client = ConnectedClient(webSocket: webSocket, server: this);
+
+      _clients.add(client);
+      dev.log(
+        'Client connected. Total clients: ${_clients.length}',
+        name: logTag,
+      );
+
+      client.listen(
+        onDone: () {
+          _clients.remove(client);
+          dev.log(
+            'Client disconnected. Total clients: ${_clients.length}',
+            name: logTag,
+          );
+        },
+      );
+    } catch (e, s) {
+      dev.log(
+        'Error handling WebSocket connection: $e',
+        name: logTag,
+        error: e,
+        stackTrace: s,
+      );
+    }
+  }
+
+  /// Handles HTTP REST API requests.
+  Future<void> _handleHttpRequest(HttpRequest request) async {
+    final response = request.response;
+
+    // Set CORS headers
+    response.headers.set('Access-Control-Allow-Origin', '*');
+    response.headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    response.headers.set(
+      'Access-Control-Allow-Headers',
+      'Content-Type, Authorization',
+    );
+    response.headers.set('Content-Type', 'application/json');
+
+    try {
+      // Handle preflight requests
+      if (request.method == 'OPTIONS') {
+        response.statusCode = HttpStatus.ok;
+        await response.close();
+        return;
+      }
+
+      final uri = request.uri;
+      final path = uri.path;
+      final method = request.method;
+
+      dev.log('REST API request: $method $path', name: logTag);
+
+      // Route requests
+      if (path == '/api/health') {
+        if (method == 'GET') {
+          await _handleHealthCheck(request);
+        } else {
+          _sendError(
+            response,
+            HttpStatus.methodNotAllowed,
+            'Method not allowed',
+          );
+        }
+      } else if (path == '/api/repositories') {
+        if (method == 'GET') {
+          await _handleListRepositories(request);
+        } else {
+          _sendError(
+            response,
+            HttpStatus.methodNotAllowed,
+            'Method not allowed',
+          );
+        }
+      } else if (path.startsWith('/api/events/')) {
+        final pathSegments = uri.pathSegments;
+        if (pathSegments.length == 3) {
+          // /api/events/{repository}
+          final repository = pathSegments[2];
+          if (method == 'GET') {
+            await _handleGetEvents(request, repository);
+          } else if (method == 'POST') {
+            await _handlePostEvent(request, repository);
+          } else {
+            _sendError(
+              response,
+              HttpStatus.methodNotAllowed,
+              'Method not allowed',
+            );
+          }
+        } else if (pathSegments.length == 4) {
+          // /api/events/{repository}/{eventId} or /api/events/{repository}/batch
+          final repository = pathSegments[2];
+          final identifier = pathSegments[3];
+
+          if (identifier == 'batch' && method == 'POST') {
+            await _handlePostEventsBatch(request, repository);
+          } else if (method == 'GET') {
+            await _handleGetEventById(request, repository, identifier);
+          } else {
+            _sendError(
+              response,
+              HttpStatus.methodNotAllowed,
+              'Method not allowed',
+            );
+          }
+        } else if (pathSegments.length == 5) {
+          // /api/events/{repository}/byDataId/{dataId}
+          final repository = pathSegments[2];
+          final pathType = pathSegments[3];
+          final dataId = pathSegments[4];
+
+          if (pathType == 'byDataId' && method == 'GET') {
+            await _handleGetEventByDataId(request, repository, dataId);
+          } else {
+            _sendError(response, HttpStatus.notFound, 'Endpoint not found');
+          }
+        } else {
+          _sendError(response, HttpStatus.notFound, 'Endpoint not found');
+        }
+      } else {
+        _sendError(response, HttpStatus.notFound, 'Endpoint not found');
+      }
+    } catch (e, s) {
+      dev.log(
+        'Error handling HTTP request: $e',
+        name: logTag,
+        error: e,
+        stackTrace: s,
+      );
+      _sendError(
+        response,
+        HttpStatus.internalServerError,
+        'Internal server error: $e',
+      );
+    }
+  }
+
+  /// Sends an error response.
+  void _sendError(HttpResponse response, int statusCode, String message) {
+    try {
+      response.statusCode = statusCode;
+      response.headers.contentType = ContentType.json;
+      response.write(jsonEncode({'error': message, 'statusCode': statusCode}));
+      response.close();
+    } catch (e) {
+      dev.log('Error sending error response: $e', name: logTag);
+    }
+  }
+
+  /// Handles GET /api/health - Health check endpoint.
+  Future<void> _handleHealthCheck(HttpRequest request) async {
+    final response = request.response;
+
+    response.statusCode = HttpStatus.ok;
+    response.write(
+      jsonEncode({
+        'status': 'ok',
+        'timestamp': DateTime.now().toIso8601String(),
+        'mongodb': _dbService.isConnected ? 'connected' : 'disconnected',
+        'activeConnections': _clients.length,
+      }),
+    );
+    await response.close();
+  }
+
+  /// Handles GET /api/repositories - List available repositories.
+  Future<void> _handleListRepositories(HttpRequest request) async {
+    final response = request.response;
+
+    if (!_dbService.isConnected) {
+      _sendError(
+        response,
+        HttpStatus.serviceUnavailable,
+        'Database not connected',
+      );
+      return;
+    }
+
+    try {
+      final collections = await _dbService.getCollectionNames();
+
+      // Filter out system collections and internal collections
+      final repositories = collections
+          .where(
+            (name) =>
+                !name.startsWith('_') &&
+                !name.endsWith('__events') &&
+                !name.startsWith('system.'),
+          )
+          .toList();
+
+      // Get statistics for each repository
+      final stats = <Map<String, dynamic>>[];
+      for (final repo in repositories) {
+        final count = await _dbService.collectionCount(repo);
+
+        // Get max sequence
+        final maxSeqDoc = await _dbService.findOne(
+          repo,
+          sortByField: 'serverSequence',
+          sortDescending: true,
+          limit: 1,
+        );
+        final maxSequence = maxSeqDoc?['serverSequence'] as int? ?? 0;
+
+        stats.add({
+          'name': repo,
+          'eventCount': count,
+          'maxSequence': maxSequence,
+        });
+      }
+
+      response.statusCode = HttpStatus.ok;
+      response.write(
+        jsonEncode({'repositories': stats, 'count': repositories.length}),
+      );
+      await response.close();
+    } catch (e) {
+      _sendError(
+        response,
+        HttpStatus.internalServerError,
+        'Failed to list repositories: $e',
+      );
+    }
+  }
+
+  /// Handles GET /api/events/{repository}?seq={n} - Get events after sequence.
+  Future<void> _handleGetEvents(HttpRequest request, String repository) async {
+    final response = request.response;
+
+    if (!_dbService.isConnected) {
+      _sendError(
+        response,
+        HttpStatus.serviceUnavailable,
+        'Database not connected',
+      );
+      return;
+    }
+
+    try {
+      final seqParam = request.uri.queryParameters['seq'];
+      final limitParam = request.uri.queryParameters['limit'];
+
+      // Get default limit from repository configuration
+      final config = _getRepositoryConfig(repository);
+      final defaultLimit = config.defaultLimit ?? 100;
+      final limit = limitParam != null
+          ? (int.tryParse(limitParam) ?? defaultLimit)
+          : defaultLimit;
+
+      // Log incoming fetch request
+      final afterSeq = seqParam != null ? int.tryParse(seqParam) : null;
+      print('[REST GET] Repository: $repository, afterSeq: ${afterSeq ?? "none"}, limit: $limit');
+
+      final events = await fetchEvents(
+        repository,
+        afterSequence: afterSeq,
+        limit: limit,
+      );
+
+      // Log fetch result
+      if (events.isNotEmpty) {
+        final sequences = events.map((e) => e['serverSequence']).toList();
+        print('[REST GET] ✓ Returned ${events.length} events with sequences: $sequences');
+      } else {
+        print('[REST GET] ✓ No events found (all up to date)');
+      }
+
+      response.statusCode = HttpStatus.ok;
+      response.headers.contentType = ContentType.json;
+      response.write(
+        jsonEncode({
+          'repository': repository,
+          'events': events,
+          'count': events.length,
+          'hasMore': events.length >= limit,
+        }),
+      );
+      await response.close();
+    } catch (e) {
+      _sendError(
+        response,
+        HttpStatus.internalServerError,
+        'Failed to fetch events: $e',
+      );
+    }
+  }
+
+  /// Handles GET /api/events/{repository}/{eventId} - Get specific event.
+  Future<void> _handleGetEventById(
+    HttpRequest request,
+    String repository,
+    String eventId,
+  ) async {
+    final response = request.response;
+
+    if (!_dbService.isConnected) {
+      _sendError(
+        response,
+        HttpStatus.serviceUnavailable,
+        'Database not connected',
+      );
+      return;
+    }
+
+    try {
+      final event = await _dbService.findOne(
+        repository,
+        eqField: '_event_id',
+        eqValue: eventId,
+      );
+
+      if (event == null) {
+        _sendError(response, HttpStatus.notFound, 'Event not found');
+        return;
+      }
+
+      response.statusCode = HttpStatus.ok;
+      response.headers.contentType = ContentType.json;
+      response.write(jsonEncode({'repository': repository, 'event': event}));
+      await response.close();
+    } catch (e) {
+      _sendError(
+        response,
+        HttpStatus.internalServerError,
+        'Failed to fetch event: $e',
+      );
+    }
+  }
+
+  /// Handles GET /api/events/{repository}/byDataId/{dataId} - Get event by dataId.
+  Future<void> _handleGetEventByDataId(
+    HttpRequest request,
+    String repository,
+    String dataId,
+  ) async {
+    final response = request.response;
+
+    if (!_dbService.isConnected) {
+      _sendError(
+        response,
+        HttpStatus.serviceUnavailable,
+        'Database not connected',
+      );
+      return;
+    }
+
+    try {
+      final event = await _dbService.findOne(
+        repository,
+        eqField: '_data_id',
+        eqValue: dataId,
+      );
+
+      if (event == null) {
+        _sendError(response, HttpStatus.notFound, 'Event not found');
+        return;
+      }
+
+      response.statusCode = HttpStatus.ok;
+      response.headers.contentType = ContentType.json;
+      response.write(jsonEncode({'repository': repository, 'event': event}));
+      await response.close();
+    } catch (e) {
+      _sendError(
+        response,
+        HttpStatus.internalServerError,
+        'Failed to fetch event: $e',
+      );
+    }
+  }
+
+  /// Handles POST /api/events/{repository} - Create single event.
+  Future<void> _handlePostEvent(HttpRequest request, String repository) async {
+    final response = request.response;
+
+    try {
+      // Read request body
+      final bodyString = await utf8.decoder.bind(request).join();
+      final body = jsonDecode(bodyString) as Map<String, dynamic>;
+
+      // Validate event has required fields
+      if (!body.containsKey('_event_id')) {
+        _sendError(
+          response,
+          HttpStatus.badRequest,
+          'Missing required field: _event_id',
+        );
+        return;
+      }
+
+      // Push event to database
+      await pushEvent(repository, body);
+
+      response.statusCode = HttpStatus.created;
+      response.write(
+        jsonEncode({
+          'status': 'success',
+          'repository': repository,
+          'eventId': body['_event_id'],
+        }),
+      );
+      await response.close();
+    } catch (e) {
+      _sendError(
+        response,
+        HttpStatus.internalServerError,
+        'Failed to create event: $e',
+      );
+    }
+  }
+
+  /// Handles POST /api/events/{repository}/batch - Create multiple events.
+  Future<void> _handlePostEventsBatch(
+    HttpRequest request,
+    String repository,
+  ) async {
+    final response = request.response;
+
+    try {
+      // Read request body
+      final bodyString = await utf8.decoder.bind(request).join();
+      final body = jsonDecode(bodyString) as Map<String, dynamic>;
+
+      // Validate events array exists
+      if (!body.containsKey('events') || body['events'] is! List) {
+        _sendError(
+          response,
+          HttpStatus.badRequest,
+          'Missing or invalid events array',
+        );
+        return;
+      }
+
+      final events = (body['events'] as List).cast<Map<String, dynamic>>();
+
+      // Log incoming push request
+      print('[REST POST] Repository: $repository, events: ${events.length}');
+
+      // Validate all events have _event_id
+      for (final event in events) {
+        if (!event.containsKey('_event_id')) {
+          _sendError(
+            response,
+            HttpStatus.badRequest,
+            'All events must have _event_id field',
+          );
+          return;
+        }
+      }
+
+      // Push events to database
+      await pushEventsBatch(repository, events);
+
+      final eventIds = events.map((e) => e['_event_id'] as String).toList();
+      print('[REST POST] ✓ Saved ${eventIds.length} events: ${eventIds.take(5).join(", ")}${eventIds.length > 5 ? "..." : ""}');
+
+      response.statusCode = HttpStatus.created;
+      response.write(
+        jsonEncode({
+          'status': 'success',
+          'repository': repository,
+          'eventIds': eventIds,
+          'count': eventIds.length,
+        }),
+      );
+      await response.close();
+    } catch (e) {
+      _sendError(
+        response,
+        HttpStatus.internalServerError,
+        'Failed to create events: $e',
+      );
+    }
+  }
+
+  /// Pushes an event to the database.
+  Future<void> pushEvent(
+    String repositoryName,
+    Map<String, dynamic> event,
+  ) async {
+    final eventId = event['_event_id'];
+
+    try {
+      // Check if event already exists
+      final existing = await _dbService.findOne(
+        repositoryName,
+        eqField: '_event_id',
+        eqValue: eventId,
+      );
+
+      if (existing != null) {
+        // Event already exists, just return (idempotency)
+        dev.log(
+          'Event $eventId already exists in $repositoryName',
+          name: logTag,
+        );
+        await _broadcastEvent(repositoryName, existing);
+        return;
+      }
+
+      // Get next sequence number
+      final serverSequence = await _dbService.getNextSequence(repositoryName);
+
+      // Add server sequence to event and ensure no _id field
+      final eventWithSequence = Map<String, dynamic>.from(event)
+        ..remove('_id') // Remove any _id field from client
+        ..['serverSequence'] = serverSequence;
+
+      // Ensure all nested maps and values are properly serialized
+      final cleanedEvent = _cleanEventForStorage(eventWithSequence);
+
+      await _dbService.insertOne(repositoryName, cleanedEvent);
+
+      dev.log(
+        'Event $eventId pushed to $repositoryName with sequence $serverSequence',
+        name: logTag,
+      );
+
+      // Broadcast to other clients
+      await _broadcastEvent(repositoryName, eventWithSequence);
+    } catch (e, s) {
+      dev.log('Error pushing event: $e', name: logTag, error: e, stackTrace: s);
+      rethrow;
+    }
+  }
+
+  /// Pushes multiple events to the database.
+  Future<void> pushEventsBatch(
+    String repositoryName,
+    List<Map<String, dynamic>> events,
+  ) async {
+    for (final event in events) {
+      await pushEvent(repositoryName, event);
+    }
+  }
+
+  /// Fetches events from the database after a given sequence number.
+  ///
+  /// Returns only the latest event for each dataId to minimize network traffic.
+  /// Events are grouped by dataId and only the event with the highest serverSequence
+  /// is returned for each group. This prevents syncing intermediate states that have
+  /// been superseded by newer events.
+  ///
+  /// Note: The counter_log repository is excluded from deduplication.
+  /// Logs are ALWAYS returned in descending order (newest first) since old logs
+  /// are historical and have no practical value for clients. Only recent logs matter.
+  Future<List<Map<String, dynamic>>> fetchEvents(
+    String repositoryName, {
+    int? afterSequence,
+    int? limit,
+  }) async {
+    // Get repository-specific configuration
+    final config = _getRepositoryConfig(repositoryName);
+
+    // For repositories without deduplication (like counter_log), apply limit in query
+    // For others, we need all events to properly group by dataId
+    final queryLimit = !config.shouldDeduplicate ? limit : null;
+
+    final allEvents = await _dbService.find(
+      repositoryName,
+      gtField: afterSequence != null ? 'serverSequence' : null,
+      gtValue: afterSequence,
+      sortByField: 'serverSequence',
+      sortDescending: config.sortDescending,
+      limit: queryLimit,
+    );
+
+    // Skip deduplication if repository config specifies no deduplication
+    if (!config.shouldDeduplicate) {
+      // Return all events with optional limit
+      if (limit != null && limit > 0) {
+        return allEvents.take(limit).toList();
+      }
+      return allEvents;
+    }
+
+    // Group events by dataId and keep only the latest event for each dataId
+    final latestEventsByDataId = <String, Map<String, dynamic>>{};
+
+    for (final event in allEvents) {
+      final dataId = event['_data_id'] as String?;
+
+      // If no _data_id, include the event as-is (backwards compatibility)
+      if (dataId == null) {
+        // For events without _data_id, use _event_id as unique identifier
+        final eventId = event['_event_id'] as String;
+        latestEventsByDataId[eventId] = event;
+        continue;
+      }
+
+      final existing = latestEventsByDataId[dataId];
+      if (existing == null) {
+        latestEventsByDataId[dataId] = event;
+      } else {
+        // Keep event with higher serverSequence
+        final existingSeq = existing['serverSequence'] as int;
+        final currentSeq = event['serverSequence'] as int;
+        if (currentSeq > existingSeq) {
+          latestEventsByDataId[dataId] = event;
+        }
+      }
+    }
+
+    // Convert back to list and sort by serverSequence
+    final results = latestEventsByDataId.values.toList()
+      ..sort(
+        (a, b) =>
+            (a['serverSequence'] as int).compareTo(b['serverSequence'] as int),
+      );
+
+    // Apply limit after grouping
+    if (limit != null && limit > 0) {
+      return results.take(limit).toList();
+    }
+
+    return results;
+  }
+
+  /// Fetches all events from all repositories.
+  Future<Map<String, List<Map<String, dynamic>>>> fetchAllEvents() async {
+    final repos = ['user', 'counter_log', 'session_counter', 'chat', 'message'];
+    final result = <String, List<Map<String, dynamic>>>{};
+
+    for (final repo in repos) {
+      // Get limit from repository configuration
+      final config = _getRepositoryConfig(repo);
+      final events = await fetchEvents(repo, limit: config.defaultLimit);
+      // Note: fetchEvents() already handles sorting based on config, no need to sort again
+      result[repo] = events;
+    }
+
+    return result;
+  }
+
+  /// Broadcasts an event to all connected clients except the sender.
+  Future<void> _broadcastEvent(
+    String repositoryName,
+    Map<String, dynamic> event, {
+    ConnectedClient? except,
+  }) async {
+    for (final client in _clients) {
+      if (client != except && client.isAuthenticated) {
+        try {
+          client.sendMessage({
+            'type': 'events',
+            'repository': repositoryName,
+            'events': [event],
+          });
+        } catch (e) {
+          dev.log('Error broadcasting to client: $e', name: logTag);
+        }
+      }
+    }
+  }
+
+  /// Cleans event data for storage by ensuring proper types.
+  /// This handles any legacy data or edge cases where types might not match.
+  Map<String, dynamic> _cleanEventForStorage(Map<String, dynamic> event) {
+    final cleaned = <String, dynamic>{};
+
+    for (final entry in event.entries) {
+      final key = entry.key;
+      final value = entry.value;
+
+      if (value == null) {
+        cleaned[key] = null;
+      } else if (value is Map) {
+        cleaned[key] = _cleanEventForStorage(value.cast<String, dynamic>());
+      } else if (value is List) {
+        cleaned[key] = value.map((item) {
+          if (item is Map) {
+            return _cleanEventForStorage(item.cast<String, dynamic>());
+          }
+          return item;
+        }).toList();
+      } else {
+        // Keep primitive types as-is
+        cleaned[key] = value;
+      }
+    }
+
+    return cleaned;
+  }
+}
+
+/// Represents a connected WebSocket client.
+class ConnectedClient {
+  static const logTag = 'ConnectedClient';
+
+  final WebSocket webSocket;
+  final WebSocketSyncServer server;
+  Duration get _pingInterval => server.pingInterval;
+  Duration get _pongTimeout => server.pongTimeout;
+  bool isAuthenticated = false;
+  StreamSubscription? _subscription;
+  Timer? _pingTimer;
+  DateTime? _lastPongTime;
+  bool _waitingForPong = false;
+
+  ConnectedClient({required this.webSocket, required this.server});
+
+  /// Starts listening for messages from the client.
+  void listen({required VoidCallback onDone}) {
+    _subscription = webSocket.listen(
+      _onMessage,
+      onError: (error, stackTrace) {
+        dev.log(
+          'Client error: $error',
+          name: logTag,
+          error: error,
+          stackTrace: stackTrace,
+        );
+        close();
+        onDone();
+      },
+      onDone: () {
+        dev.log('Client connection closed', name: logTag);
+        close();
+        onDone();
+      },
+      cancelOnError: false,
+    );
+  }
+
+  /// Starts the ping timer to check client liveness.
+  void _startPingTimer() {
+    _pingTimer?.cancel();
+    _lastPongTime = DateTime.now();
+    print(
+      '[PING] 🔄 Starting ping timer (interval: ${_pingInterval.inSeconds}s, timeout: ${_pongTimeout.inSeconds}s)',
+    );
+    _pingTimer = Timer.periodic(_pingInterval, (_) {
+      _checkClientLiveness();
+    });
+  }
+
+  /// Checks if the client is still alive by sending ping and checking for timeout.
+  void _checkClientLiveness() {
+    final now = DateTime.now();
+
+    // If we're waiting for a pong and timeout has passed, disconnect
+    if (_waitingForPong && _lastPongTime != null) {
+      final timeSinceLastPong = now.difference(_lastPongTime!);
+      if (timeSinceLastPong > _pongTimeout) {
+        print(
+          '[PING] ⏱️  TIMEOUT: Client failed to respond within ${_pongTimeout.inSeconds}s - disconnecting',
+        );
+        close();
+        return;
+      }
+    }
+
+    // Send ping to client
+    _waitingForPong = true;
+    print('[PING] 📡 Sending PING to client');
+    sendMessage({'type': 'ping'});
+  }
+
+  /// Handles pong response from client.
+  void _handlePong() {
+    _lastPongTime = DateTime.now();
+    _waitingForPong = false;
+    print('[PING] ✅ Received PONG from client');
+  }
+
+  /// Processes a message from the client.
+  Future<void> _onMessage(dynamic rawMessage) async {
+    try {
+      final message = jsonDecode(rawMessage as String) as Map<String, dynamic>;
+      final type = message['type'] as String?;
+
+      dev.log('Message received: $type', name: logTag);
+
+      switch (type) {
+        case 'auth':
+          await _handleAuth(message);
+          break;
+
+        case 'ping':
+          _handlePing();
+          break;
+
+        case 'pong':
+          _handlePong();
+          break;
+
+        case 'push_event':
+          await _handlePushEvent(message);
+          break;
+
+        case 'push_events_batch':
+          await _handlePushEventsBatch(message);
+          break;
+
+        case 'request_events':
+          await _handleRequestEvents(message);
+          break;
+
+        case 'request_all_events':
+          await _handleRequestAllEvents();
+          break;
+
+        case 'events_received':
+          _handleEventsReceived(message);
+          break;
+
+        default:
+          dev.log('Unknown message type: $type', name: logTag);
+          sendMessage({
+            'type': 'error',
+            'message': 'Unknown message type: $type',
+          });
+      }
+    } catch (e, s) {
+      dev.log(
+        'Error processing message: $e',
+        name: logTag,
+        error: e,
+        stackTrace: s,
+      );
+      sendMessage({'type': 'error', 'message': 'Error processing message: $e'});
+    }
+  }
+
+  /// Handles authentication request.
+  Future<void> _handleAuth(Map<String, dynamic> message) async {
+    // In a real app, validate the token/credentials here
+    isAuthenticated = true;
+    dev.log('Client authenticated', name: logTag);
+
+    sendMessage({'type': 'auth_success'});
+
+    // Start ping timer to monitor client liveness
+    _startPingTimer();
+  }
+
+  /// Handles ping (heartbeat) from client.
+  void _handlePing() {
+    print('[PING] 📡 Received PING from client, sending PONG');
+    sendMessage({'type': 'pong'});
+  }
+
+  /// Handles push event request.
+  Future<void> _handlePushEvent(Map<String, dynamic> message) async {
+    if (!isAuthenticated) {
+      sendMessage({'type': 'error', 'message': 'Not authenticated'});
+      return;
+    }
+
+    final repositoryName = message['repository'] as String?;
+    final event = message['event'] as Map<String, dynamic>?;
+
+    if (repositoryName == null || event == null) {
+      sendMessage({'type': 'error', 'message': 'Missing repository or event'});
+      return;
+    }
+
+    try {
+      print('[WS PUSH] Repository: $repositoryName, event: ${event['_event_id']}');
+      await server.pushEvent(repositoryName, event);
+      print('[WS PUSH] ✓ Saved event: ${event['_event_id']}');
+
+      // Send acknowledgment
+      sendMessage({
+        'type': 'ack',
+        'eventIds': [event['_event_id']],
+        'repositories': {
+          repositoryName: [event['_event_id']],
+        },
+      });
+    } catch (e) {
+      sendMessage({'type': 'error', 'message': 'Failed to push event: $e'});
+    }
+  }
+
+  /// Handles push events batch request.
+  Future<void> _handlePushEventsBatch(Map<String, dynamic> message) async {
+    if (!isAuthenticated) {
+      sendMessage({'type': 'error', 'message': 'Not authenticated'});
+      return;
+    }
+
+    final repositoryName = message['repository'] as String?;
+    final events = message['events'] as List<dynamic>?;
+
+    if (repositoryName == null || events == null) {
+      sendMessage({'type': 'error', 'message': 'Missing repository or events'});
+      return;
+    }
+
+    try {
+      final eventList = events.cast<Map<String, dynamic>>();
+      print('[WS PUSH] Repository: $repositoryName, events: ${eventList.length}');
+
+      await server.pushEventsBatch(repositoryName, eventList);
+
+      final eventIds = eventList.map((e) => e['_event_id'] as String).toList();
+      print('[WS PUSH] ✓ Saved ${eventIds.length} events: ${eventIds.take(5).join(", ")}${eventIds.length > 5 ? "..." : ""}');
+
+      // Send acknowledgment
+      sendMessage({
+        'type': 'ack',
+        'eventIds': eventIds,
+        'repositories': {repositoryName: eventIds},
+      });
+    } catch (e) {
+      sendMessage({
+        'type': 'error',
+        'message': 'Failed to push events batch: $e',
+      });
+    }
+  }
+
+  /// Handles request for events after a given sequence number.
+  Future<void> _handleRequestEvents(Map<String, dynamic> message) async {
+    if (!isAuthenticated) {
+      sendMessage({'type': 'error', 'message': 'Not authenticated'});
+      return;
+    }
+
+    final repositoryName = message['repository'] as String?;
+    final afterSequence = message['afterSequence'] as int?;
+    final limit = message['limit'] as int?;
+
+    if (repositoryName == null) {
+      sendMessage({'type': 'error', 'message': 'Missing repository'});
+      return;
+    }
+
+    try {
+      // Get default limit from repository configuration
+      final config = WebSocketSyncServer._getRepositoryConfig(repositoryName);
+      final effectiveLimit = limit ?? config.defaultLimit;
+
+      print('[WS GET] Repository: $repositoryName, afterSeq: ${afterSequence ?? "none"}, limit: $effectiveLimit');
+
+      final events = await server.fetchEvents(
+        repositoryName,
+        afterSequence: afterSequence,
+        limit: effectiveLimit,
+      );
+
+      if (events.isNotEmpty) {
+        final sequences = events.map((e) => e['serverSequence']).toList();
+        print('[WS GET] ✓ Returned ${events.length} events with sequences: $sequences');
+        sendMessage({
+          'type': 'events',
+          'repository': repositoryName,
+          'events': events,
+        });
+      } else {
+        print('[WS GET] ✓ No events found (all up to date)');
+      }
+
+      sendMessage({'type': 'sync_complete', 'repository': repositoryName});
+    } catch (e) {
+      sendMessage({'type': 'error', 'message': 'Failed to fetch events: $e'});
+    }
+  }
+
+  /// Handles request for all events from all repositories.
+  Future<void> _handleRequestAllEvents() async {
+    if (!isAuthenticated) {
+      sendMessage({'type': 'error', 'message': 'Not authenticated'});
+      return;
+    }
+
+    try {
+      final allEvents = await server.fetchAllEvents();
+
+      for (final entry in allEvents.entries) {
+        if (entry.value.isNotEmpty) {
+          sendMessage({
+            'type': 'events',
+            'repository': entry.key,
+            'events': entry.value,
+          });
+        }
+      }
+
+      sendMessage({'type': 'sync_complete'});
+    } catch (e) {
+      sendMessage({
+        'type': 'error',
+        'message': 'Failed to fetch all events: $e',
+      });
+    }
+  }
+
+  /// Handles events received confirmation.
+  void _handleEventsReceived(Map<String, dynamic> message) {
+    final repository = message['repository'];
+    final count = message['count'];
+    dev.log(
+      'Client confirmed receipt of $count events from $repository',
+      name: logTag,
+    );
+  }
+
+  /// Sends a message to the client.
+  void sendMessage(Map<String, dynamic> message) {
+    try {
+      webSocket.add(jsonEncode(message));
+    } catch (e) {
+      dev.log('Error sending message to client: $e', name: logTag);
+    }
+  }
+
+  /// Closes the client connection.
+  Future<void> close() async {
+    _pingTimer?.cancel();
+    _pingTimer = null;
+    await _subscription?.cancel();
+    await webSocket.close();
+  }
+}
+
+typedef VoidCallback = void Function();

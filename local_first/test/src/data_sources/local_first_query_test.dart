@@ -1,252 +1,377 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_first/local_first.dart';
 
-class _DummyModel with LocalFirstModel {
-  _DummyModel({
-    required this.id,
-    required this.name,
-    required this.score,
-    this.note,
-  });
-
+class _DummyModel {
+  _DummyModel(this.id, {this.value});
   final String id;
-  final String name;
-  final int score;
-  final String? note;
+  final String? value;
 
-  @override
-  Map<String, dynamic> toJson() => {
-    'id': id,
-    'name': name,
-    'score': score,
-    'note': note,
-  };
+  JsonMap toJson() => {'id': id, if (value != null) 'value': value};
 }
 
-class _DummyRepo extends LocalFirstRepository<_DummyModel> {
-  _DummyRepo()
-    : super(
-        name: 'dummy',
-        getId: (m) => m.id,
-        toJson: (m) => m.toJson(),
-        fromJson: (json) => _DummyModel(
-          id: json['id'] as String,
-          name: json['name'] as String,
-          score: json['score'] as int,
-          note: json['note'] as String?,
-        ),
-        onConflict: (l, r) => l,
-      );
+LocalFirstRepository<_DummyModel> _dummyRepo() {
+  return LocalFirstRepository.create(
+    name: 'dummy',
+    getId: (m) => m.id,
+    toJson: (m) => m.toJson(),
+    fromJson: (j) =>
+        _DummyModel(j['id'] as String, value: j['value'] as String?),
+    onConflictEvent: (l, r) => r,
+  );
 }
 
-class _FakeStorage extends LocalFirstStorage {
-  _FakeStorage(this.items);
-
-  List<Map<String, dynamic>> items;
-  final Map<String, String> _meta = {};
+class _StorageStub implements LocalFirstStorage {
+  LocalFirstQuery? lastQuery;
+  List<LocalFirstEvent> result = const [];
+  final StreamController<List<LocalFirstEvent>> controller =
+      StreamController<List<LocalFirstEvent>>.broadcast();
 
   @override
   Future<void> initialize() async {}
 
   @override
-  Future<void> close() async {}
-
-  @override
-  Future<void> clearAllData() async {
-    items = [];
+  Future<void> close() async {
+    await controller.close();
   }
 
   @override
-  Future<List<Map<String, dynamic>>> getAll(String tableName) async {
-    return items;
-  }
+  Future<void> clearAllData() async {}
 
   @override
-  Future<Map<String, dynamic>?> getById(String tableName, String id) async {
-    return items.firstWhere((e) => e['id'] == id, orElse: () => {}).isEmpty
-        ? null
-        : items.firstWhere((e) => e['id'] == id);
-  }
+  Future<List<JsonMap>> getAll(String tableName) async => const [];
 
   @override
-  Future<void> insert(
+  Future<List<JsonMap>> getAllEvents(String tableName) async => const [];
+
+  @override
+  Future<JsonMap?> getById(String tableName, String id) async => null;
+
+  @override
+  Future<JsonMap?> getEventById(String tableName, String id) async => null;
+
+  @override
+  Future<void> insert(String tableName, JsonMap item, String idField) async {}
+
+  @override
+  Future<void> insertEvent(
     String tableName,
-    Map<String, dynamic> item,
+    JsonMap item,
     String idField,
   ) async {}
 
   @override
-  Future<void> update(
-    String tableName,
-    String id,
-    Map<String, dynamic> item,
-  ) async {}
+  Future<void> update(String tableName, String id, JsonMap item) async {}
+
+  @override
+  Future<void> updateEvent(String tableName, String id, JsonMap item) async {}
 
   @override
   Future<void> delete(String repositoryName, String id) async {}
 
   @override
+  Future<void> deleteEvent(String repositoryName, String id) async {}
+
+  @override
   Future<void> deleteAll(String tableName) async {}
 
   @override
-  Future<void> setMeta(String key, String value) async {
-    _meta[key] = value;
-  }
+  Future<void> deleteAllEvents(String tableName) async {}
 
   @override
-  Future<String?> getMeta(String key) async => _meta[key];
+  Future<bool> setConfigValue<T>(String key, T value) async => true;
+
+  @override
+  Future<bool> containsConfigKey(String key) async => false;
+
+  @override
+  Future<T?> getConfigValue<T>(String key) async => null;
+
+  @override
+  Future<bool> removeConfig(String key) async => true;
+
+  @override
+  Future<bool> clearConfig() async => true;
+
+  @override
+  Future<Set<String>> getConfigKeys() async => {};
+
+  @override
+  Future<bool> containsId(String tableName, String id) async => false;
+
+  @override
+  Future<void> useNamespace(String namespace) async {}
 
   @override
   Future<void> ensureSchema(
     String tableName,
-    Map<String, LocalFieldType> schema, {
+    JsonMap<LocalFieldType> schema, {
     required String idFieldName,
   }) async {}
+
+  @override
+  Future<List<LocalFirstEvent<T>>> query<T>(LocalFirstQuery<T> query) async {
+    lastQuery = query;
+    return result.cast<LocalFirstEvent<T>>();
+  }
+
+  @override
+  Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query) {
+    lastQuery = query;
+    return controller.stream.map((e) => e.cast<LocalFirstEvent<T>>());
+  }
 }
 
 void main() {
   group('LocalFirstQuery', () {
-    late _FakeStorage storage;
-    late LocalFirstQuery<_DummyModel> query;
-    final repo = _DummyRepo();
+    late _StorageStub storage;
+    late LocalFirstRepository<_DummyModel> repo;
 
     setUp(() {
-      storage = _FakeStorage([
-        {
-          'id': '1',
-          'name': 'alice',
-          'score': 10,
-          'note': null,
-          '_sync_status': SyncStatus.ok.index,
-          '_sync_operation': SyncOperation.insert.index,
-          '_sync_created_at': DateTime.utc(2024, 1, 1).millisecondsSinceEpoch,
-        },
-        {
-          'id': '2',
-          'name': 'bob',
-          'score': 20,
-          'note': 'blue',
-          '_sync_status': SyncStatus.pending.index,
-          '_sync_operation': SyncOperation.update.index,
-          '_sync_created_at': DateTime.utc(2024, 1, 2).millisecondsSinceEpoch,
-        },
-        {
-          'id': '3',
-          'name': 'charlie',
-          'score': 30,
-          'note': 'green',
-          '_sync_status': SyncStatus.ok.index,
-          '_sync_operation': SyncOperation.delete.index,
-          '_sync_created_at': DateTime.utc(2024, 1, 3).millisecondsSinceEpoch,
-        },
-        {
-          'id': '4',
-          'name': 'dave',
-          'score': 15,
-          'note': null,
-          '_sync_status': SyncStatus.ok.index,
-          '_sync_operation': SyncOperation.insert.index,
-          '_sync_created_at': DateTime.utc(2024, 1, 4).millisecondsSinceEpoch,
-        },
-      ]);
+      storage = _StorageStub();
+      repo = _dummyRepo();
+    });
 
-      query = LocalFirstQuery<_DummyModel>(
-        repositoryName: 'dummy',
-        delegate: storage,
-        fromJson: repo.fromJson,
-        repository: repo,
+    group('copyWith', () {
+      test('should keep original values when no overrides provided', () {
+        final base = LocalFirstQuery<_DummyModel>(
+          repositoryName: 'dummy',
+          delegate: storage,
+          repository: repo,
+          filters: [const QueryFilter(field: 'a')],
+          sorts: const [QuerySort(field: 'b')],
+          limit: 1,
+          offset: 2,
+          includeDeleted: true,
+        );
+
+        final copy = base.copyWith();
+
+        expect(copy.repositoryName, base.repositoryName);
+        expect(copy.filters, base.filters);
+        expect(copy.sorts, base.sorts);
+        expect(copy.limit, 1);
+        expect(copy.offset, 2);
+        expect(copy.includeDeleted, isTrue);
+      });
+
+      test('should apply overrides to filters and pagination', () {
+        final base = LocalFirstQuery<_DummyModel>(
+          repositoryName: 'dummy',
+          delegate: storage,
+          repository: repo,
+        );
+
+        final copy = base.copyWith(
+          filters: [const QueryFilter(field: 'x')],
+          sorts: const [QuerySort(field: 'y', descending: true)],
+          limit: 10,
+          offset: 5,
+          includeDeleted: true,
+        );
+
+        expect(copy.filters.single.field, 'x');
+        expect(copy.sorts.single.field, 'y');
+        expect(copy.limit, 10);
+        expect(copy.offset, 5);
+        expect(copy.includeDeleted, isTrue);
+      });
+    });
+
+    group('where', () {
+      test('should add filter to existing list', () {
+        final query = LocalFirstQuery<_DummyModel>(
+          repositoryName: 'dummy',
+          delegate: storage,
+          repository: repo,
+        );
+
+        final filtered = query.where('name', isEqualTo: 'a');
+
+        expect(filtered.filters.length, 1);
+        final filter = filtered.filters.first;
+        expect(filter.field, 'name');
+        expect(filter.isEqualTo, 'a');
+      });
+    });
+
+    group('orderBy', () {
+      test('should append sort configuration', () {
+        final query = LocalFirstQuery<_DummyModel>(
+          repositoryName: 'dummy',
+          delegate: storage,
+          repository: repo,
+        );
+
+        final sorted = query.orderBy('createdAt', descending: true);
+
+        expect(sorted.sorts.length, 1);
+        expect(sorted.sorts.first.field, 'createdAt');
+        expect(sorted.sorts.first.descending, isTrue);
+      });
+    });
+
+    group('limitTo', () {
+      test('should set pagination limit on query', () {
+        final query = LocalFirstQuery<_DummyModel>(
+          repositoryName: 'dummy',
+          delegate: storage,
+          repository: repo,
+        );
+
+        final limited = query.limitTo(5);
+
+        expect(limited.limit, 5);
+      });
+    });
+
+    group('startAfter', () {
+      test('should set pagination offset on query', () {
+        final query = LocalFirstQuery<_DummyModel>(
+          repositoryName: 'dummy',
+          delegate: storage,
+          repository: repo,
+        );
+
+        final offsetQuery = query.startAfter(3);
+
+        expect(offsetQuery.offset, 3);
+      });
+    });
+
+    group('withDeleted', () {
+      test('should toggle includeDeleted flag correctly', () {
+        final query = LocalFirstQuery<_DummyModel>(
+          repositoryName: 'dummy',
+          delegate: storage,
+          repository: repo,
+        );
+
+        final withDel = query.withDeleted(include: true);
+        final withoutDel = query.withDeleted(include: false);
+
+        expect(withDel.includeDeleted, isTrue);
+        expect(withoutDel.includeDeleted, isFalse);
+      });
+    });
+
+    group('getAll', () {
+      test('should delegate execution to storage', () async {
+        final event = LocalFirstEvent.createNewInsertEvent(
+          repository: repo,
+          needSync: true,
+          data: _DummyModel('1'),
+        );
+        storage.result = [event];
+
+        final query = LocalFirstQuery<_DummyModel>(
+          repositoryName: 'dummy',
+          delegate: storage,
+          repository: repo,
+        );
+
+        final result = await query.getAll();
+
+        expect(storage.lastQuery, same(query));
+        expect(result, contains(event));
+      });
+    });
+
+    group('watch', () {
+      test('should delegate watch to storage stream', () async {
+        final query = LocalFirstQuery<_DummyModel>(
+          repositoryName: 'dummy',
+          delegate: storage,
+          repository: repo,
+        );
+
+        final stream = query.watch();
+        final events = <List<LocalFirstEvent<_DummyModel>>>[];
+        final sub = stream.listen(events.add);
+
+        final event = LocalFirstEvent.createNewInsertEvent(
+          repository: repo,
+          needSync: true,
+          data: _DummyModel('2'),
+        );
+        storage.controller.add([event]);
+        await Future<void>.delayed(Duration.zero);
+
+        expect(storage.lastQuery, same(query));
+        expect(events.single, contains(event));
+        await sub.cancel();
+      });
+    });
+
+    group('QueryFilter.matches', () {
+      test(
+        'should match when value equals isEqualTo and not in isNotEqualTo',
+        () {
+          const filter = QueryFilter(field: 'a', isEqualTo: 1);
+          expect(filter.matches({'a': 1}), isTrue);
+          expect(filter.matches({'a': 2}), isFalse);
+        },
       );
-    });
 
-    test('maps results and attaches sync metadata', () async {
-      final results = await query.getAll();
-      expect(results.length, 3); // delete filtered out
+      test('should respect null checks when isNull set', () {
+        const filterNull = QueryFilter(field: 'a', isNull: true);
+        const filterNotNull = QueryFilter(field: 'a', isNull: false);
 
-      final alice = results.firstWhere((m) => m.id == '1');
-      expect(alice.name, 'alice');
-      expect(alice.score, 10);
-      expect(alice.syncStatus, SyncStatus.ok);
-      expect(alice.syncOperation, SyncOperation.insert);
-      expect(alice.repositoryName, 'dummy');
-      expect(alice.syncCreatedAt, DateTime.utc(2024, 1, 1));
-    });
+        expect(filterNull.matches({'a': null}), isTrue);
+        expect(filterNull.matches({'a': 1}), isFalse);
+        expect(filterNotNull.matches({'a': 1}), isTrue);
+        expect(filterNotNull.matches({'a': null}), isFalse);
+      });
 
-    test('applies filtering, ordering, and pagination', () async {
-      final results =
-          await query //
-              .where('name', isNotEqualTo: 'alice')
-              .orderBy('name', descending: true)
-              .limitTo(1)
-              .getAll();
+      test('should evaluate comparison operators for comparable values', () {
+        const filter = QueryFilter(
+          field: 'a',
+          isLessThan: 10,
+          isGreaterThan: 1,
+        );
+        expect(filter.matches({'a': 5}), isTrue);
+        expect(filter.matches({'a': 0}), isFalse);
+        expect(filter.matches({'a': 11}), isFalse);
+      });
 
-      expect(results.length, 1);
-      expect(results.single.name, 'dave');
-    });
+      test('should evaluate inclusive comparison operators', () {
+        const filter = QueryFilter(
+          field: 'a',
+          isLessThanOrEqualTo: 5,
+          isGreaterThanOrEqualTo: 3,
+        );
+        expect(filter.matches({'a': 4}), isTrue);
+        expect(filter.matches({'a': 5}), isTrue);
+        expect(filter.matches({'a': 2}), isFalse);
+        expect(filter.matches({'a': 6}), isFalse);
+      });
 
-    test('supports where equal and not equal', () async {
-      final eq = await query.where('name', isEqualTo: 'alice').getAll();
-      expect(eq.map((e) => e.name), ['alice']);
+      test('should return false when value is not comparable', () {
+        const filter = QueryFilter(field: 'a', isGreaterThanOrEqualTo: 1);
+        expect(filter.matches({'a': const Object()}), isFalse);
+      });
 
-      final neq = await query.where('name', isNotEqualTo: 'alice').getAll();
-      expect(neq.every((e) => e.name != 'alice'), isTrue);
-    });
+      test('should return false when value is not comparable for <=', () {
+        const filter = QueryFilter(field: 'a', isLessThanOrEqualTo: 10);
+        expect(filter.matches({'a': const Object()}), isFalse);
+      });
 
-    test('supports greater/less comparisons', () async {
-      final gt = await query.where('score', isGreaterThan: 10).getAll();
-      expect(gt.map((e) => e.id), containsAll(['2', '4']));
+      test('should return false when value is not comparable for >=', () {
+        const filter = QueryFilter(field: 'a', isGreaterThanOrEqualTo: 2);
+        expect(filter.matches({'a': const Object()}), isFalse);
+      });
 
-      final gte = await query
-          .where('score', isGreaterThanOrEqualTo: 20)
-          .getAll();
-      expect(gte.map((e) => e.id), contains('2'));
-
-      final lt = await query.where('score', isLessThan: 20).getAll();
-      expect(lt.map((e) => e.id), containsAll(['1', '4']));
-
-      final lte = await query.where('score', isLessThanOrEqualTo: 10).getAll();
-      expect(lte.map((e) => e.id), ['1']);
-    });
-
-    test('supports whereIn / whereNotIn', () async {
-      final inList = await query
-          .where('name', whereIn: ['alice', 'dave'])
-          .getAll();
-      expect(inList.map((e) => e.id), containsAll(['1', '4']));
-
-      final notInList = await query
-          .where('name', whereNotIn: ['alice', 'bob'])
-          .getAll();
-      expect(
-        notInList.map((e) => e.name),
-        everyElement(isNot(anyOf('alice', 'bob'))),
-      );
-    });
-
-    test('supports isNull filter', () async {
-      final nullNotes = await query.where('note', isNull: true).getAll();
-      expect(nullNotes.map((e) => e.id), containsAll(['1', '4']));
-
-      final notNullNotes = await query.where('note', isNull: false).getAll();
-      expect(notNullNotes.map((e) => e.id), ['2']);
-    });
-
-    test('supports offset pagination', () async {
-      final page = await query
-          .orderBy('score')
-          .startAfter(1)
-          .limitTo(2)
-          .getAll();
-      expect(page.length, 2);
-      expect(page.first.id, '4'); // scores: 10,15,20 (charlie is deleted)
-    });
-
-    test('watch emits initial mapped results', () async {
-      final stream = query.watch();
-      final first = await stream.first;
-
-      expect(first.length, 3);
-      expect(first.any((m) => m.id == '1'), isTrue);
-      expect(first.any((m) => m.id == '2'), isTrue);
+      test('should evaluate whereIn and whereNotIn lists', () {
+        const filter = QueryFilter(
+          field: 'a',
+          whereIn: [1, 2],
+          whereNotIn: [3],
+        );
+        expect(filter.matches({'a': 1}), isTrue);
+        expect(filter.matches({'a': 3}), isFalse);
+        expect(filter.matches({'a': 4}), isFalse);
+      });
     });
   });
 }

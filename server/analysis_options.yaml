@@ -1,0 +1,4 @@
+linter:
+  rules:
+    # Disable avoid_print for server code - prints are used for logging
+    avoid_print: false

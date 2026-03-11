@@ -1,5 +1,5 @@
-name: example
-description: "A new Flutter project."
+name: local_first_counter_example
+description: "LocalFirst counter example."
 publish_to: "none" #
 version: 1.0.0+1
 
@@ -12,17 +12,10 @@ dependencies:
   flutter:
     sdk: flutter
   intl: ^0.20.2
-
   local_first:
-    path: ../
   local_first_hive_storage:
-    path: ../../local_first_hive_storage
-  local_first_sqlite_storage:
-    path: ../../local_first_sqlite_storage
-
-  redis: ^4.0.0
-  mongo_dart: ^0.10.5
-  awesome_task_manager: ^2.0.0
+  local_first_websocket:
+  http: ^1.2.0
 
 dev_dependencies:
   flutter_test:
