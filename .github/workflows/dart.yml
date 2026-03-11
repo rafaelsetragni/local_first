@@ -30,12 +30,12 @@ jobs:
         run: cd server && dart pub get && dart test
 
       - name: Run coverage (melos)
-        run: melos coverage --no-select
+        run: melos run coverage
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          file: coverage/lcov.info
+          files: coverage/lcov.info
           flags: unittests
           fail_ci_if_error: false
