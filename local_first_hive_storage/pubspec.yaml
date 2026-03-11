@@ -18,7 +18,7 @@ topics:
 dependencies:
   flutter:
     sdk: flutter
-  local_first: ^0.7.0
+  local_first: ^0.8.0
   hive_ce: ^2.16.0
   hive_ce_flutter: ^2.3.3
   crypto: ^3.0.6

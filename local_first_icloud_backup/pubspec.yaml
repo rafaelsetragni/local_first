@@ -19,7 +19,7 @@ topics:
 dependencies:
   flutter:
     sdk: flutter
-  local_first: ^0.7.0
+  local_first: ^0.8.0
   icloud_storage: ^2.1.0
   path: ^1.9.0
 

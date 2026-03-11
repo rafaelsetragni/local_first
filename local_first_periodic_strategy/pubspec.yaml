@@ -16,7 +16,7 @@ topics:
   - offline-first
 
 dependencies:
-  local_first: ^0.7.0
+  local_first: ^0.8.0
 
 dev_dependencies:
   flutter_test:

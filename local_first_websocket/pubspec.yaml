@@ -19,7 +19,7 @@ topics:
 dependencies:
   flutter:
     sdk: flutter
-  local_first: ^0.7.0
+  local_first: ^0.8.0
   web_socket_channel: ^3.0.1
 
 dev_dependencies:
