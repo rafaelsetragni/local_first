@@ -53,7 +53,7 @@ melos:
       run: |
         mkdir -p coverage
         rm -f coverage/*.info
-        melos exec -c 1 --no-select -- \
+        melos exec -c 1 -- \
           "flutter test --coverage"
         LCOV_ARGS=""
         for f in */coverage/lcov.info; do
