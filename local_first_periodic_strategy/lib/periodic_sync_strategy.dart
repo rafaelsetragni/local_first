@@ -100,6 +100,7 @@ class PeriodicSyncStrategy extends DataSyncStrategy {
   final Duration syncInterval;
 
   /// List of repository names to synchronize
+  @override
   final List<String> repositoryNames;
 
   /// Callback to fetch remote events
