@@ -232,7 +232,7 @@ class BackupService {
         LocalFirstEvent.kEventId: eventId,
         LocalFirstEvent.kOperation: opIndex,
         LocalFirstEvent.kSyncCreatedAt: createdAtStr,
-        if (dataId != null) LocalFirstEvent.kDataId: dataId,
+        LocalFirstEvent.kDataId: ?dataId,
       };
 
       // For insert/update, attach state data

@@ -100,6 +100,7 @@ class PeriodicSyncStrategy extends DataSyncStrategy {
   final Duration syncInterval;
 
   /// List of repository names to synchronize
+  @override
   final List<String> repositoryNames;
 
   /// Callback to fetch remote events
@@ -266,12 +267,17 @@ class PeriodicSyncStrategy extends DataSyncStrategy {
       reportConnectionState(true);
 
       // Phase 1: Push pending local events to remote
-      await _pushPendingEvents();
+      final pushed = await _pushPendingEvents();
 
       // Phase 2: Pull remote events and apply them locally
-      await _pullRemoteEvents();
+      final pulled = await _pullRemoteEvents();
 
-      LocalFirstLogger.log('Sync cycle completed', name: logTag);
+      if (pushed == 0 && pulled == 0) {
+        LocalFirstLogger.log(
+          'Sync cycle completed for [${repositoryNames.join(", ")}] (no changes)',
+          name: logTag,
+        );
+      }
     } catch (e, s) {
       LocalFirstLogger.log('Sync error: $e', name: logTag, error: e, stackTrace: s);
       reportConnectionState(false);
@@ -280,11 +286,12 @@ class PeriodicSyncStrategy extends DataSyncStrategy {
     }
   }
 
-  /// Push all pending local events to the remote server
-  Future<void> _pushPendingEvents() async {
+  /// Push all pending local events to the remote server.
+  /// Returns the total number of events pushed.
+  Future<int> _pushPendingEvents() async {
+    int total = 0;
     for (final repositoryName in repositoryNames) {
       try {
-        // Get pending events from local storage
         final pendingEvents = await getPendingEvents(
           repositoryName: repositoryName,
         );
@@ -296,12 +303,11 @@ class PeriodicSyncStrategy extends DataSyncStrategy {
           name: logTag,
         );
 
-        // Push events using business logic callback
         final success = await onPushEvents(repositoryName, pendingEvents);
 
         if (success) {
-          // Mark events as synced
           await markEventsAsSynced(pendingEvents);
+          total += pendingEvents.length;
           LocalFirstLogger.log(
             'Successfully pushed ${pendingEvents.length} events for $repositoryName',
             name: logTag,
@@ -310,7 +316,6 @@ class PeriodicSyncStrategy extends DataSyncStrategy {
           LocalFirstLogger.log('Failed to push events for $repositoryName', name: logTag);
         }
       } catch (e, s) {
-        // Log error but continue with other repositories
         LocalFirstLogger.log(
           'Error pushing events for $repositoryName: $e',
           name: logTag,
@@ -319,14 +324,15 @@ class PeriodicSyncStrategy extends DataSyncStrategy {
         );
       }
     }
+    return total;
   }
 
-  /// Pull remote events from the server and apply them locally
-  Future<void> _pullRemoteEvents() async {
+  /// Pull remote events from the server and apply them locally.
+  /// Returns the total number of events applied.
+  Future<int> _pullRemoteEvents() async {
+    int total = 0;
     for (final repositoryName in repositoryNames) {
       try {
-        // Fetch remote events using business logic callback
-        // The callback should use onBuildSyncFilter to get filter parameters
         final remoteEvents = await onFetchEvents(repositoryName);
 
         if (remoteEvents.isEmpty) continue;
@@ -336,13 +342,11 @@ class PeriodicSyncStrategy extends DataSyncStrategy {
           name: logTag,
         );
 
-        // Apply remote events to local storage using base class method
         await pullChangesToLocal(
           repositoryName: repositoryName,
           remoteChanges: remoteEvents,
         );
 
-        // Save sync state via callback
         try {
           await onSaveSyncState(repositoryName, remoteEvents);
         } catch (e, s) {
@@ -354,12 +358,12 @@ class PeriodicSyncStrategy extends DataSyncStrategy {
           );
         }
 
+        total += remoteEvents.length;
         LocalFirstLogger.log(
           'Successfully applied ${remoteEvents.length} events for $repositoryName',
           name: logTag,
         );
       } catch (e, s) {
-        // Log error but continue with other repositories
         LocalFirstLogger.log(
           'Error pulling events for $repositoryName: $e',
           name: logTag,
@@ -368,6 +372,7 @@ class PeriodicSyncStrategy extends DataSyncStrategy {
         );
       }
     }
+    return total;
   }
 
   /// Queues local event for push during the next sync cycle.
