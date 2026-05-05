@@ -141,15 +141,15 @@ Add the core package and the adapters you need to your `pubspec.yaml`:
 ```yaml
 dependencies:
   # Core package (required)
-  local_first: ^0.7.0
+  local_first: ^0.8.1
 
   # Storage adapters (choose one or more)
-  local_first_hive_storage: ^0.2.1       # schema-less key/value storage
+  local_first_hive_storage: ^0.2.2       # schema-less key/value storage
   local_first_sqlite_storage: ^0.4.0     # structured tables with indexes
   local_first_shared_preferences: ^0.1.1 # config-only key/value storage
 
   # Sync strategies (choose one or more)
-  local_first_periodic_strategy: ^0.2.0  # periodic REST sync
+  local_first_periodic_strategy: ^0.2.1  # periodic REST sync
   local_first_websocket: ^0.3.0          # real-time WebSocket sync
 
   # Backup providers (choose one or more)

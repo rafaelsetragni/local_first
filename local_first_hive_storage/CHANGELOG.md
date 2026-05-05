@@ -1,3 +1,7 @@
+## 0.2.2
+
+- Removed unused import in `HiveLocalStorage` to silence the analyzer.
+
 ## 0.2.1
 
 - Updated documentation: standardized Contributing and Support the Project sections.

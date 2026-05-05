@@ -1,3 +1,7 @@
+## 0.8.1
+
+- Fixed analyzer warning in `BackupService` (unused local variable).
+
 ## 0.8.0
 
 - Added backup & restore system with `BackupService`, `BackupData`, `BackupStorageProvider` interface, and AES-256 + gzip encryption pipeline.
