@@ -213,6 +213,9 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   ///
   /// Throws [StateError] if called before [initialize].
   @override
+  Future<void> runInTransaction(Future<void> Function() action) => action();
+
+  @override
   Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId}) async {
     final eventBox = await _getBox(tableName, isEvent: true);
     final dataBox = await _getBox(tableName);

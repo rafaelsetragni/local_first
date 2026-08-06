@@ -23,6 +23,9 @@ LocalFirstRepository<_DummyModel> _dummyRepo() {
 }
 
 class _StorageStub implements LocalFirstStorage {
+  @override
+  Future<void> runInTransaction(Future<void> Function() action) => action();
+
   LocalFirstQuery? lastQuery;
   List<LocalFirstEvent> result = const [];
   final StreamController<List<LocalFirstEvent>> controller =

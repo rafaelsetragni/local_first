@@ -2,6 +2,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:local_first/local_first.dart';
 
 class _StubStorage implements LocalFirstStorage {
+  @override
+  Future<void> runInTransaction(Future<void> Function() action) => action();
+
   final List<JsonMap> events = [];
   final List<JsonMap> updatedEvents = [];
   bool containsIdReturn = false;

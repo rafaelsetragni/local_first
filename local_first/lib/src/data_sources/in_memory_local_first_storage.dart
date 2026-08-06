@@ -177,6 +177,9 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
   ///
   /// Throws [StateError] if called before [initialize].
   @override
+  Future<void> runInTransaction(Future<void> Function() action) => action();
+
+  @override
   Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId}) async {
     _ensureInitialized();
     final events = _events[tableName];

@@ -4,6 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:local_first/local_first.dart';
 
 class _SpyStorage implements LocalFirstStorage {
+  @override
+  Future<void> runInTransaction(Future<void> Function() action) => action();
+
   int initialized = 0;
   int cleared = 0;
   int closed = 0;

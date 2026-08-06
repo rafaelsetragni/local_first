@@ -190,16 +190,21 @@ class LocalFirstClient {
     required List<JsonMap> changes,
   }) async {
     final repository = getRepositoryByName(repositoryName);
-    for (final rawEvent in changes) {
-      try {
-        final event = repository.createEventFromRemote(rawEvent);
-        await repository.mergeRemoteEvent(remoteEvent: event);
-      } catch (e) {
-        throw FormatException(
-          'Malformed remote event for $repositoryName: $e | payload=$rawEvent',
-        );
+    // Apply the whole batch in one storage transaction: writes commit once and
+    // watcher notifications fire once at the end, instead of per event. This is
+    // the dominant win for a large cold sync on slower devices.
+    await _localStorage.runInTransaction(() async {
+      for (final rawEvent in changes) {
+        try {
+          final event = repository.createEventFromRemote(rawEvent);
+          await repository.mergeRemoteEvent(remoteEvent: event);
+        } catch (e) {
+          throw FormatException(
+            'Malformed remote event for $repositoryName: $e | payload=$rawEvent',
+          );
+        }
       }
-    }
+    });
   }
 
   /// Retrieves all pending events for the given repository name.

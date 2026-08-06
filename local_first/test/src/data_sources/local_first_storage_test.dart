@@ -16,6 +16,9 @@ class _TestModel {
 }
 
 class _FakeStorage extends LocalFirstStorage {
+  @override
+  Future<void> runInTransaction(Future<void> Function() action) => action();
+
   bool initialized = false;
   bool closed = false;
   bool cleared = false;

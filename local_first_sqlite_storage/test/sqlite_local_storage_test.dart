@@ -256,6 +256,27 @@ void main() {
       expect(first.whereType<LocalFirstStateEvent<DummyModel>>(), isNotEmpty);
     });
 
+    test('runInTransaction commits all writes atomically', () async {
+      await storage.runInTransaction(() async {
+        await insertRow({'id': 'tx1', 'username': 'a', 'age': 1});
+        await insertRow({'id': 'tx2', 'username': 'b', 'age': 2});
+      });
+      expect(await storage.getById('users', 'tx1'), isNotNull);
+      expect(await storage.getById('users', 'tx2'), isNotNull);
+    });
+
+    test('runInTransaction rolls back every write when the action throws',
+        () async {
+      await expectLater(
+        storage.runInTransaction(() async {
+          await insertRow({'id': 'rb1', 'username': 'x', 'age': 1});
+          throw StateError('boom');
+        }),
+        throwsA(isA<StateError>()),
+      );
+      expect(await storage.getById('users', 'rb1'), isNull);
+    });
+
     test('notifyWatchers removes closed observers and emits results', () async {
       final mockable = MockableSqliteLocalFirstStorage(
         dbFactory: databaseFactoryFfi,

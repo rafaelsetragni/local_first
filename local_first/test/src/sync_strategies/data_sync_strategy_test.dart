@@ -46,6 +46,9 @@ class _SpyLocalFirstClient extends LocalFirstClient {
 
 class _NoopStorage implements LocalFirstStorage {
   @override
+  Future<void> runInTransaction(Future<void> Function() action) => action();
+
+  @override
   Future<void> clearAllData() async {}
 
   @override
@@ -135,6 +138,9 @@ class _NoopStorage implements LocalFirstStorage {
 }
 
 class _RecordingStorage implements LocalFirstStorage {
+  @override
+  Future<void> runInTransaction(Future<void> Function() action) => action();
+
   final List<JsonMap> events = [];
   final List<JsonMap> updatedEvents = [];
   int updateCount = 0;
