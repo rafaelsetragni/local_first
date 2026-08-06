@@ -55,7 +55,7 @@ class _FakeStorage extends LocalFirstStorage {
   Future<List<JsonMap>> getAll(String tableName) async => events;
 
   @override
-  Future<List<JsonMap>> getAllEvents(String tableName) async => events;
+  Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId}) async => events;
 
   @override
   Future<JsonMap?> getById(String tableName, String id) async => events

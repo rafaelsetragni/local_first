@@ -43,7 +43,12 @@ abstract class LocalFirstStorage implements ConfigKeyValueStorage {
   Future<List<JsonMap>> getAll(String tableName);
 
   /// Gets all items from the event log table/collection.
-  Future<List<JsonMap>> getAllEvents(String tableName);
+  ///
+  /// When [dataId] is provided, only events for that record are returned —
+  /// implementations should push this filter down to the storage layer (e.g.
+  /// a SQL `WHERE`) so callers that only need one record's history don't read
+  /// the entire event log (which makes a large sync O(n²)).
+  Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId});
 
   /// Gets a single item by its ID.
   ///

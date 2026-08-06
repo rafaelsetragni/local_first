@@ -77,7 +77,7 @@ class _NoopStorage implements LocalFirstStorage {
   Future<List<JsonMap>> getAll(String tableName) async => [];
 
   @override
-  Future<List<JsonMap>> getAllEvents(String tableName) async => [];
+  Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId}) async => [];
 
   @override
   Future<JsonMap?> getById(String tableName, String id) async => null;
@@ -173,7 +173,7 @@ class _RecordingStorage implements LocalFirstStorage {
   Future<List<JsonMap>> getAll(String tableName) async => [];
 
   @override
-  Future<List<JsonMap>> getAllEvents(String tableName) async =>
+  Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId}) async =>
       List.unmodifiable(events);
 
   @override

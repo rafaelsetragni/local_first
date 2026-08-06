@@ -357,8 +357,8 @@ abstract class LocalFirstRepository<T> {
     return allEvents.where((event) => event.needSync).toList();
   }
 
-  Future<List<LocalFirstEvent<T>>> _getAllEvents() async {
-    final maps = await _client.localStorage.getAllEvents(name);
+  Future<List<LocalFirstEvent<T>>> _getAllEvents({String? dataId}) async {
+    final maps = await _client.localStorage.getAllEvents(name, dataId: dataId);
     final result = <LocalFirstEvent<T>>[];
     for (final json in maps) {
       try {
@@ -375,7 +375,7 @@ abstract class LocalFirstRepository<T> {
     required LocalFirstEvent<T> reference,
   }) async {
     final referenceId = reference.dataId;
-    final events = await _getAllEvents();
+    final events = await _getAllEvents(dataId: referenceId);
     final pendingForId = events.where(
       (event) => event.needSync && event.dataId == referenceId,
     );
@@ -387,13 +387,18 @@ abstract class LocalFirstRepository<T> {
   }
 
   Future<void> _markAllPreviousEventAsOk(LocalFirstEvent<T> reference) async {
-    final events = await _getAllEvents();
+    // Read only this record's events (SQL-filtered) instead of the whole log.
+    final events = await _getAllEvents(dataId: reference.dataId);
     for (final event in events) {
       final sameData = event.dataId == reference.dataId;
       final isCurrentOrNewer = !event.syncCreatedAt.isBefore(
         reference.syncCreatedAt,
       );
       if (!sameData || isCurrentOrNewer) continue;
+      // Skip events already marked ok: re-writing them on every subsequent
+      // event of the same record is redundant and turns the whole apply into
+      // O(n²) DB writes (the dominant cost of a large cold sync).
+      if (event.syncStatus == SyncStatus.ok) continue;
 
       final updated = event.updateEventState(syncStatus: SyncStatus.ok);
       await _updateEventRecord(updated);

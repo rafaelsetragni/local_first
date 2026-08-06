@@ -51,7 +51,7 @@ class _SpyStorage implements LocalFirstStorage {
   Future<List<Map<String, dynamic>>> getAll(String tableName) async => [];
 
   @override
-  Future<List<Map<String, dynamic>>> getAllEvents(String tableName) async => [];
+  Future<List<Map<String, dynamic>>> getAllEvents(String tableName, {String? dataId}) async => [];
 
   @override
   Future<Map<String, dynamic>?> getById(String tableName, String id) async =>

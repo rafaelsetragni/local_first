@@ -213,7 +213,7 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   ///
   /// Throws [StateError] if called before [initialize].
   @override
-  Future<List<JsonMap>> getAllEvents(String tableName) async {
+  Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId}) async {
     final eventBox = await _getBox(tableName, isEvent: true);
     final dataBox = await _getBox(tableName);
     final keys = eventBox.keys.cast<String>();
@@ -221,8 +221,10 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     for (final key in keys) {
       final meta = await _readBoxValue(eventBox, key);
       if (meta == null) continue;
-      final dataId = meta[LocalFirstEvent.kDataId] as String?;
-      final data = dataId != null ? await _readBoxValue(dataBox, dataId) : null;
+      final eventDataId = meta[LocalFirstEvent.kDataId] as String?;
+      if (dataId != null && eventDataId != dataId) continue;
+      final data =
+          eventDataId != null ? await _readBoxValue(dataBox, eventDataId) : null;
       items.add(_mergeEventWithData(meta, data, lastEventId: meta[LocalFirstEvent.kEventId]));
     }
     return items;

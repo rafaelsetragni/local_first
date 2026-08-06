@@ -264,18 +264,22 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   ///
   /// Throws [StateError] if called before [initialize].
   @override
-  Future<List<JsonMap>> getAllEvents(String tableName) async {
+  Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId}) async {
     final db = await _database;
     await _ensureTables(tableName);
     final eventTable = _tableName(tableName, isEvent: true);
     final dataTable = _tableName(tableName);
+
+    final where = dataId != null ? 'WHERE e.${LocalFirstEvent.kDataId} = ?' : '';
 
     final rows = await db.rawQuery(
       'SELECT d.data, d._lasteventId, '
       'e.${LocalFirstEvent.kEventId}, e.${LocalFirstEvent.kDataId}, e.${LocalFirstEvent.kSyncStatus}, '
       'e.${LocalFirstEvent.kOperation}, e.${LocalFirstEvent.kSyncCreatedAt} '
       'FROM $eventTable e '
-      'LEFT JOIN $dataTable d ON e.${LocalFirstEvent.kDataId} = d.id',
+      'LEFT JOIN $dataTable d ON e.${LocalFirstEvent.kDataId} = d.id '
+      '$where',
+      dataId != null ? [dataId] : null,
     );
 
     return rows.map(_decodeJoinedRow).toList();
