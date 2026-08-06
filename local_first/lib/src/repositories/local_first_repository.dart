@@ -250,14 +250,24 @@ abstract class LocalFirstRepository<T> {
   }) async {
     final typedRemote = remoteEvent.updateEventState(syncStatus: SyncStatus.ok);
 
+    // Read this record's event history ONCE and reuse it for both the
+    // pending-conflict check and the mark-previous-as-ok pass. These used to
+    // issue a separate query each — two DB round-trips per event, the dominant
+    // remaining cost of a large cold sync.
+    final knownEvents = await _getAllEvents(dataId: typedRemote.dataId);
+
     final LocalFirstEvent<T>? localPendingEvent =
-        await getLastRespectivePendingEvent(reference: typedRemote);
+        await getLastRespectivePendingEvent(
+      reference: typedRemote,
+      knownEvents: knownEvents,
+    );
 
     if (localPendingEvent != null &&
         localPendingEvent.eventId == remoteEvent.eventId) {
       return _confirmEvent(
         remoteEvent: typedRemote,
         localPendingEvent: localPendingEvent,
+        knownEvents: knownEvents,
       );
     }
 
@@ -265,14 +275,17 @@ abstract class LocalFirstRepository<T> {
       SyncOperation.insert => _mergeInsertEvent(
         remoteEvent: typedRemote as LocalFirstStateEvent<T>,
         localPendingEvent: localPendingEvent,
+        knownEvents: knownEvents,
       ),
       SyncOperation.update => _mergeUpdateEvent(
         remoteEvent: typedRemote as LocalFirstStateEvent<T>,
         localPendingEvent: localPendingEvent,
+        knownEvents: knownEvents,
       ),
       SyncOperation.delete => _mergeDeleteEvent(
         remoteEvent: typedRemote,
         localPendingEvent: localPendingEvent,
+        knownEvents: knownEvents,
       ),
     };
   }
@@ -284,21 +297,23 @@ abstract class LocalFirstRepository<T> {
   Future<void> _confirmEvent({
     required LocalFirstEvent<T> remoteEvent,
     required LocalFirstEvent<T> localPendingEvent,
+    List<LocalFirstEvent<T>>? knownEvents,
   }) async {
     final confirmed = remoteEvent.updateEventState(
       syncOperation: localPendingEvent.syncOperation,
     );
     await _persistEvent(confirmed);
-    await _markAllPreviousEventAsOk(confirmed);
+    await _markAllPreviousEventAsOk(confirmed, knownEvents: knownEvents);
   }
 
   Future<void> _mergeInsertEvent({
     required LocalFirstStateEvent<T> remoteEvent,
     required LocalFirstEvent<T>? localPendingEvent,
+    List<LocalFirstEvent<T>>? knownEvents,
   }) async {
     if (localPendingEvent == null) {
       await _insertDataAndEvent(remoteEvent);
-      await _markAllPreviousEventAsOk(remoteEvent);
+      await _markAllPreviousEventAsOk(remoteEvent, knownEvents: knownEvents);
       return;
     }
 
@@ -307,12 +322,13 @@ abstract class LocalFirstRepository<T> {
       remoteEvent,
     );
     await _updateDataAndEvent(resolved);
-    await _markAllPreviousEventAsOk(resolved);
+    await _markAllPreviousEventAsOk(resolved, knownEvents: knownEvents);
   }
 
   Future<void> _mergeUpdateEvent({
     required LocalFirstStateEvent<T> remoteEvent,
     required LocalFirstEvent<T>? localPendingEvent,
+    List<LocalFirstEvent<T>>? knownEvents,
   }) async {
     if (localPendingEvent == null) {
       final insertLike = remoteEvent.updateEventState(
@@ -320,7 +336,7 @@ abstract class LocalFirstRepository<T> {
         syncOperation: SyncOperation.insert,
       );
       await _insertDataAndEvent(insertLike);
-      await _markAllPreviousEventAsOk(insertLike);
+      await _markAllPreviousEventAsOk(insertLike, knownEvents: knownEvents);
       return;
     }
 
@@ -330,7 +346,7 @@ abstract class LocalFirstRepository<T> {
         syncOperation: localPendingEvent.syncOperation,
       );
       await _updateDataAndEvent(confirmed);
-      await _markAllPreviousEventAsOk(confirmed);
+      await _markAllPreviousEventAsOk(confirmed, knownEvents: knownEvents);
       return;
     }
 
@@ -339,16 +355,20 @@ abstract class LocalFirstRepository<T> {
       remoteEvent,
     );
     await _updateDataAndEvent(resolved);
-    await _markAllPreviousEventAsOk(resolved);
+    await _markAllPreviousEventAsOk(resolved, knownEvents: knownEvents);
   }
 
   Future<void> _mergeDeleteEvent({
     required LocalFirstEvent<T> remoteEvent,
     required LocalFirstEvent<T>? localPendingEvent,
+    List<LocalFirstEvent<T>>? knownEvents,
   }) async {
     final deleted = remoteEvent.updateEventState(syncStatus: SyncStatus.ok);
     await _deleteDataAndLogEvent(deleted);
-    await _markAllPreviousEventAsOk(localPendingEvent ?? deleted);
+    await _markAllPreviousEventAsOk(
+      localPendingEvent ?? deleted,
+      knownEvents: knownEvents,
+    );
   }
 
   /// Returns all state events that still require sync.
@@ -373,9 +393,10 @@ abstract class LocalFirstRepository<T> {
 
   Future<LocalFirstEvent<T>?> getLastRespectivePendingEvent({
     required LocalFirstEvent<T> reference,
+    List<LocalFirstEvent<T>>? knownEvents,
   }) async {
     final referenceId = reference.dataId;
-    final events = await _getAllEvents(dataId: referenceId);
+    final events = knownEvents ?? await _getAllEvents(dataId: referenceId);
     final pendingForId = events.where(
       (event) => event.needSync && event.dataId == referenceId,
     );
@@ -386,9 +407,15 @@ abstract class LocalFirstRepository<T> {
     );
   }
 
-  Future<void> _markAllPreviousEventAsOk(LocalFirstEvent<T> reference) async {
-    // Read only this record's events (SQL-filtered) instead of the whole log.
-    final events = await _getAllEvents(dataId: reference.dataId);
+  Future<void> _markAllPreviousEventAsOk(
+    LocalFirstEvent<T> reference, {
+    List<LocalFirstEvent<T>>? knownEvents,
+  }) async {
+    // Reuse a pre-fetched history (from the caller's merge) when available;
+    // otherwise read only this record's events (SQL-filtered). [knownEvents] is
+    // taken BEFORE the current event is persisted, which is exactly right — this
+    // method only touches events OLDER than [reference].
+    final events = knownEvents ?? await _getAllEvents(dataId: reference.dataId);
     for (final event in events) {
       final sameData = event.dataId == reference.dataId;
       final isCurrentOrNewer = !event.syncCreatedAt.isBefore(
