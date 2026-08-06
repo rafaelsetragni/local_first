@@ -1,6 +1,6 @@
 name: local_first_hive_storage
 description: "Hive adapter for local_first: schema-less, offline-first storage with Hive boxes and metadata support."
-version: 0.2.2
+version: 0.2.3
 repository: https://github.com/rafaelsetragni/local_first
 issue_tracker: https://github.com/rafaelsetragni/local_first/issues
 
@@ -18,7 +18,7 @@ topics:
 dependencies:
   flutter:
     sdk: flutter
-  local_first: ^0.8.0
+  local_first: ^0.8.2
   hive_ce: ^2.16.0
   hive_ce_flutter: ^2.3.3
   crypto: ^3.0.6
