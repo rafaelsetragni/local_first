@@ -1,3 +1,12 @@
+## 0.2.3
+
+- `getAllEvents` now accepts an optional `dataId` filter, matching the updated
+  `LocalFirstStorage` interface (used by the sync path to read a single record's
+  history instead of the whole event log).
+- Added `runInTransaction`, which runs the action directly — Hive has no
+  multi-box transaction, so there is no commit-batching win here (the SQLite
+  backend is the one that benefits); the method exists to satisfy the interface.
+
 ## 0.2.2
 
 - Removed unused import in `HiveLocalStorage` to silence the analyzer.

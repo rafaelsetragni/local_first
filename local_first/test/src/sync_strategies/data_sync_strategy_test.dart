@@ -46,6 +46,9 @@ class _SpyLocalFirstClient extends LocalFirstClient {
 
 class _NoopStorage implements LocalFirstStorage {
   @override
+  Future<void> runInTransaction(Future<void> Function() action) => action();
+
+  @override
   Future<void> clearAllData() async {}
 
   @override
@@ -77,7 +80,7 @@ class _NoopStorage implements LocalFirstStorage {
   Future<List<JsonMap>> getAll(String tableName) async => [];
 
   @override
-  Future<List<JsonMap>> getAllEvents(String tableName) async => [];
+  Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId}) async => [];
 
   @override
   Future<JsonMap?> getById(String tableName, String id) async => null;
@@ -135,6 +138,9 @@ class _NoopStorage implements LocalFirstStorage {
 }
 
 class _RecordingStorage implements LocalFirstStorage {
+  @override
+  Future<void> runInTransaction(Future<void> Function() action) => action();
+
   final List<JsonMap> events = [];
   final List<JsonMap> updatedEvents = [];
   int updateCount = 0;
@@ -173,7 +179,7 @@ class _RecordingStorage implements LocalFirstStorage {
   Future<List<JsonMap>> getAll(String tableName) async => [];
 
   @override
-  Future<List<JsonMap>> getAllEvents(String tableName) async =>
+  Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId}) async =>
       List.unmodifiable(events);
 
   @override

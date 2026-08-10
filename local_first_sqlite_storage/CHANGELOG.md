@@ -1,3 +1,17 @@
+## 0.4.1
+
+- Implemented `LocalFirstStorage.runInTransaction`: applies a batch inside a
+  single `db.transaction`, routing all CRUD/queries through the transaction
+  executor so the whole batch **commits once** (a single fsync) and **rolls back
+  atomically** on error. Watcher notifications are **deferred and flushed once**
+  after commit instead of re-emitting on every write.
+- `getAllEvents` now accepts an optional `dataId` and pushes it down to a SQL
+  `WHERE`, so callers that only need one record's history don't scan the whole
+  event log.
+- Together these make a large cold sync dramatically faster on slower devices
+  (profiling: applying ~98 records ~8s → ~3s), by cutting per-row fsyncs and
+  redundant watcher re-queries.
+
 ## 0.4.0
 
 - Added `setPassword()` to allow changing the SQLCipher encryption password at runtime.

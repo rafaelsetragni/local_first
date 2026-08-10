@@ -177,7 +177,10 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
   ///
   /// Throws [StateError] if called before [initialize].
   @override
-  Future<List<JsonMap>> getAllEvents(String tableName) async {
+  Future<void> runInTransaction(Future<void> Function() action) => action();
+
+  @override
+  Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId}) async {
     _ensureInitialized();
     final events = _events[tableName];
     if (events == null) return const [];
@@ -186,8 +189,9 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     final items = <JsonMap>[];
     for (final event in events.values) {
       final normalized = _normalizeLegacyMap(JsonMap.from(event));
-      final dataId = normalized[LocalFirstEvent.kDataId] as String?;
-      final data = dataId != null ? dataTable[dataId] : null;
+      final eventDataId = normalized[LocalFirstEvent.kDataId] as String?;
+      if (dataId != null && eventDataId != dataId) continue;
+      final data = eventDataId != null ? dataTable[eventDataId] : null;
       items.add(
         _mergeEventWithData(
           normalized,
