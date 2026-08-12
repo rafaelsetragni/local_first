@@ -159,6 +159,10 @@ class _FakeStorage extends LocalFirstStorage {
   Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query) =>
       _controller.stream.map((e) => e.cast<LocalFirstEvent<T>>());
 
+  @override
+  Stream<void> watchChanges(String repositoryName) =>
+      const Stream<void>.empty();
+
   void emitEvents(List<LocalFirstEvent<dynamic>> items) {
     lastEmittedEvents = items;
     _controller.add(items);

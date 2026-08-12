@@ -124,6 +124,10 @@ class _StorageStub implements LocalFirstStorage {
     lastQuery = query;
     return controller.stream.map((e) => e.cast<LocalFirstEvent<T>>());
   }
+
+  @override
+  Stream<void> watchChanges(String repositoryName) =>
+      const Stream<void>.empty();
 }
 
 void main() {

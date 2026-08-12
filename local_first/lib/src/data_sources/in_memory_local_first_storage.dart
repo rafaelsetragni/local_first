@@ -11,6 +11,8 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
   final Map<String, Map<String, Object>> _metadataByNamespace = {};
   final Map<String, JsonMap<Set<_InMemoryQueryObserver>>>
   _observersByNamespace = {};
+  final Map<String, JsonMap<Set<StreamController<void>>>>
+  _changeObserversByNamespace = {};
   final Map<String, JsonMap<JsonMap<LocalFieldType>>> _schemasByNamespace = {};
 
   JsonMap<Map<String, JsonMap>> get _data =>
@@ -21,6 +23,8 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
       _metadataByNamespace.putIfAbsent(_namespace, () => {});
   JsonMap<Set<_InMemoryQueryObserver>> get _observers =>
       _observersByNamespace.putIfAbsent(_namespace, () => {});
+  JsonMap<Set<StreamController<void>>> get _changeObservers =>
+      _changeObserversByNamespace.putIfAbsent(_namespace, () => {});
   JsonMap<JsonMap<LocalFieldType>> get _schemas =>
       _schemasByNamespace.putIfAbsent(_namespace, () => {});
 
@@ -52,6 +56,12 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
         }
         observerSet.clear();
       }
+      for (final observerSet in _changeObserversByNamespace.values) {
+        for (final controller in observerSet.values.expand((o) => o).toList()) {
+          await controller.close();
+        }
+        observerSet.clear();
+      }
     }
     _initialized = false;
   }
@@ -75,8 +85,12 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     _namespace = namespace;
     await initialize();
 
-    // Re-emit results to all active observers with data from the new namespace
-    for (final repositoryName in _observers.keys.toList()) {
+    // Re-emit to all active observers (full-query + change-signal) with data
+    // from the new namespace.
+    for (final repositoryName in {
+      ..._observers.keys,
+      ..._changeObservers.keys,
+    }) {
       await _notifyWatchers(repositoryName);
     }
   }
@@ -125,6 +139,7 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
       ..._data.keys,
       ..._events.keys,
       ..._observers.keys,
+      ..._changeObservers.keys,
     };
     _data.clear();
     _events.clear();
@@ -631,7 +646,41 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     return controller.stream;
   }
 
+  @override
+  Stream<void> watchChanges(String repositoryName) {
+    _ensureInitialized();
+    final controller = StreamController<void>.broadcast();
+    _changeObservers
+        .putIfAbsent(repositoryName, () => <StreamController<void>>{})
+        .add(controller);
+
+    controller
+      ..onListen = () {
+        if (!controller.isClosed) controller.add(null);
+      }
+      ..onCancel = () {
+        final controllers = _changeObservers[repositoryName];
+        controllers?.remove(controller);
+        if (controllers != null && controllers.isEmpty) {
+          _changeObservers.remove(repositoryName);
+        }
+      };
+
+    return controller.stream;
+  }
+
   Future<void> _notifyWatchers(String repositoryName) async {
+    final changeObservers = _changeObservers[repositoryName];
+    if (changeObservers != null && changeObservers.isNotEmpty) {
+      for (final controller in List.of(changeObservers)) {
+        if (controller.isClosed) {
+          changeObservers.remove(controller);
+          continue;
+        }
+        controller.add(null);
+      }
+    }
+
     final observers = _observers[repositoryName];
     if (observers == null || observers.isEmpty) return;
 

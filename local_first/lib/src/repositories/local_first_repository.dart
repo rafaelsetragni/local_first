@@ -244,6 +244,27 @@ abstract class LocalFirstRepository<T> {
     );
   }
 
+  /// Emits a lightweight signal whenever this repository changes, WITHOUT
+  /// re-querying or deserializing — for consumers that only need to know
+  /// "something changed" (e.g. to trigger a debounced recompute). Much cheaper
+  /// than `query().watch()`, which re-reads and re-deserializes the whole
+  /// table on every write.
+  Stream<void> watchChanges() => _client.localStorage.watchChanges(name);
+
+  /// Efficiently fetches a single item by its id using the storage's indexed
+  /// primary-key lookup (one row) instead of scanning + deserializing the
+  /// whole table. Returns null when the row is missing or soft-deleted.
+  Future<T?> getById(String id) async {
+    final json = await _client.localStorage.getById(name, id);
+    if (json == null) return null;
+    final event = LocalFirstEvent<T>.fromLocalStorage(
+      repository: this,
+      json: json,
+    );
+    if (event.isDeleted) return null;
+    return event.data;
+  }
+
   /// Applies a single remote event, handling operation-specific logic.
   Future<void> mergeRemoteEvent({
     required LocalFirstEvent<T> remoteEvent,

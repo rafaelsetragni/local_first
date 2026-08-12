@@ -135,6 +135,10 @@ class _NoopStorage implements LocalFirstStorage {
   @override
   Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query) =>
       const Stream.empty();
+
+  @override
+  Stream<void> watchChanges(String repositoryName) =>
+      const Stream<void>.empty();
 }
 
 class _RecordingStorage implements LocalFirstStorage {
@@ -241,6 +245,10 @@ class _RecordingStorage implements LocalFirstStorage {
   @override
   Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query) =>
       const Stream.empty();
+
+  @override
+  Stream<void> watchChanges(String repositoryName) =>
+      const Stream<void>.empty();
 }
 
 void main() {

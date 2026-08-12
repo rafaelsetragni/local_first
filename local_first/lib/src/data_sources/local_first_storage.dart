@@ -137,4 +137,12 @@ abstract class LocalFirstStorage implements ConfigKeyValueStorage {
   ///
   /// Delegates that support native streams (like Isar) can override this.
   Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query);
+
+  /// Emits a lightweight signal on every write to [repositoryName], WITHOUT
+  /// running a query or deserializing rows.
+  ///
+  /// For consumers that only need a "something changed" signal (e.g. to
+  /// trigger a debounced recompute) — far cheaper than [watchQuery], which
+  /// re-reads and re-deserializes the whole table on every change.
+  Stream<void> watchChanges(String repositoryName);
 }
