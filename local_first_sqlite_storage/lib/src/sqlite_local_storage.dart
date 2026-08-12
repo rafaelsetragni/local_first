@@ -151,6 +151,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
           // writes — the main win for read latency. synchronous=NORMAL is the
           // safe companion to WAL (durable across app crashes, only riskier on
           // OS/power loss); busy_timeout avoids spurious "database is locked".
+          // (A/B-measured: WAL sumSql ~2121ms vs DELETE ~2437ms, ~15% faster.)
           //
           // ALL of these must go through rawQuery, not execute: on Android
           // `execute` maps to execSQL(), which rejects any statement that
