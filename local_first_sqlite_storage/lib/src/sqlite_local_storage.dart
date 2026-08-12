@@ -886,6 +886,27 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       'CREATE TABLE IF NOT EXISTS $resolvedTableName (${columnDefinitions.toString()})',
     );
 
+    // Schema-driven migration: a table created by an older app version won't
+    // have columns for schema fields added later. Add each missing column and
+    // backfill it from the JSON `data` so existing rows become queryable /
+    // indexable too — without dropping the table or breaking old installs.
+    // Idempotent: once the column exists, this is skipped on later opens.
+    final existingColumns = <String>{
+      for (final row in await db.rawQuery('PRAGMA table_info($resolvedTableName)'))
+        row['name'] as String,
+    };
+    for (final entry in schema.entries) {
+      if (existingColumns.contains(entry.key)) continue;
+      await db.execute(
+        'ALTER TABLE $resolvedTableName '
+        'ADD COLUMN "${entry.key}" ${_sqlTypeFor(entry.value)}',
+      );
+      await db.rawUpdate(
+        'UPDATE $resolvedTableName SET "${entry.key}" = json_extract(data, ?)',
+        ['\$.${entry.key}'],
+      );
+    }
+
     await db.execute(
       'CREATE INDEX IF NOT EXISTS ${resolvedTableName}__last_event '
       'ON $resolvedTableName(_lasteventId)',
