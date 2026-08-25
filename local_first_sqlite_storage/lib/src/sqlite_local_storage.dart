@@ -326,7 +326,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   ///
   /// Throws [StateError] if called before [initialize].
   @override
-  Future<List<JsonMap>> getAll(String tableName) async {
+  Future<List<JsonMap>> getAll(String tableName) => _withDb(() async {
     final db = await _exec();
     await _ensureTables(tableName);
     final dataTable = _tableName(tableName);
@@ -346,7 +346,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
               row[LocalFirstEvent.kOperation] != SyncOperation.delete.index,
         )
         .toList();
-  }
+  });
 
   /// Returns all event rows joined with their state data so callers can see the
   /// full audit trail.
@@ -355,28 +355,29 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   ///
   /// Throws [StateError] if called before [initialize].
   @override
-  Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId}) async {
-    final db = await _exec();
-    await _ensureTables(tableName);
-    final eventTable = _tableName(tableName, isEvent: true);
-    final dataTable = _tableName(tableName);
+  Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId}) =>
+      _withDb(() async {
+        final db = await _exec();
+        await _ensureTables(tableName);
+        final eventTable = _tableName(tableName, isEvent: true);
+        final dataTable = _tableName(tableName);
 
-    final where = dataId != null
-        ? 'WHERE e.${LocalFirstEvent.kDataId} = ?'
-        : '';
+        final where = dataId != null
+            ? 'WHERE e.${LocalFirstEvent.kDataId} = ?'
+            : '';
 
-    final rows = await db.rawQuery(
-      'SELECT d.data, d._lasteventId, '
-      'e.${LocalFirstEvent.kEventId}, e.${LocalFirstEvent.kDataId}, e.${LocalFirstEvent.kSyncStatus}, '
-      'e.${LocalFirstEvent.kOperation}, e.${LocalFirstEvent.kSyncCreatedAt} '
-      'FROM $eventTable e '
-      'LEFT JOIN $dataTable d ON e.${LocalFirstEvent.kDataId} = d.id '
-      '$where',
-      dataId != null ? [dataId] : null,
-    );
+        final rows = await db.rawQuery(
+          'SELECT d.data, d._lasteventId, '
+          'e.${LocalFirstEvent.kEventId}, e.${LocalFirstEvent.kDataId}, e.${LocalFirstEvent.kSyncStatus}, '
+          'e.${LocalFirstEvent.kOperation}, e.${LocalFirstEvent.kSyncCreatedAt} '
+          'FROM $eventTable e '
+          'LEFT JOIN $dataTable d ON e.${LocalFirstEvent.kDataId} = d.id '
+          '$where',
+          dataId != null ? [dataId] : null,
+        );
 
-    return rows.map(_decodeJoinedRow).toList();
-  }
+        return rows.map(_decodeJoinedRow).toList();
+      });
 
   /// Fetches a single row by id, returning `null` when the row is missing or
   /// marked as deleted.
@@ -386,7 +387,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   ///
   /// Throws [StateError] if called before [initialize].
   @override
-  Future<JsonMap?> getById(String tableName, String id) async {
+  Future<JsonMap?> getById(String tableName, String id) => _withDb(() async {
     final db = await _exec();
     await _ensureTables(tableName);
     final dataTable = _tableName(tableName);
@@ -404,7 +405,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     if (rows.isEmpty || rows.first['data'] == null) return null;
     return _decodeJoinedRow(rows.first);
-  }
+  });
 
   /// Fetches a specific event by id joined with its data payload (if present).
   ///
@@ -413,26 +414,27 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   ///
   /// Throws [StateError] if called before [initialize].
   @override
-  Future<JsonMap?> getEventById(String tableName, String id) async {
-    final db = await _exec();
-    await _ensureTables(tableName);
-    final eventTable = _tableName(tableName, isEvent: true);
-    final dataTable = _tableName(tableName);
+  Future<JsonMap?> getEventById(String tableName, String id) =>
+      _withDb(() async {
+        final db = await _exec();
+        await _ensureTables(tableName);
+        final eventTable = _tableName(tableName, isEvent: true);
+        final dataTable = _tableName(tableName);
 
-    final rows = await db.rawQuery(
-      'SELECT d.data, d._lasteventId, '
-      'e.${LocalFirstEvent.kEventId}, e.${LocalFirstEvent.kDataId}, e.${LocalFirstEvent.kSyncStatus}, '
-      'e.${LocalFirstEvent.kOperation}, e.${LocalFirstEvent.kSyncCreatedAt} '
-      'FROM $eventTable e '
-      'LEFT JOIN $dataTable d ON e.${LocalFirstEvent.kDataId} = d.id '
-      'WHERE e.${LocalFirstEvent.kEventId} = ? '
-      'LIMIT 1',
-      [id],
-    );
+        final rows = await db.rawQuery(
+          'SELECT d.data, d._lasteventId, '
+          'e.${LocalFirstEvent.kEventId}, e.${LocalFirstEvent.kDataId}, e.${LocalFirstEvent.kSyncStatus}, '
+          'e.${LocalFirstEvent.kOperation}, e.${LocalFirstEvent.kSyncCreatedAt} '
+          'FROM $eventTable e '
+          'LEFT JOIN $dataTable d ON e.${LocalFirstEvent.kDataId} = d.id '
+          'WHERE e.${LocalFirstEvent.kEventId} = ? '
+          'LIMIT 1',
+          [id],
+        );
 
-    if (rows.isEmpty) return null;
-    return _decodeJoinedRow(rows.first);
-  }
+        if (rows.isEmpty) return null;
+        return _decodeJoinedRow(rows.first);
+      });
 
   /// Inserts or replaces a state row (upsert).
   ///
