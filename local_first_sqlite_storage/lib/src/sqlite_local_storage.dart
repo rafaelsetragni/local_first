@@ -117,7 +117,31 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     try {
       return await action();
     } on DatabaseException catch (e) {
-      if (e.toString().contains('database_closed')) {
+      final message = e.toString();
+      // A concurrent runInTransaction batch can commit and close the shared
+      // [_txn] while this read is mid-flight (the read grabbed that txn via
+      // _exec()). The transaction is gone but the database itself is fine —
+      // retry: once _txn is null, _exec() routes to the base connection (or a
+      // fresh batch's txn). _withDb only wraps reads, so retrying is
+      // idempotent. Without this, a caller's per-row read (e.g. an upsert's
+      // existence check) fails and its write is silently dropped. Yield
+      // between attempts so a still-committing batch can release the txn.
+      if (message.contains('transaction_closed')) {
+        DatabaseException lastError = e;
+        for (var attempt = 0; attempt < 3; attempt++) {
+          await Future<void>.delayed(Duration.zero);
+          try {
+            return await action();
+          } on DatabaseException catch (retryError) {
+            lastError = retryError;
+            if (!retryError.toString().contains('transaction_closed')) {
+              rethrow;
+            }
+          }
+        }
+        throw lastError;
+      }
+      if (message.contains('database_closed')) {
         // Wait for any in-progress namespace switch
         if (_namespaceSwitching != null) {
           await _namespaceSwitching!.future;
@@ -317,7 +341,10 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     return rows
         .map(_decodeJoinedRow)
-        .where((row) => row[LocalFirstEvent.kOperation] != SyncOperation.delete.index)
+        .where(
+          (row) =>
+              row[LocalFirstEvent.kOperation] != SyncOperation.delete.index,
+        )
         .toList();
   }
 
@@ -334,7 +361,9 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     final eventTable = _tableName(tableName, isEvent: true);
     final dataTable = _tableName(tableName);
 
-    final where = dataId != null ? 'WHERE e.${LocalFirstEvent.kDataId} = ?' : '';
+    final where = dataId != null
+        ? 'WHERE e.${LocalFirstEvent.kDataId} = ?'
+        : '';
 
     final rows = await db.rawQuery(
       'SELECT d.data, d._lasteventId, '
@@ -511,8 +540,27 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   /// if the payload is missing a valid data reference.
   @override
   Future<void> updateEvent(String tableName, String id, JsonMap item) async {
-    final db = await _exec();
-    await _ensureTables(tableName);
+    // This is often called asynchronously AFTER a remote push (to mark the
+    // event synced), outside the transaction that created it. If a concurrent
+    // batch is running, the shared [_txn] it points to may commit and close
+    // mid-write, surfacing as a `transaction_closed` DatabaseException. The base
+    // database is always open, so retry there when that race is hit.
+    try {
+      await _writeEvent(await _exec(), tableName, id, item);
+    } on DatabaseException catch (e) {
+      if (!e.toString().contains('transaction_closed')) rethrow;
+      await _writeEvent(await _database, tableName, id, item);
+    }
+    await _notifyWatchers(tableName);
+  }
+
+  Future<void> _writeEvent(
+    DatabaseExecutor db,
+    String tableName,
+    String id,
+    JsonMap item,
+  ) async {
+    await _ensureTables(tableName, db);
     final resolvedTable = _tableName(tableName, isEvent: true);
 
     final dataId = item[LocalFirstEvent.kDataId] ?? id;
@@ -526,7 +574,6 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       row,
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
-    await _notifyWatchers(tableName);
   }
 
   /// Deletes a state row by id and notifies watchers.
@@ -858,13 +905,19 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return _schemas[repositoryName] ?? const {};
   }
 
-  Future<void> _ensureTables(String repositoryName) async {
-    await _ensureDataTable(repositoryName);
-    await _ensureEventTable(repositoryName);
+  Future<void> _ensureTables(
+    String repositoryName, [
+    DatabaseExecutor? executor,
+  ]) async {
+    await _ensureDataTable(repositoryName, executor);
+    await _ensureEventTable(repositoryName, executor);
   }
 
-  Future<void> _ensureDataTable(String repositoryName) async {
-    final db = await _exec();
+  Future<void> _ensureDataTable(
+    String repositoryName, [
+    DatabaseExecutor? executor,
+  ]) async {
+    final db = executor ?? await _exec();
     final resolvedTableName = _tableName(repositoryName);
     final schema = _schemaFor(repositoryName);
     const reservedColumns = {'id', 'data', '_lasteventId'};
@@ -893,7 +946,9 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     // indexable too — without dropping the table or breaking old installs.
     // Idempotent: once the column exists, this is skipped on later opens.
     final existingColumns = <String>{
-      for (final row in await db.rawQuery('PRAGMA table_info($resolvedTableName)'))
+      for (final row in await db.rawQuery(
+        'PRAGMA table_info($resolvedTableName)',
+      ))
         row['name'] as String,
     };
     for (final entry in schema.entries) {
@@ -921,8 +976,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     }
   }
 
-  Future<void> _ensureEventTable(String repositoryName) async {
-    final db = await _exec();
+  Future<void> _ensureEventTable(
+    String repositoryName, [
+    DatabaseExecutor? executor,
+  ]) async {
+    final db = executor ?? await _exec();
     final resolvedTableName = _tableName(repositoryName, isEvent: true);
 
     await db.execute(
@@ -1067,7 +1125,8 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     }
     if (syncStatus != null) map[LocalFirstEvent.kSyncStatus] = syncStatus;
     if (syncOperation != null) map[LocalFirstEvent.kOperation] = syncOperation;
-    if (syncCreatedAt != null) map[LocalFirstEvent.kSyncCreatedAt] = syncCreatedAt;
+    if (syncCreatedAt != null)
+      map[LocalFirstEvent.kSyncCreatedAt] = syncCreatedAt;
 
     return map;
   }
@@ -1162,7 +1221,8 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       _withDb(() => _queryInternal(query));
 
   Future<List<LocalFirstEvent<T>>> _queryInternal<T>(
-      LocalFirstQuery<T> query) async {
+    LocalFirstQuery<T> query,
+  ) async {
     final db = await _exec();
     await _ensureTables(query.repositoryName);
     final resolvedTable = _tableName(query.repositoryName);
