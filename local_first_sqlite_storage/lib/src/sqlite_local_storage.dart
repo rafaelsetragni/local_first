@@ -20,6 +20,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     String namespace = 'default',
     DatabaseFactory? dbFactory,
     String? password,
+    this.enableQueryProfiling = false,
   }) : _namespace = namespace,
        _factory = dbFactory ?? databaseFactory,
        _password = password {
@@ -28,6 +29,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
   final String databaseName;
   final String? databasePath;
+
+  /// When true, each query logs its table, row count, SQL vs deserialization
+  /// timing and how many rows fail to deserialize — plus the resolved
+  /// `journal_mode` on open. A diagnostic probe; keep off in normal runs.
+  final bool enableQueryProfiling;
   String _namespace;
   final DatabaseFactory _factory;
   String? _password;
@@ -49,6 +55,12 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   Completer<void>? _namespaceSwitching;
 
   final JsonMap<Set<_SqliteQueryObserver>> _observers = {};
+
+  /// Lightweight change-signal observers (from [watchChanges]). They emit
+  /// `void` on any write to their repository WITHOUT re-running a query or
+  /// deserializing rows — for consumers that only need a "something changed"
+  /// signal (e.g. to trigger a debounced recompute).
+  final JsonMap<Set<StreamController<void>>> _changeObservers = {};
   final JsonMap<JsonMap<LocalFieldType>> _schemas = {};
 
   static final RegExp _validName = RegExp(r'^[a-zA-Z0-9_]+$');
@@ -105,7 +117,31 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     try {
       return await action();
     } on DatabaseException catch (e) {
-      if (e.toString().contains('database_closed')) {
+      final message = e.toString();
+      // A concurrent runInTransaction batch can commit and close the shared
+      // [_txn] while this read is mid-flight (the read grabbed that txn via
+      // _exec()). The transaction is gone but the database itself is fine —
+      // retry: once _txn is null, _exec() routes to the base connection (or a
+      // fresh batch's txn). _withDb only wraps reads, so retrying is
+      // idempotent. Without this, a caller's per-row read (e.g. an upsert's
+      // existence check) fails and its write is silently dropped. Yield
+      // between attempts so a still-committing batch can release the txn.
+      if (message.contains('transaction_closed')) {
+        DatabaseException lastError = e;
+        for (var attempt = 0; attempt < 3; attempt++) {
+          await Future<void>.delayed(Duration.zero);
+          try {
+            return await action();
+          } on DatabaseException catch (retryError) {
+            lastError = retryError;
+            if (!retryError.toString().contains('transaction_closed')) {
+              rethrow;
+            }
+          }
+        }
+        throw lastError;
+      }
+      if (message.contains('database_closed')) {
         // Wait for any in-progress namespace switch
         if (_namespaceSwitching != null) {
           await _namespaceSwitching!.future;
@@ -133,6 +169,22 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       options: SqlCipherOpenDatabaseOptions(
         version: 1,
         password: _password,
+        onConfigure: (db) async {
+          // WAL lets readers run concurrently with writers, so queries no
+          // longer block behind the 30s background sync and incoming Pusher
+          // writes — the main win for read latency. synchronous=NORMAL is the
+          // safe companion to WAL (durable across app crashes, only riskier on
+          // OS/power loss); busy_timeout avoids spurious "database is locked".
+          // (A/B-measured: WAL sumSql ~2121ms vs DELETE ~2437ms, ~15% faster.)
+          //
+          // ALL of these must go through rawQuery, not execute: on Android
+          // `execute` maps to execSQL(), which rejects any statement that
+          // returns rows — and journal_mode/busy_timeout both return their
+          // resulting value.
+          await db.rawQuery('PRAGMA journal_mode=WAL');
+          await db.rawQuery('PRAGMA synchronous=NORMAL');
+          await db.rawQuery('PRAGMA busy_timeout=5000');
+        },
         onCreate: (db, _) async {
           await db.execute(
             'CREATE TABLE IF NOT EXISTS $_metadataTable (key TEXT PRIMARY KEY, value TEXT)',
@@ -143,6 +195,15 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     _initialized = true;
     await _ensureMetadataTable(db: _db);
+
+    // Perf probe: confirm WAL is active in the session log.
+    if (enableQueryProfiling) {
+      final journalMode = await _db!.rawQuery('PRAGMA journal_mode');
+      // ignore: avoid_print
+      print(
+        '[SqliteLocalStorage] journal_mode=${journalMode.first.values.first}',
+      );
+    }
   }
 
   /// Closes the database connection and shuts down any active query streams.
@@ -161,6 +222,12 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
         }
       }
       _observers.clear();
+      for (final controllers in List.of(_changeObservers.values)) {
+        for (final controller in List.of(controllers)) {
+          await controller.close();
+        }
+      }
+      _changeObservers.clear();
     }
 
     await _db?.close();
@@ -200,7 +267,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     }
 
     // Re-emit results to all active observers with data from the new namespace
-    for (final repositoryName in _observers.keys.toList()) {
+    // (both full-query observers and lightweight change-signal observers).
+    for (final repositoryName in {
+      ..._observers.keys,
+      ..._changeObservers.keys,
+    }) {
       await _notifyWatchers(repositoryName);
     }
   }
@@ -270,7 +341,10 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     return rows
         .map(_decodeJoinedRow)
-        .where((row) => row[LocalFirstEvent.kOperation] != SyncOperation.delete.index)
+        .where(
+          (row) =>
+              row[LocalFirstEvent.kOperation] != SyncOperation.delete.index,
+        )
         .toList();
   }
 
@@ -287,7 +361,9 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     final eventTable = _tableName(tableName, isEvent: true);
     final dataTable = _tableName(tableName);
 
-    final where = dataId != null ? 'WHERE e.${LocalFirstEvent.kDataId} = ?' : '';
+    final where = dataId != null
+        ? 'WHERE e.${LocalFirstEvent.kDataId} = ?'
+        : '';
 
     final rows = await db.rawQuery(
       'SELECT d.data, d._lasteventId, '
@@ -464,8 +540,27 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   /// if the payload is missing a valid data reference.
   @override
   Future<void> updateEvent(String tableName, String id, JsonMap item) async {
-    final db = await _exec();
-    await _ensureTables(tableName);
+    // This is often called asynchronously AFTER a remote push (to mark the
+    // event synced), outside the transaction that created it. If a concurrent
+    // batch is running, the shared [_txn] it points to may commit and close
+    // mid-write, surfacing as a `transaction_closed` DatabaseException. The base
+    // database is always open, so retry there when that race is hit.
+    try {
+      await _writeEvent(await _exec(), tableName, id, item);
+    } on DatabaseException catch (e) {
+      if (!e.toString().contains('transaction_closed')) rethrow;
+      await _writeEvent(await _database, tableName, id, item);
+    }
+    await _notifyWatchers(tableName);
+  }
+
+  Future<void> _writeEvent(
+    DatabaseExecutor db,
+    String tableName,
+    String id,
+    JsonMap item,
+  ) async {
+    await _ensureTables(tableName, db);
     final resolvedTable = _tableName(tableName, isEvent: true);
 
     final dataId = item[LocalFirstEvent.kDataId] ?? id;
@@ -479,7 +574,6 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       row,
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
-    await _notifyWatchers(tableName);
   }
 
   /// Deletes a state row by id and notifies watchers.
@@ -765,6 +859,41 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return observer.controller.stream;
   }
 
+  /// Emits a lightweight signal on every write to [repositoryName], WITHOUT
+  /// running a query or deserializing rows. For consumers that only need to
+  /// know "something changed" (e.g. to trigger a debounced recompute) — far
+  /// cheaper than [watchQuery], which re-reads and re-deserializes the table.
+  ///
+  /// Like [watchQuery], it emits once on first listen and coalesces to a single
+  /// signal per transaction (via the batched-notify flush).
+  @override
+  Stream<void> watchChanges(String repositoryName) {
+    if (!_initialized && _namespaceSwitching == null) {
+      throw StateError(
+        'SqliteLocalFirstStorage not initialized. Call initialize() first.',
+      );
+    }
+
+    final controller = StreamController<void>.broadcast();
+    _changeObservers
+        .putIfAbsent(repositoryName, () => <StreamController<void>>{})
+        .add(controller);
+
+    controller
+      ..onListen = () {
+        if (!controller.isClosed) controller.add(null);
+      }
+      ..onCancel = () {
+        final controllers = _changeObservers[repositoryName];
+        controllers?.remove(controller);
+        if (controllers != null && controllers.isEmpty) {
+          _changeObservers.remove(repositoryName);
+        }
+      };
+
+    return controller.stream;
+  }
+
   Future<void> _ensureMetadataTable({DatabaseExecutor? db}) async {
     db ??= await _exec();
     await db.execute(
@@ -776,13 +905,19 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return _schemas[repositoryName] ?? const {};
   }
 
-  Future<void> _ensureTables(String repositoryName) async {
-    await _ensureDataTable(repositoryName);
-    await _ensureEventTable(repositoryName);
+  Future<void> _ensureTables(
+    String repositoryName, [
+    DatabaseExecutor? executor,
+  ]) async {
+    await _ensureDataTable(repositoryName, executor);
+    await _ensureEventTable(repositoryName, executor);
   }
 
-  Future<void> _ensureDataTable(String repositoryName) async {
-    final db = await _exec();
+  Future<void> _ensureDataTable(
+    String repositoryName, [
+    DatabaseExecutor? executor,
+  ]) async {
+    final db = executor ?? await _exec();
     final resolvedTableName = _tableName(repositoryName);
     final schema = _schemaFor(repositoryName);
     const reservedColumns = {'id', 'data', '_lasteventId'};
@@ -805,6 +940,29 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       'CREATE TABLE IF NOT EXISTS $resolvedTableName (${columnDefinitions.toString()})',
     );
 
+    // Schema-driven migration: a table created by an older app version won't
+    // have columns for schema fields added later. Add each missing column and
+    // backfill it from the JSON `data` so existing rows become queryable /
+    // indexable too — without dropping the table or breaking old installs.
+    // Idempotent: once the column exists, this is skipped on later opens.
+    final existingColumns = <String>{
+      for (final row in await db.rawQuery(
+        'PRAGMA table_info($resolvedTableName)',
+      ))
+        row['name'] as String,
+    };
+    for (final entry in schema.entries) {
+      if (existingColumns.contains(entry.key)) continue;
+      await db.execute(
+        'ALTER TABLE $resolvedTableName '
+        'ADD COLUMN "${entry.key}" ${_sqlTypeFor(entry.value)}',
+      );
+      await db.rawUpdate(
+        'UPDATE $resolvedTableName SET "${entry.key}" = json_extract(data, ?)',
+        ['\$.${entry.key}'],
+      );
+    }
+
     await db.execute(
       'CREATE INDEX IF NOT EXISTS ${resolvedTableName}__last_event '
       'ON $resolvedTableName(_lasteventId)',
@@ -818,8 +976,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     }
   }
 
-  Future<void> _ensureEventTable(String repositoryName) async {
-    final db = await _exec();
+  Future<void> _ensureEventTable(
+    String repositoryName, [
+    DatabaseExecutor? executor,
+  ]) async {
+    final db = executor ?? await _exec();
     final resolvedTableName = _tableName(repositoryName, isEvent: true);
 
     await db.execute(
@@ -964,7 +1125,8 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     }
     if (syncStatus != null) map[LocalFirstEvent.kSyncStatus] = syncStatus;
     if (syncOperation != null) map[LocalFirstEvent.kOperation] = syncOperation;
-    if (syncCreatedAt != null) map[LocalFirstEvent.kSyncCreatedAt] = syncCreatedAt;
+    if (syncCreatedAt != null)
+      map[LocalFirstEvent.kSyncCreatedAt] = syncCreatedAt;
 
     return map;
   }
@@ -998,15 +1160,27 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     }
 
     final observers = _observers[repositoryName];
-    if (observers == null || observers.isEmpty) return;
-
-    for (final observer in List.of(observers)) {
-      if (observer.controller.isClosed) {
-        observers.remove(observer);
-        continue;
+    if (observers != null && observers.isNotEmpty) {
+      for (final observer in List.of(observers)) {
+        if (observer.controller.isClosed) {
+          observers.remove(observer);
+          continue;
+        }
+        // Use the emit closure to preserve generic type <T>
+        await observer.emit();
       }
-      // Use the emit closure to preserve generic type <T>
-      await observer.emit();
+    }
+
+    // Lightweight change signals — notify without any query/deserialization.
+    final changeObservers = _changeObservers[repositoryName];
+    if (changeObservers != null && changeObservers.isNotEmpty) {
+      for (final controller in List.of(changeObservers)) {
+        if (controller.isClosed) {
+          changeObservers.remove(controller);
+          continue;
+        }
+        controller.add(null);
+      }
     }
   }
 
@@ -1047,7 +1221,8 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       _withDb(() => _queryInternal(query));
 
   Future<List<LocalFirstEvent<T>>> _queryInternal<T>(
-      LocalFirstQuery<T> query) async {
+    LocalFirstQuery<T> query,
+  ) async {
     final db = await _exec();
     await _ensureTables(query.repositoryName);
     final resolvedTable = _tableName(query.repositoryName);
@@ -1179,12 +1354,16 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       }
     }
 
+    final swq = Stopwatch()..start();
     final rows = await db.rawQuery(sql.toString(), args);
+    swq.stop();
 
     final repo = query.repository;
     final mapped = rows.map(_decodeJoinedRow);
     final events = <LocalFirstEvent<T>>[];
 
+    final swd = Stopwatch()..start();
+    var failed = 0;
     for (final json in mapped) {
       if (!_hasRequiredEventFields(json)) continue;
       try {
@@ -1193,7 +1372,21 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
         );
       } catch (_) {
         // ignore malformed legacy entries
+        failed++;
       }
+    }
+    swd.stop();
+
+    // Perf probe: per-query SQL vs deserialization cost + how many rows throw
+    // during deserialization (silently swallowed above). A high FAILED count
+    // on every query points at a data/validation problem.
+    if (enableQueryProfiling) {
+      // ignore: avoid_print
+      print(
+        '[SqliteQuery] $resolvedTable rows=${rows.length} ok=${events.length} '
+        'FAILED=$failed | sql=${swq.elapsedMicroseconds}us '
+        'deser=${swd.elapsedMicroseconds}us',
+      );
     }
 
     return events;

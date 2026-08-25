@@ -130,6 +130,10 @@ class _StubStorage implements LocalFirstStorage {
   @override
   Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query) =>
       const Stream.empty();
+
+  @override
+  Stream<void> watchChanges(String repositoryName) =>
+      const Stream<void>.empty();
 }
 
 class _DummyStrategy extends DataSyncStrategy {}
