@@ -43,7 +43,22 @@ abstract class LocalFirstStorage implements ConfigKeyValueStorage {
   Future<List<JsonMap>> getAll(String tableName);
 
   /// Gets all items from the event log table/collection.
-  Future<List<JsonMap>> getAllEvents(String tableName);
+  ///
+  /// When [dataId] is provided, only events for that record are returned —
+  /// implementations should push this filter down to the storage layer (e.g.
+  /// a SQL `WHERE`) so callers that only need one record's history don't read
+  /// the entire event log (which makes a large sync O(n²)).
+  Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId});
+
+  /// Runs [action] inside a single storage transaction/batch.
+  ///
+  /// Backends that support transactions (e.g. SQLite) commit all writes made by
+  /// [action] once — a single fsync instead of one per row — and defer watcher
+  /// notifications until after the commit. This is the key to a fast large sync
+  /// (applying many remote events) on slower devices. Backends without a real
+  /// transaction may simply run [action] directly. Nested calls join the
+  /// running batch.
+  Future<void> runInTransaction(Future<void> Function() action);
 
   /// Gets a single item by its ID.
   ///
@@ -122,4 +137,12 @@ abstract class LocalFirstStorage implements ConfigKeyValueStorage {
   ///
   /// Delegates that support native streams (like Isar) can override this.
   Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query);
+
+  /// Emits a lightweight signal on every write to [repositoryName], WITHOUT
+  /// running a query or deserializing rows.
+  ///
+  /// For consumers that only need a "something changed" signal (e.g. to
+  /// trigger a debounced recompute) — far cheaper than [watchQuery], which
+  /// re-reads and re-deserializes the whole table on every change.
+  Stream<void> watchChanges(String repositoryName);
 }

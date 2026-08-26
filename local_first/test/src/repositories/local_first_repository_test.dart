@@ -2,6 +2,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:local_first/local_first.dart';
 
 class _StubStorage implements LocalFirstStorage {
+  @override
+  Future<void> runInTransaction(Future<void> Function() action) => action();
+
   final List<JsonMap> events = [];
   final List<JsonMap> updatedEvents = [];
   bool containsIdReturn = false;
@@ -57,7 +60,7 @@ class _StubStorage implements LocalFirstStorage {
   Future<List<JsonMap>> getAll(String tableName) async => [];
 
   @override
-  Future<List<JsonMap>> getAllEvents(String tableName) async =>
+  Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId}) async =>
       List.unmodifiable(events);
 
   @override
@@ -127,6 +130,10 @@ class _StubStorage implements LocalFirstStorage {
   @override
   Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query) =>
       const Stream.empty();
+
+  @override
+  Stream<void> watchChanges(String repositoryName) =>
+      const Stream<void>.empty();
 }
 
 class _DummyStrategy extends DataSyncStrategy {}

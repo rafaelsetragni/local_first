@@ -4,6 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:local_first/local_first.dart';
 
 class _SpyStorage implements LocalFirstStorage {
+  @override
+  Future<void> runInTransaction(Future<void> Function() action) => action();
+
   int initialized = 0;
   int cleared = 0;
   int closed = 0;
@@ -51,7 +54,7 @@ class _SpyStorage implements LocalFirstStorage {
   Future<List<Map<String, dynamic>>> getAll(String tableName) async => [];
 
   @override
-  Future<List<Map<String, dynamic>>> getAllEvents(String tableName) async => [];
+  Future<List<Map<String, dynamic>>> getAllEvents(String tableName, {String? dataId}) async => [];
 
   @override
   Future<Map<String, dynamic>?> getById(String tableName, String id) async =>
@@ -130,6 +133,10 @@ class _SpyStorage implements LocalFirstStorage {
   @override
   Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query) =>
       const Stream.empty();
+
+  @override
+  Stream<void> watchChanges(String repositoryName) =>
+      const Stream<void>.empty();
 }
 
 class _SpyConfigStorage implements ConfigKeyValueStorage {

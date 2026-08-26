@@ -256,6 +256,27 @@ void main() {
       expect(first.whereType<LocalFirstStateEvent<DummyModel>>(), isNotEmpty);
     });
 
+    test('runInTransaction commits all writes atomically', () async {
+      await storage.runInTransaction(() async {
+        await insertRow({'id': 'tx1', 'username': 'a', 'age': 1});
+        await insertRow({'id': 'tx2', 'username': 'b', 'age': 2});
+      });
+      expect(await storage.getById('users', 'tx1'), isNotNull);
+      expect(await storage.getById('users', 'tx2'), isNotNull);
+    });
+
+    test('runInTransaction rolls back every write when the action throws',
+        () async {
+      await expectLater(
+        storage.runInTransaction(() async {
+          await insertRow({'id': 'rb1', 'username': 'x', 'age': 1});
+          throw StateError('boom');
+        }),
+        throwsA(isA<StateError>()),
+      );
+      expect(await storage.getById('users', 'rb1'), isNull);
+    });
+
     test('notifyWatchers removes closed observers and emits results', () async {
       final mockable = MockableSqliteLocalFirstStorage(
         dbFactory: databaseFactoryFfi,
@@ -2202,5 +2223,66 @@ void main() {
       expect(await storage.getAll('users'), isEmpty);
       expect(await storage.getConfigValue('key'), isNull);
     });
+  });
+
+  group('SqliteLocalFirstStorage schema migration', () {
+    test(
+      'adds a schema column to an existing table and backfills from JSON',
+      () async {
+        final storage = SqliteLocalFirstStorage(
+          databasePath: inMemoryDatabasePath,
+          dbFactory: databaseFactoryFfi,
+          namespace: 'mig_ns',
+        );
+        await storage.initialize();
+
+        // v1 schema: no 'age' column yet.
+        await storage.ensureSchema(
+          'mig',
+          const {'username': LocalFieldType.text},
+          idFieldName: 'id',
+        );
+        await storage.insert('mig', {
+          'id': 'u1',
+          'username': 'Alice',
+          'age': 30,
+          '_lasteventId': 'evt-u1',
+        }, 'id');
+
+        final helper = TestHelperSqliteLocalFirstStorage(storage);
+        final table = helper.tableName('mig');
+        final db = await helper.database;
+
+        Future<Set<String>> columns() async => {
+          for (final r in await db.rawQuery('PRAGMA table_info($table)'))
+            r['name'] as String,
+        };
+
+        // Precondition: the 'age' column doesn't exist yet.
+        expect((await columns()).contains('age'), isFalse);
+
+        // v2 schema adds 'age' → migration on the next ensureDataTable.
+        await storage.ensureSchema(
+          'mig',
+          const {
+            'username': LocalFieldType.text,
+            'age': LocalFieldType.integer,
+          },
+          idFieldName: 'id',
+        );
+        await helper.ensureDataTable('mig');
+
+        // The column now exists and is backfilled from the JSON data for the
+        // pre-existing row (so old installs stay queryable/indexable).
+        expect((await columns()).contains('age'), isTrue);
+        final rows = await db.rawQuery(
+          'SELECT age FROM $table WHERE id = ?',
+          ['u1'],
+        );
+        expect(rows.first['age'], 30);
+
+        await storage.close();
+      },
+    );
   });
 }

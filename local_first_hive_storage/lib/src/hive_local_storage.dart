@@ -213,7 +213,10 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   ///
   /// Throws [StateError] if called before [initialize].
   @override
-  Future<List<JsonMap>> getAllEvents(String tableName) async {
+  Future<void> runInTransaction(Future<void> Function() action) => action();
+
+  @override
+  Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId}) async {
     final eventBox = await _getBox(tableName, isEvent: true);
     final dataBox = await _getBox(tableName);
     final keys = eventBox.keys.cast<String>();
@@ -221,8 +224,10 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     for (final key in keys) {
       final meta = await _readBoxValue(eventBox, key);
       if (meta == null) continue;
-      final dataId = meta[LocalFirstEvent.kDataId] as String?;
-      final data = dataId != null ? await _readBoxValue(dataBox, dataId) : null;
+      final eventDataId = meta[LocalFirstEvent.kDataId] as String?;
+      if (dataId != null && eventDataId != dataId) continue;
+      final data =
+          eventDataId != null ? await _readBoxValue(dataBox, eventDataId) : null;
       items.add(_mergeEventWithData(meta, data, lastEventId: meta[LocalFirstEvent.kEventId]));
     }
     return items;
@@ -786,6 +791,51 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
         final eventBox = await _getBox(query.repositoryName, isEvent: true);
         dataSub = box.watch().listen((_) => emitCurrent());
         eventSub = eventBox.watch().listen((_) => emitCurrent());
+      } catch (e, st) {
+        if (!controller.isClosed) {
+          controller.addError(e, st);
+        }
+      }
+    };
+
+    controller.onCancel = () async {
+      await dataSub?.cancel();
+      await eventSub?.cancel();
+    };
+
+    return controller.stream;
+  }
+
+  /// Emits a lightweight signal whenever the repository's data or event box
+  /// changes, plus one initial tick on listen (matching the other backends).
+  ///
+  /// Backed by Hive's native `box.watch()`; callers use it to trigger a reload
+  /// without carrying the changed rows through the stream.
+  ///
+  /// Throws [StateError] if called before [initialize].
+  @override
+  Stream<void> watchChanges(String repositoryName) {
+    if (!_initialized) {
+      throw StateError(
+        'HiveLocalFirstStorage not initialized. Call initialize() first.',
+      );
+    }
+
+    final controller = StreamController<void>.broadcast();
+    StreamSubscription? dataSub;
+    StreamSubscription? eventSub;
+
+    void notify(_) {
+      if (!controller.isClosed) controller.add(null);
+    }
+
+    controller.onListen = () async {
+      try {
+        notify(null);
+        final box = await _getBox(repositoryName);
+        final eventBox = await _getBox(repositoryName, isEvent: true);
+        dataSub = box.watch().listen(notify);
+        eventSub = eventBox.watch().listen(notify);
       } catch (e, st) {
         if (!controller.isClosed) {
           controller.addError(e, st);

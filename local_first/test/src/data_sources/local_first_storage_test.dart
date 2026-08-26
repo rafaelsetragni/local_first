@@ -16,6 +16,9 @@ class _TestModel {
 }
 
 class _FakeStorage extends LocalFirstStorage {
+  @override
+  Future<void> runInTransaction(Future<void> Function() action) => action();
+
   bool initialized = false;
   bool closed = false;
   bool cleared = false;
@@ -55,7 +58,7 @@ class _FakeStorage extends LocalFirstStorage {
   Future<List<JsonMap>> getAll(String tableName) async => events;
 
   @override
-  Future<List<JsonMap>> getAllEvents(String tableName) async => events;
+  Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId}) async => events;
 
   @override
   Future<JsonMap?> getById(String tableName, String id) async => events
@@ -155,6 +158,10 @@ class _FakeStorage extends LocalFirstStorage {
   @override
   Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query) =>
       _controller.stream.map((e) => e.cast<LocalFirstEvent<T>>());
+
+  @override
+  Stream<void> watchChanges(String repositoryName) =>
+      const Stream<void>.empty();
 
   void emitEvents(List<LocalFirstEvent<dynamic>> items) {
     lastEmittedEvents = items;

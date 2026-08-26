@@ -299,6 +299,27 @@ flutter run
 
 ## Migration guide
 
+### 0.8.1 → 0.8.2
+
+No changes are needed if you use the built-in storage backends (Hive, SQLite,
+in-memory) — the batch remote-event apply is just faster.
+
+**Only if you maintain a custom `LocalFirstStorage`**, two members were added to
+the interface:
+
+- `Future<void> runInTransaction(Future<void> Function() action)` — run `action`
+  inside a single transaction/batch when your backend supports it (commit once,
+  defer notifications). Backends without a real transaction can simply
+  `=> action()`.
+- `getAllEvents` gained an optional `dataId`: `getAllEvents(String tableName, {String? dataId})`.
+  When provided, return only that record's events (ideally via a storage-level
+  filter such as a SQL `WHERE`).
+- `Stream<void> watchChanges(String repositoryName)` — a broadcast stream that
+  emits (with one initial tick on listen) whenever the repository changes, so
+  callers can reload through their own read path. Wire it to your backend's
+  native change feed (SQLite/Hive do), or return `const Stream.empty()` if your
+  backend does not observe changes.
+
 ### 0.7.x → 0.8.0
 
 #### ⚠️ Event metadata field rename

@@ -1,3 +1,42 @@
+## 0.8.2
+
+### Performance — large remote-event batches (cold sync) are now ~O(n)
+
+Applying a large batch of remote events (typically a device's first sync) used
+to be O(n²) and dominated sync time. In profiling, applying ~98 records dropped
+from **~70s to ~3s**.
+
+- `_markAllPreviousEventAsOk` now **skips events already marked `ok`** instead of
+  re-writing every earlier same-record event on every incoming event (the main
+  O(n²) source).
+- `mergeRemoteEvent` reads each record's event history **once** and reuses it for
+  both the pending-conflict check and the mark-previous pass (previously two
+  identical queries per event).
+- `LocalFirstStorage.getAllEvents` gained an optional **`dataId`** so callers can
+  read a single record's history instead of the whole event log; the SQLite
+  backend pushes it down to a SQL `WHERE`, the in-memory backend filters in Dart.
+- Added **`LocalFirstStorage.runInTransaction(action)`**. `LocalFirstClient.pullChanges`
+  now applies a whole batch inside one storage transaction, so backends that
+  support it (SQLite) commit once and defer watcher notifications until after the
+  commit.
+
+### Read performance
+
+- Added **`LocalFirstStorage.watchChanges(repositoryName)`** and
+  `LocalFirstRepository.watchChanges()` — a lightweight change signal that emits
+  on any write to a repository (plus one initial tick on listen), so callers
+  reload through their own read path instead of receiving rows through the
+  stream.
+- Added an indexed single-item read path (`getById`) so a lookup by id uses the
+  storage's primary-key index instead of scanning and deserializing the whole
+  table.
+
+> ⚠️ **For custom `LocalFirstStorage` implementations:** add `runInTransaction`
+> (backends without a real transaction may just run the action), the optional
+> `dataId` parameter on `getAllEvents`, and **`watchChanges`** (a broadcast
+> `Stream<void>` that ticks on writes). The built-in Hive/SQLite/in-memory
+> backends are already updated.
+
 ## 0.8.1
 
 - Fixed analyzer warning in `BackupService` (unused local variable).

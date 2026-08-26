@@ -23,6 +23,9 @@ LocalFirstRepository<_DummyModel> _dummyRepo() {
 }
 
 class _StorageStub implements LocalFirstStorage {
+  @override
+  Future<void> runInTransaction(Future<void> Function() action) => action();
+
   LocalFirstQuery? lastQuery;
   List<LocalFirstEvent> result = const [];
   final StreamController<List<LocalFirstEvent>> controller =
@@ -43,7 +46,7 @@ class _StorageStub implements LocalFirstStorage {
   Future<List<JsonMap>> getAll(String tableName) async => const [];
 
   @override
-  Future<List<JsonMap>> getAllEvents(String tableName) async => const [];
+  Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId}) async => const [];
 
   @override
   Future<JsonMap?> getById(String tableName, String id) async => null;
@@ -121,6 +124,10 @@ class _StorageStub implements LocalFirstStorage {
     lastQuery = query;
     return controller.stream.map((e) => e.cast<LocalFirstEvent<T>>());
   }
+
+  @override
+  Stream<void> watchChanges(String repositoryName) =>
+      const Stream<void>.empty();
 }
 
 void main() {
