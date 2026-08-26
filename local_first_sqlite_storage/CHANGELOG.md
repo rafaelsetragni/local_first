@@ -11,6 +11,17 @@
 - Together these make a large cold sync dramatically faster on slower devices
   (profiling: applying ~98 records ~8s → ~3s), by cutting per-row fsyncs and
   redundant watcher re-queries.
+- Added an indexed `getById` (primary-key lookup) and `watchChanges`, a broadcast
+  change signal per namespace, plus optional query profiling. Kept WAL journal
+  mode after A/B profiling (WAL ~2121ms vs DELETE ~2437ms on the sync-apply
+  benchmark).
+- Schema-driven migration: a table created by an older app version is upgraded in
+  place (`ALTER TABLE` + backfill) when its schema gains columns, instead of
+  failing on the missing column.
+- Reads (`getById` / `getAll` / `getAllEvents` / `getEventById`) now retry on the
+  base connection when a concurrent `runInTransaction` batch commits/closes the
+  shared transaction mid-read (`transaction_closed`) instead of throwing — e.g. a
+  read triggered while a reconnect sync storm is applying a batch.
 
 ## 0.4.0
 

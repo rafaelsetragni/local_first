@@ -1127,8 +1127,9 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     }
     if (syncStatus != null) map[LocalFirstEvent.kSyncStatus] = syncStatus;
     if (syncOperation != null) map[LocalFirstEvent.kOperation] = syncOperation;
-    if (syncCreatedAt != null)
+    if (syncCreatedAt != null) {
       map[LocalFirstEvent.kSyncCreatedAt] = syncCreatedAt;
+    }
 
     return map;
   }

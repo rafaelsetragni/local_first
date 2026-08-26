@@ -314,6 +314,11 @@ the interface:
 - `getAllEvents` gained an optional `dataId`: `getAllEvents(String tableName, {String? dataId})`.
   When provided, return only that record's events (ideally via a storage-level
   filter such as a SQL `WHERE`).
+- `Stream<void> watchChanges(String repositoryName)` — a broadcast stream that
+  emits (with one initial tick on listen) whenever the repository changes, so
+  callers can reload through their own read path. Wire it to your backend's
+  native change feed (SQLite/Hive do), or return `const Stream.empty()` if your
+  backend does not observe changes.
 
 ### 0.7.x → 0.8.0
 
