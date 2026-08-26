@@ -20,9 +20,21 @@ from **~70s to ~3s**.
   support it (SQLite) commit once and defer watcher notifications until after the
   commit.
 
+### Read performance
+
+- Added **`LocalFirstStorage.watchChanges(repositoryName)`** and
+  `LocalFirstRepository.watchChanges()` — a lightweight change signal that emits
+  on any write to a repository (plus one initial tick on listen), so callers
+  reload through their own read path instead of receiving rows through the
+  stream.
+- Added an indexed single-item read path (`getById`) so a lookup by id uses the
+  storage's primary-key index instead of scanning and deserializing the whole
+  table.
+
 > ⚠️ **For custom `LocalFirstStorage` implementations:** add `runInTransaction`
-> (backends without a real transaction may just run the action) and the optional
-> `dataId` parameter on `getAllEvents`. The built-in Hive/SQLite/in-memory
+> (backends without a real transaction may just run the action), the optional
+> `dataId` parameter on `getAllEvents`, and **`watchChanges`** (a broadcast
+> `Stream<void>` that ticks on writes). The built-in Hive/SQLite/in-memory
 > backends are already updated.
 
 ## 0.8.1
