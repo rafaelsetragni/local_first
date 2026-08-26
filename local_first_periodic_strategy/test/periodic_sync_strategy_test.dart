@@ -88,7 +88,14 @@ class _NoopStorage implements LocalFirstStorage {
   Future<List<JsonMap>> getAll(String tableName) async => [];
 
   @override
-  Future<List<JsonMap>> getAllEvents(String tableName) async => [];
+  Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId}) async =>
+      [];
+
+  @override
+  Future<void> runInTransaction(Future<void> Function() action) => action();
+
+  @override
+  Stream<void> watchChanges(String repositoryName) => const Stream.empty();
 
   @override
   Future<JsonMap?> getById(String tableName, String id) async => null;

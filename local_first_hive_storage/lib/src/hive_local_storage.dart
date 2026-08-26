@@ -806,6 +806,51 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     return controller.stream;
   }
 
+  /// Emits a lightweight signal whenever the repository's data or event box
+  /// changes, plus one initial tick on listen (matching the other backends).
+  ///
+  /// Backed by Hive's native `box.watch()`; callers use it to trigger a reload
+  /// without carrying the changed rows through the stream.
+  ///
+  /// Throws [StateError] if called before [initialize].
+  @override
+  Stream<void> watchChanges(String repositoryName) {
+    if (!_initialized) {
+      throw StateError(
+        'HiveLocalFirstStorage not initialized. Call initialize() first.',
+      );
+    }
+
+    final controller = StreamController<void>.broadcast();
+    StreamSubscription? dataSub;
+    StreamSubscription? eventSub;
+
+    void notify(_) {
+      if (!controller.isClosed) controller.add(null);
+    }
+
+    controller.onListen = () async {
+      try {
+        notify(null);
+        final box = await _getBox(repositoryName);
+        final eventBox = await _getBox(repositoryName, isEvent: true);
+        dataSub = box.watch().listen(notify);
+        eventSub = eventBox.watch().listen(notify);
+      } catch (e, st) {
+        if (!controller.isClosed) {
+          controller.addError(e, st);
+        }
+      }
+    };
+
+    controller.onCancel = () async {
+      await dataSub?.cancel();
+      await eventSub?.cancel();
+    };
+
+    return controller.stream;
+  }
+
   bool _hasRequiredEventFields(JsonMap json) {
     return json.containsKey(LocalFirstEvent.kEventId) &&
         json.containsKey(LocalFirstEvent.kSyncStatus) &&
