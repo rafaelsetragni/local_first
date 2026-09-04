@@ -1,3 +1,19 @@
+## 0.4.2
+
+- Table/schema verification (`_ensureTables`) now runs **once per repository
+  per open** and concurrent first touches **share one run**. Previously every
+  CRUD/query call re-ran the `PRAGMA table_info` + `CREATE INDEX` pass, and N
+  concurrent calls on a table that needed a column migration all read the
+  PRAGMA before any `ALTER TABLE` ran — all but the first then failed with
+  `duplicate column name`, while the others queued behind the lock
+  ("database has been locked for 10s"). Seen in the chat app when several
+  chats loaded their history at once after a schema that added `chat_id`.
+- The column migration tolerates a `duplicate column` error from a competing
+  verification (e.g. one running inside a transaction, which cannot join the
+  shared run without deadlocking) instead of surfacing it.
+- The memo is reset by `close()` (namespace switch) and by `ensureSchema()`
+  (a re-declared schema may need new columns).
+
 ## 0.4.1
 
 - Implemented `LocalFirstStorage.runInTransaction`: applies a batch inside a
