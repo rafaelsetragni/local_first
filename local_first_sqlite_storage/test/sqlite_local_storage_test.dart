@@ -130,7 +130,8 @@ void main() {
         LocalFirstEvent.kDataId: dataId,
         LocalFirstEvent.kSyncStatus: status.index,
         LocalFirstEvent.kOperation: op.index,
-        LocalFirstEvent.kSyncCreatedAt: createdAt ?? DateTime.now().millisecondsSinceEpoch,
+        LocalFirstEvent.kSyncCreatedAt:
+            createdAt ?? DateTime.now().millisecondsSinceEpoch,
       }, LocalFirstEvent.kEventId);
     }
 
@@ -265,17 +266,19 @@ void main() {
       expect(await storage.getById('users', 'tx2'), isNotNull);
     });
 
-    test('runInTransaction rolls back every write when the action throws',
-        () async {
-      await expectLater(
-        storage.runInTransaction(() async {
-          await insertRow({'id': 'rb1', 'username': 'x', 'age': 1});
-          throw StateError('boom');
-        }),
-        throwsA(isA<StateError>()),
-      );
-      expect(await storage.getById('users', 'rb1'), isNull);
-    });
+    test(
+      'runInTransaction rolls back every write when the action throws',
+      () async {
+        await expectLater(
+          storage.runInTransaction(() async {
+            await insertRow({'id': 'rb1', 'username': 'x', 'age': 1});
+            throw StateError('boom');
+          }),
+          throwsA(isA<StateError>()),
+        );
+        expect(await storage.getById('users', 'rb1'), isNull);
+      },
+    );
 
     test('notifyWatchers removes closed observers and emits results', () async {
       final mockable = MockableSqliteLocalFirstStorage(
@@ -436,7 +439,10 @@ void main() {
 
     test('insertEvent validates ids', () async {
       await expectLater(
-        storage.insertEvent('users', {LocalFirstEvent.kEventId: 1, LocalFirstEvent.kDataId: 'a'}, LocalFirstEvent.kEventId),
+        storage.insertEvent('users', {
+          LocalFirstEvent.kEventId: 1,
+          LocalFirstEvent.kDataId: 'a',
+        }, LocalFirstEvent.kEventId),
         throwsA(isA<ArgumentError>()),
       );
       await expectLater(
@@ -1343,7 +1349,8 @@ void main() {
             LocalFirstEvent.kDataId: userId,
             LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
             LocalFirstEvent.kOperation: SyncOperation.insert.index,
-            LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+            LocalFirstEvent.kSyncCreatedAt:
+                DateTime.now().millisecondsSinceEpoch,
           }, LocalFirstEvent.kEventId);
         }
 
@@ -1449,7 +1456,8 @@ void main() {
             LocalFirstEvent.kDataId: userId,
             LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
             LocalFirstEvent.kOperation: SyncOperation.insert.index,
-            LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+            LocalFirstEvent.kSyncCreatedAt:
+                DateTime.now().millisecondsSinceEpoch,
           }, LocalFirstEvent.kEventId);
         }
 
@@ -1491,7 +1499,8 @@ void main() {
             LocalFirstEvent.kDataId: id,
             LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
             LocalFirstEvent.kOperation: SyncOperation.insert.index,
-            LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+            LocalFirstEvent.kSyncCreatedAt:
+                DateTime.now().millisecondsSinceEpoch,
           }, LocalFirstEvent.kEventId);
         }
 
@@ -1526,7 +1535,8 @@ void main() {
             LocalFirstEvent.kDataId: userId,
             LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
             LocalFirstEvent.kOperation: SyncOperation.insert.index,
-            LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+            LocalFirstEvent.kSyncCreatedAt:
+                DateTime.now().millisecondsSinceEpoch,
           }, LocalFirstEvent.kEventId);
         }
 
@@ -1820,7 +1830,8 @@ void main() {
             LocalFirstEvent.kDataId: userId,
             LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
             LocalFirstEvent.kOperation: SyncOperation.insert.index,
-            LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+            LocalFirstEvent.kSyncCreatedAt:
+                DateTime.now().millisecondsSinceEpoch,
           }, LocalFirstEvent.kEventId);
 
           // Verify initial state
@@ -1842,7 +1853,8 @@ void main() {
             LocalFirstEvent.kDataId: userId,
             LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
             LocalFirstEvent.kOperation: SyncOperation.update.index,
-            LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+            LocalFirstEvent.kSyncCreatedAt:
+                DateTime.now().millisecondsSinceEpoch,
           }, LocalFirstEvent.kEventId);
 
           // Query should return the updated data
@@ -1873,7 +1885,8 @@ void main() {
             LocalFirstEvent.kDataId: userId,
             LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
             LocalFirstEvent.kOperation: SyncOperation.insert.index,
-            LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+            LocalFirstEvent.kSyncCreatedAt:
+                DateTime.now().millisecondsSinceEpoch,
           }, LocalFirstEvent.kEventId);
         }
 
@@ -2009,7 +2022,8 @@ void main() {
             LocalFirstEvent.kDataId: userId,
             LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
             LocalFirstEvent.kOperation: SyncOperation.insert.index,
-            LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+            LocalFirstEvent.kSyncCreatedAt:
+                DateTime.now().millisecondsSinceEpoch,
           }, LocalFirstEvent.kEventId);
         }
 
@@ -2053,7 +2067,8 @@ void main() {
             LocalFirstEvent.kDataId: id,
             LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
             LocalFirstEvent.kOperation: SyncOperation.insert.index,
-            LocalFirstEvent.kSyncCreatedAt: DateTime.now().millisecondsSinceEpoch,
+            LocalFirstEvent.kSyncCreatedAt:
+                DateTime.now().millisecondsSinceEpoch,
           }, LocalFirstEvent.kEventId);
         }
 
@@ -2237,11 +2252,9 @@ void main() {
         await storage.initialize();
 
         // v1 schema: no 'age' column yet.
-        await storage.ensureSchema(
-          'mig',
-          const {'username': LocalFieldType.text},
-          idFieldName: 'id',
-        );
+        await storage.ensureSchema('mig', const {
+          'username': LocalFieldType.text,
+        }, idFieldName: 'id');
         await storage.insert('mig', {
           'id': 'u1',
           'username': 'Alice',
@@ -2262,27 +2275,152 @@ void main() {
         expect((await columns()).contains('age'), isFalse);
 
         // v2 schema adds 'age' → migration on the next ensureDataTable.
-        await storage.ensureSchema(
-          'mig',
-          const {
-            'username': LocalFieldType.text,
-            'age': LocalFieldType.integer,
-          },
-          idFieldName: 'id',
-        );
+        await storage.ensureSchema('mig', const {
+          'username': LocalFieldType.text,
+          'age': LocalFieldType.integer,
+        }, idFieldName: 'id');
         await helper.ensureDataTable('mig');
 
         // The column now exists and is backfilled from the JSON data for the
         // pre-existing row (so old installs stay queryable/indexable).
         expect((await columns()).contains('age'), isTrue);
-        final rows = await db.rawQuery(
-          'SELECT age FROM $table WHERE id = ?',
-          ['u1'],
-        );
+        final rows = await db.rawQuery('SELECT age FROM $table WHERE id = ?', [
+          'u1',
+        ]);
         expect(rows.first['age'], 30);
 
         await storage.close();
       },
     );
+
+    test(
+      'concurrent first touches share one migration (no duplicate column)',
+      () async {
+        final storage = SqliteLocalFirstStorage(
+          databasePath: inMemoryDatabasePath,
+          dbFactory: databaseFactoryFfi,
+          namespace: 'mig_concurrent_ns',
+        );
+        await storage.initialize();
+
+        await storage.ensureSchema('mig', const {
+          'username': LocalFieldType.text,
+        }, idFieldName: 'id');
+        await storage.insert('mig', {
+          'id': 'u1',
+          'username': 'Alice',
+          'age': 30,
+          '_lasteventId': 'evt-u1',
+        }, 'id');
+
+        // v2 schema: 'age' must be added. Several callers hit the table at the
+        // same time (the app does this when it opens N chats at once) — every
+        // one of them used to read PRAGMA before any ALTER ran, then all but
+        // the first failed with "duplicate column name".
+        final helper = TestHelperSqliteLocalFirstStorage(storage);
+        helper.schemas['mig'] = const {
+          'username': LocalFieldType.text,
+          'age': LocalFieldType.integer,
+        };
+        helper.invalidateEnsured('mig');
+
+        final results = await Future.wait([
+          storage.getAll('mig'),
+          storage.getAll('mig'),
+          storage.getAll('mig'),
+          storage.getAll('mig'),
+        ]);
+        expect(results, everyElement(hasLength(1)));
+
+        final db = await helper.database;
+        final table = helper.tableName('mig');
+        final ageColumns = [
+          for (final r in await db.rawQuery('PRAGMA table_info($table)'))
+            if (r['name'] == 'age') r,
+        ];
+        expect(ageColumns, hasLength(1));
+        final rows = await db.rawQuery('SELECT age FROM $table WHERE id = ?', [
+          'u1',
+        ]);
+        expect(rows.first['age'], 30);
+
+        await storage.close();
+      },
+    );
+
+    test(
+      'a schema declared after the table was verified still migrates',
+      () async {
+        final storage = SqliteLocalFirstStorage(
+          databasePath: inMemoryDatabasePath,
+          dbFactory: databaseFactoryFfi,
+          namespace: 'mig_redeclare_ns',
+        );
+        await storage.initialize();
+
+        await storage.ensureSchema('mig', const {
+          'username': LocalFieldType.text,
+        }, idFieldName: 'id');
+        await storage.insert('mig', {
+          'id': 'u1',
+          'username': 'Alice',
+          'age': 30,
+          '_lasteventId': 'evt-u1',
+        }, 'id');
+        // Verified (and memoised) by the insert above.
+        await storage.getAll('mig');
+
+        await storage.ensureSchema('mig', const {
+          'username': LocalFieldType.text,
+          'age': LocalFieldType.integer,
+        }, idFieldName: 'id');
+
+        final helper = TestHelperSqliteLocalFirstStorage(storage);
+        final db = await helper.database;
+        final table = helper.tableName('mig');
+        final rows = await db.rawQuery('SELECT age FROM $table WHERE id = ?', [
+          'u1',
+        ]);
+        expect(rows.first['age'], 30);
+
+        await storage.close();
+      },
+    );
+
+    test('a duplicate-column race inside a transaction is tolerated', () async {
+      final storage = SqliteLocalFirstStorage(
+        databasePath: inMemoryDatabasePath,
+        dbFactory: databaseFactoryFfi,
+        namespace: 'mig_txn_ns',
+      );
+      await storage.initialize();
+
+      await storage.ensureSchema('mig', const {
+        'username': LocalFieldType.text,
+      }, idFieldName: 'id');
+      await storage.insert('mig', {
+        'id': 'u1',
+        'username': 'Alice',
+        'age': 30,
+        '_lasteventId': 'evt-u1',
+      }, 'id');
+
+      final helper = TestHelperSqliteLocalFirstStorage(storage);
+      helper.schemas['mig'] = const {
+        'username': LocalFieldType.text,
+        'age': LocalFieldType.integer,
+      };
+      helper.invalidateEnsured('mig');
+
+      // The column is added out of band (as a competing verification would),
+      // then a verification that read the stale PRAGMA runs: its ALTER must
+      // be swallowed as "already there" instead of surfacing.
+      final db = await helper.database;
+      final table = helper.tableName('mig');
+      await db.execute('ALTER TABLE $table ADD COLUMN "age" INTEGER');
+      await expectLater(helper.ensureDataTable('mig'), completes);
+
+      await storage.close();
+    });
   });
 }
