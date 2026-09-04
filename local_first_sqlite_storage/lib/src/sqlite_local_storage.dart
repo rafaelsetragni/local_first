@@ -96,6 +96,19 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   /// cold sync under SQLCipher.
   DatabaseExecutor? _txn;
 
+  /// Repositories whose data + event tables (and schema columns) have been
+  /// verified on the currently open database. Verification runs once per
+  /// repository per open instead of on every CRUD/query call, and is reset by
+  /// [close] (a namespace switch opens a different file) and by [ensureSchema]
+  /// (a new schema may need columns migrated).
+  final Set<String> _ensuredRepositories = {};
+
+  /// Table verifications in flight, keyed by repository. Concurrent first
+  /// touches of the same repository share one run instead of racing each
+  /// other through the same `ALTER TABLE` (which fails with "duplicate column"
+  /// for whoever comes second and serialises everyone else behind the lock).
+  final Map<String, Future<void>> _ensuring = {};
+
   /// While a batch is running, watcher notifications are collected here (one
   /// entry per repository) and flushed once after the transaction commits,
   /// instead of re-emitting every observer's query on every single write.
@@ -233,6 +246,9 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     await _db?.close();
     _db = null;
     _initialized = false;
+    // The next open may be a different file (namespace switch) — verify again.
+    _ensuredRepositories.clear();
+    _ensuring.clear();
   }
 
   /// Changes the active namespace by closing the current database and opening a
@@ -317,6 +333,8 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     required String idFieldName,
   }) async {
     _schemas[tableName] = Map.unmodifiable(schema);
+    // A (re)declared schema may add columns: force the next verification.
+    _ensuredRepositories.remove(tableName);
     await _ensureTables(tableName);
   }
 
@@ -355,29 +373,31 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   ///
   /// Throws [StateError] if called before [initialize].
   @override
-  Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId}) =>
-      _withDb(() async {
-        final db = await _exec();
-        await _ensureTables(tableName);
-        final eventTable = _tableName(tableName, isEvent: true);
-        final dataTable = _tableName(tableName);
+  Future<List<JsonMap>> getAllEvents(
+    String tableName, {
+    String? dataId,
+  }) => _withDb(() async {
+    final db = await _exec();
+    await _ensureTables(tableName);
+    final eventTable = _tableName(tableName, isEvent: true);
+    final dataTable = _tableName(tableName);
 
-        final where = dataId != null
-            ? 'WHERE e.${LocalFirstEvent.kDataId} = ?'
-            : '';
+    final where = dataId != null
+        ? 'WHERE e.${LocalFirstEvent.kDataId} = ?'
+        : '';
 
-        final rows = await db.rawQuery(
-          'SELECT d.data, d._lasteventId, '
-          'e.${LocalFirstEvent.kEventId}, e.${LocalFirstEvent.kDataId}, e.${LocalFirstEvent.kSyncStatus}, '
-          'e.${LocalFirstEvent.kOperation}, e.${LocalFirstEvent.kSyncCreatedAt} '
-          'FROM $eventTable e '
-          'LEFT JOIN $dataTable d ON e.${LocalFirstEvent.kDataId} = d.id '
-          '$where',
-          dataId != null ? [dataId] : null,
-        );
+    final rows = await db.rawQuery(
+      'SELECT d.data, d._lasteventId, '
+      'e.${LocalFirstEvent.kEventId}, e.${LocalFirstEvent.kDataId}, e.${LocalFirstEvent.kSyncStatus}, '
+      'e.${LocalFirstEvent.kOperation}, e.${LocalFirstEvent.kSyncCreatedAt} '
+      'FROM $eventTable e '
+      'LEFT JOIN $dataTable d ON e.${LocalFirstEvent.kDataId} = d.id '
+      '$where',
+      dataId != null ? [dataId] : null,
+    );
 
-        return rows.map(_decodeJoinedRow).toList();
-      });
+    return rows.map(_decodeJoinedRow).toList();
+  });
 
   /// Fetches a single row by id, returning `null` when the row is missing or
   /// marked as deleted.
@@ -414,27 +434,29 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   ///
   /// Throws [StateError] if called before [initialize].
   @override
-  Future<JsonMap?> getEventById(String tableName, String id) =>
-      _withDb(() async {
-        final db = await _exec();
-        await _ensureTables(tableName);
-        final eventTable = _tableName(tableName, isEvent: true);
-        final dataTable = _tableName(tableName);
+  Future<JsonMap?> getEventById(
+    String tableName,
+    String id,
+  ) => _withDb(() async {
+    final db = await _exec();
+    await _ensureTables(tableName);
+    final eventTable = _tableName(tableName, isEvent: true);
+    final dataTable = _tableName(tableName);
 
-        final rows = await db.rawQuery(
-          'SELECT d.data, d._lasteventId, '
-          'e.${LocalFirstEvent.kEventId}, e.${LocalFirstEvent.kDataId}, e.${LocalFirstEvent.kSyncStatus}, '
-          'e.${LocalFirstEvent.kOperation}, e.${LocalFirstEvent.kSyncCreatedAt} '
-          'FROM $eventTable e '
-          'LEFT JOIN $dataTable d ON e.${LocalFirstEvent.kDataId} = d.id '
-          'WHERE e.${LocalFirstEvent.kEventId} = ? '
-          'LIMIT 1',
-          [id],
-        );
+    final rows = await db.rawQuery(
+      'SELECT d.data, d._lasteventId, '
+      'e.${LocalFirstEvent.kEventId}, e.${LocalFirstEvent.kDataId}, e.${LocalFirstEvent.kSyncStatus}, '
+      'e.${LocalFirstEvent.kOperation}, e.${LocalFirstEvent.kSyncCreatedAt} '
+      'FROM $eventTable e '
+      'LEFT JOIN $dataTable d ON e.${LocalFirstEvent.kDataId} = d.id '
+      'WHERE e.${LocalFirstEvent.kEventId} = ? '
+      'LIMIT 1',
+      [id],
+    );
 
-        if (rows.isEmpty) return null;
-        return _decodeJoinedRow(rows.first);
-      });
+    if (rows.isEmpty) return null;
+    return _decodeJoinedRow(rows.first);
+  });
 
   /// Inserts or replaces a state row (upsert).
   ///
@@ -911,8 +933,33 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     String repositoryName, [
     DatabaseExecutor? executor,
   ]) async {
-    await _ensureDataTable(repositoryName, executor);
-    await _ensureEventTable(repositoryName, executor);
+    if (_ensuredRepositories.contains(repositoryName)) return;
+
+    if (executor != null || _txn != null) {
+      // Inside a transaction (a caller-supplied executor or a running batch):
+      // verify on that executor directly. Joining an in-flight verification on
+      // the base connection would deadlock — its statements queue behind the
+      // transaction's lock while the transaction waits for them. The result
+      // is deliberately NOT memoised: a rollback would undo the DDL.
+      await _ensureDataTable(repositoryName, executor);
+      await _ensureEventTable(repositoryName, executor);
+      return;
+    }
+
+    final inFlight = _ensuring[repositoryName];
+    if (inFlight != null) return inFlight;
+
+    final run = () async {
+      await _ensureDataTable(repositoryName);
+      await _ensureEventTable(repositoryName);
+      _ensuredRepositories.add(repositoryName);
+    }();
+    _ensuring[repositoryName] = run;
+    try {
+      await run;
+    } finally {
+      _ensuring.remove(repositoryName);
+    }
   }
 
   Future<void> _ensureDataTable(
@@ -955,10 +1002,18 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     };
     for (final entry in schema.entries) {
       if (existingColumns.contains(entry.key)) continue;
-      await db.execute(
-        'ALTER TABLE $resolvedTableName '
-        'ADD COLUMN "${entry.key}" ${_sqlTypeFor(entry.value)}',
-      );
+      try {
+        await db.execute(
+          'ALTER TABLE $resolvedTableName '
+          'ADD COLUMN "${entry.key}" ${_sqlTypeFor(entry.value)}',
+        );
+      } on DatabaseException catch (e) {
+        // Another verification (e.g. one inside a transaction, which cannot
+        // join the shared in-flight run) added the column between our PRAGMA
+        // and our ALTER. It owns the backfill too — nothing left to do here.
+        if (e.isDuplicateColumnError(entry.key)) continue;
+        rethrow;
+      }
       await db.rawUpdate(
         'UPDATE $resolvedTableName SET "${entry.key}" = json_extract(data, ?)',
         ['\$.${entry.key}'],
@@ -1439,6 +1494,8 @@ class TestHelperSqliteLocalFirstStorage {
       storage._notifyWatchers(repositoryName);
   Future<void> ensureTables(String repositoryName) =>
       storage._ensureTables(repositoryName);
+  void invalidateEnsured(String repositoryName) =>
+      storage._ensuredRepositories.remove(repositoryName);
   Future<void> ensureDataTable(String repositoryName) =>
       storage._ensureDataTable(repositoryName);
   Future<void> ensureEventTable(String repositoryName) =>
