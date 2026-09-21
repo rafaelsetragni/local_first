@@ -598,7 +598,10 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     }
 
     final results = <JsonMap>[];
-    for (final raw in dataTable.values) {
+    // A snapshot: the loop awaits, and a write that lands meanwhile — a
+    // watcher is notified while the row it watches is being deleted — would
+    // otherwise change the map under the iteration.
+    for (final raw in List.of(dataTable.values)) {
       final normalized = _normalizeLegacyMap(JsonMap.from(raw));
       final merged = await _attachEventMetadata(
         query.repositoryName,
@@ -686,13 +689,31 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
   Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query) {
     _ensureInitialized();
     final controller = StreamController<List<LocalFirstEvent<T>>>.broadcast();
+    // One read at a time per watcher. Two writes side by side notify twice,
+    // and two reads side by side may end in either order — the watcher would
+    // be left on the older one. A notification that arrives while a read is
+    // running asks for exactly one more, so the last emission is the newest.
+    var reading = false;
+    var askedAgain = false;
     final observer = _InMemoryQueryObserver<T>(
       emit: () async {
+        if (reading) {
+          askedAgain = true;
+          return;
+        }
+        reading = true;
         try {
-          final results = await this.query<T>(query);
-          if (!controller.isClosed) controller.add(results);
-        } catch (e, st) {
-          if (!controller.isClosed) controller.addError(e, st);
+          do {
+            askedAgain = false;
+            try {
+              final results = await this.query<T>(query);
+              if (!controller.isClosed) controller.add(results);
+            } catch (e, st) {
+              if (!controller.isClosed) controller.addError(e, st);
+            }
+          } while (askedAgain && !controller.isClosed);
+        } finally {
+          reading = false;
         }
       },
       controller: controller,
