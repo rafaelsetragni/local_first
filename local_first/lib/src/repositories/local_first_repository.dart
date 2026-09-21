@@ -439,10 +439,15 @@ abstract class LocalFirstRepository<T> {
     final events = knownEvents ?? await _getAllEvents(dataId: reference.dataId);
     for (final event in events) {
       final sameData = event.dataId == reference.dataId;
+      // The reference itself is never one of its previous events, and it is
+      // recognized by its id and not by its moment: a stored moment is kept
+      // in milliseconds, so the event read back is a few microseconds behind
+      // the one in hand — and marking it ok would drop the write it carries.
+      final isReference = event.eventId == reference.eventId;
       final isCurrentOrNewer = !event.syncCreatedAt.isBefore(
         reference.syncCreatedAt,
       );
-      if (!sameData || isCurrentOrNewer) continue;
+      if (!sameData || isReference || isCurrentOrNewer) continue;
       // Skip events already marked ok: re-writing them on every subsequent
       // event of the same record is redundant and turns the whole apply into
       // O(n²) DB writes (the dominant cost of a large cold sync).
