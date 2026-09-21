@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_first/local_first.dart';
@@ -453,6 +454,85 @@ void main() {
         throwsA(isA<ArgumentError>()),
       );
     });
+
+    test(
+      'deleteWhere drops the rows that match a schema column, and their events',
+      () async {
+        await insertRow({'id': '1', 'username': 'alice', 'age': 30});
+        await insertRow({'id': '2', 'username': 'bob', 'age': 30});
+        await insertRow({'id': '3', 'username': 'carol', 'age': 41});
+        for (final id in ['1', '2', '3']) {
+          await insertEvent(
+            dataId: id,
+            op: SyncOperation.insert,
+            status: SyncStatus.pending,
+          );
+        }
+
+        final removed = await storage.deleteWhere(
+          'users',
+          field: 'age',
+          value: 30,
+        );
+
+        expect(removed, 2);
+        expect((await storage.getAll('users')).map((row) => row['id']), ['3']);
+        // what was logged for the dropped rows goes with them: nothing of
+        // theirs is left to be pushed
+        expect(
+          (await storage.getAllEvents(
+            'users',
+          )).map((event) => event[LocalFirstEvent.kDataId]),
+          ['3'],
+        );
+      },
+    );
+
+    test(
+      'deleteWhere matches a field that is only in the payload, and null',
+      () async {
+        await insertRow({'id': '1', 'username': 'alice', 'page_id': 'p-1'});
+        await insertRow({'id': '2', 'username': 'bob', 'page_id': 'p-2'});
+        await insertRow({'id': '3', 'username': 'carol'});
+
+        expect(
+          await storage.deleteWhere('users', field: 'page_id', value: 'p-1'),
+          1,
+        );
+        expect(
+          await storage.deleteWhere('users', field: 'page_id', value: null),
+          1,
+        );
+        expect((await storage.getAll('users')).map((row) => row['id']), ['2']);
+      },
+    );
+
+    test('deleteWhere that matches nothing removes nothing', () async {
+      await insertRow({'id': '1', 'username': 'alice', 'age': 30});
+
+      expect(await storage.deleteWhere('users', field: 'age', value: 99), 0);
+      expect(await storage.getAll('users'), hasLength(1));
+    });
+
+    test(
+      'deleteWhere joins a transaction in progress and rolls back with it',
+      () async {
+        await insertRow({'id': '1', 'username': 'alice', 'age': 30});
+
+        await expectLater(
+          storage.runInTransaction(() async {
+            expect(
+              await storage.deleteWhere('users', field: 'age', value: 30),
+              1,
+            );
+            throw StateError('the batch failed after the drop');
+          }),
+          throwsA(isA<StateError>()),
+        );
+
+        expect(await storage.getAll('users'), hasLength(1));
+      },
+    );
 
     test('delete/deleteAll/deleteEvent/deleteAllEvents remove rows', () async {
       await insertRow({'id': '1', 'username': 'alice', 'age': 1});
@@ -2150,6 +2230,57 @@ void main() {
         expect(event.data.username, 'delayeduser');
         expect(event.data.age, 60);
       });
+    });
+  });
+
+  group('SqliteLocalFirstStorage.deleteDatabases', () {
+    late Directory folder;
+
+    setUp(() async {
+      folder = await Directory.systemTemp.createTemp('local_first_delete_');
+    });
+
+    tearDown(() async {
+      if (await folder.exists()) await folder.delete(recursive: true);
+    });
+
+    Future<void> touch(String name) =>
+        File('${folder.path}/$name').writeAsString('not a real database');
+
+    Future<List<String>> left() async =>
+        [await for (final entry in folder.list()) entry.uri.pathSegments.last]
+          ..sort();
+
+    test(
+      'removes the database of every namespace under that name, and nothing else',
+      () async {
+        await touch('old.db');
+        await touch('user_a__old.db');
+        await touch('user_b__old.db');
+        await touch('new.db');
+        await touch('user_a__new.db');
+        // a name that merely ends the same way is somebody else's file
+        await touch('very_old.db');
+
+        final removed = await SqliteLocalFirstStorage.deleteDatabases(
+          'old.db',
+          directory: folder.path,
+          dbFactory: databaseFactoryFfi,
+        );
+
+        expect(removed, 3);
+        expect(await left(), ['new.db', 'user_a__new.db', 'very_old.db']);
+      },
+    );
+
+    test('a folder that does not exist has nothing to remove', () async {
+      final removed = await SqliteLocalFirstStorage.deleteDatabases(
+        'old.db',
+        directory: '${folder.path}/missing',
+        dbFactory: databaseFactoryFfi,
+      );
+
+      expect(removed, 0);
     });
   });
 

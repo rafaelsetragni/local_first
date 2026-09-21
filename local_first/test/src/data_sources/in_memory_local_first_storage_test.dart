@@ -474,6 +474,34 @@ void main() {
       expect(updated?[LocalFirstEvent.kLastEventId], 'legacy-last-event');
     });
 
+    test('deleteWhere drops the rows that match, and their events', () async {
+      await writeState(id: 'a', eventId: 'evt-a', age: 30);
+      await writeState(id: 'b', eventId: 'evt-b', age: 30);
+      await writeState(id: 'c', eventId: 'evt-c', age: 41);
+      for (final id in ['a', 'b', 'c']) {
+        await writeEvent(
+          _event(
+            eventId: 'evt-$id',
+            dataId: id,
+            operation: SyncOperation.insert,
+          ),
+        );
+      }
+
+      expect(await storage.deleteWhere(repo.name, field: 'age', value: 30), 2);
+
+      expect((await storage.getAll(repo.name)).map((row) => row['id']), ['c']);
+      expect(
+        (await storage.getAllEvents(
+          repo.name,
+        )).map((event) => event[LocalFirstEvent.kDataId]),
+        ['c'],
+      );
+      // nothing matches any more, and an unknown table has nothing to drop
+      expect(await storage.deleteWhere(repo.name, field: 'age', value: 30), 0);
+      expect(await storage.deleteWhere('nobody', field: 'age', value: 30), 0);
+    });
+
     test('deleteAll and deleteAllEvents clear respective tables', () async {
       await writeState(id: 'wipe', eventId: 'evt-wipe');
       await writeEvent(

@@ -424,6 +424,40 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     await _notifyWatchers(tableName);
   }
 
+  /// Drops every record whose [field] equals [value], and their events.
+  ///
+  /// - [tableName]: Repository name.
+  /// - [field]: Payload field to match.
+  /// - [value]: Value the field must hold.
+  ///
+  /// Returns the number of records removed. Watchers are notified only when
+  /// something was removed.
+  ///
+  /// Throws [StateError] if called before [initialize].
+  @override
+  Future<int> deleteWhere(
+    String tableName, {
+    required String field,
+    required Object? value,
+  }) async {
+    _ensureInitialized();
+    final rows = _data[tableName];
+    if (rows == null) return 0;
+
+    final ids = <String>{
+      for (final entry in rows.entries)
+        if (entry.value[field] == value) entry.key,
+    };
+    if (ids.isEmpty) return 0;
+
+    rows.removeWhere((id, _) => ids.contains(id));
+    _events[tableName]?.removeWhere(
+      (_, event) => ids.contains(event[LocalFirstEvent.kDataId]),
+    );
+    await _notifyWatchers(tableName);
+    return ids.length;
+  }
+
   bool _isSupportedConfigValue(Object value) {
     if (value is bool || value is int || value is double || value is String) {
       return true;

@@ -121,6 +121,13 @@ class _FakeStorage extends LocalFirstStorage {
   }
 
   @override
+  Future<int> deleteWhere(
+    String tableName, {
+    required String field,
+    required Object? value,
+  }) async => 0;
+
+  @override
   Future<bool> setConfigValue<T>(String key, T value) async {
     meta[key] = value;
     return true;

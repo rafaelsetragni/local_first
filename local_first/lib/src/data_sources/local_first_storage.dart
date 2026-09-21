@@ -97,6 +97,23 @@ abstract class LocalFirstStorage implements ConfigKeyValueStorage {
   /// Deletes all items from the event table/collection.
   Future<void> deleteAllEvents(String tableName);
 
+  /// Deletes every item of the state table whose [field] equals [value],
+  /// together with the events logged for those items, and returns how many
+  /// items were removed.
+  ///
+  /// This is a local drop, not a delete to be synced: nothing is queued for
+  /// the remote. It exists for data that stopped being the device's to hold —
+  /// the rows of a conversation the account left, of a page it unfollowed —
+  /// where the server already knows and only the local copy has to go.
+  ///
+  /// A [field] declared in the repository's schema is matched on its own
+  /// column; any other field is matched inside the stored payload.
+  Future<int> deleteWhere(
+    String tableName, {
+    required String field,
+    required Object? value,
+  });
+
   /// Stores arbitrary key/value metadata for config purposes.
   @override
   Future<bool> setConfigValue<T>(String key, T value);

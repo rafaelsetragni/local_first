@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:local_first/local_first.dart';
@@ -73,6 +74,37 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   Future<String> _databasePath() async {
     if (databasePath != null) return databasePath!;
     return p.join(await getDatabasesPath(), _resolvedDatabaseName);
+  }
+
+  /// Deletes every database file named [databaseName]: the default one and
+  /// the one of each namespace, with whatever journal files sit beside them.
+  /// Returns how many databases were removed.
+  ///
+  /// For an app whose data model moved on: the new model opens under a new
+  /// [databaseName], and the files written under the old one — which nothing
+  /// will open again — are removed from the device. Never call it with the
+  /// name of a database that is open.
+  ///
+  /// - [directory]: where to look; the platform's databases folder by default.
+  static Future<int> deleteDatabases(
+    String databaseName, {
+    String? directory,
+    DatabaseFactory? dbFactory,
+  }) async {
+    final factory = dbFactory ?? databaseFactory;
+    final folder = Directory(directory ?? await getDatabasesPath());
+    if (!await folder.exists()) return 0;
+
+    var removed = 0;
+    await for (final entry in folder.list(followLinks: false)) {
+      if (entry is! File) continue;
+      final name = p.basename(entry.path);
+      // `<name>` for the default namespace, `<namespace>__<name>` for the rest
+      if (name != databaseName && !name.endsWith('__$databaseName')) continue;
+      await factory.deleteDatabase(entry.path);
+      removed++;
+    }
+    return removed;
   }
 
   Future<Database> get _database async {
@@ -645,6 +677,67 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     await db.delete(resolvedTable);
     await _notifyWatchers(tableName);
+  }
+
+  /// Drops every state row whose [field] equals [value], and the events
+  /// logged for those rows, then notifies watchers.
+  ///
+  /// - [tableName]: Repository name.
+  /// - [field]: Field to match. One declared in the repository's schema is
+  ///   matched on its own indexed column; any other is read from the stored
+  ///   payload, which scans the table — declare the fields you drop by.
+  /// - [value]: Value the field must hold; `null` matches rows without it.
+  ///
+  /// Returns the number of state rows removed. Both deletes run in one
+  /// transaction, joining the one in progress when there is one.
+  ///
+  /// Throws [StateError] if called before [initialize].
+  @override
+  Future<int> deleteWhere(
+    String tableName, {
+    required String field,
+    required Object? value,
+  }) async {
+    await _exec();
+    await _ensureTables(tableName);
+    final dataTable = _tableName(tableName);
+    final eventTable = _tableName(tableName, isEvent: true);
+    final schema = _schemaFor(tableName);
+
+    final args = <Object?>[];
+    final String column;
+    if (schema.containsKey(field)) {
+      column = '"$field"';
+    } else {
+      column = 'json_extract(data, ?)';
+      args.add('\$.$field');
+    }
+    final String condition;
+    if (value == null) {
+      condition = '$column IS NULL';
+    } else {
+      condition = '$column = ?';
+      args.add(_encodeValue(schema[field], value));
+    }
+
+    var removed = 0;
+    await runInTransaction(() async {
+      final db = await _exec();
+      // The events first: once the rows are gone there is nothing left to
+      // find them by.
+      await db.rawDelete(
+        'DELETE FROM $eventTable WHERE ${LocalFirstEvent.kDataId} IN '
+        '(SELECT id FROM $dataTable WHERE $condition)',
+        args,
+      );
+      removed = await db.rawDelete(
+        'DELETE FROM $dataTable WHERE $condition',
+        args,
+      );
+    });
+
+    if (removed > 0) await _notifyWatchers(tableName);
+    return removed;
   }
 
   /// Deletes all event rows for the table and notifies watchers.
