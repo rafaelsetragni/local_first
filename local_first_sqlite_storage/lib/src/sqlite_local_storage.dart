@@ -660,7 +660,13 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     final resolvedTable = _tableName(repositoryName, isEvent: true);
     await _ensureEventTable(repositoryName);
 
-    await db.delete(resolvedTable, where: 'id = ?', whereArgs: [id]);
+    // an event is identified by its event id: the event table has no `id`
+    // column, and asking by one failed on every database but a legacy one
+    await db.delete(
+      resolvedTable,
+      where: '${LocalFirstEvent.kEventId} = ?',
+      whereArgs: [id],
+    );
     await _notifyWatchers(repositoryName);
   }
 
@@ -677,6 +683,45 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     await db.delete(resolvedTable);
     await _notifyWatchers(tableName);
+  }
+
+  /// Drops every state row whose events are all synced, with those events,
+  /// then notifies watchers.
+  ///
+  /// - [tableName]: Repository name.
+  ///
+  /// Returns the number of state rows removed. A row with an event still
+  /// waiting to be sent stays, with its events. Both deletes run in one
+  /// transaction, joining the one in progress when there is one.
+  ///
+  /// Throws [StateError] if called before [initialize].
+  @override
+  Future<int> deleteAllSynced(String tableName) async {
+    await _exec();
+    await _ensureTables(tableName);
+    final dataTable = _tableName(tableName);
+    final eventTable = _tableName(tableName, isEvent: true);
+    final waiting =
+        'SELECT ${LocalFirstEvent.kDataId} FROM $eventTable '
+        'WHERE ${LocalFirstEvent.kSyncStatus} IS NOT ?';
+    final synced = [SyncStatus.ok.index];
+
+    var removed = 0;
+    await runInTransaction(() async {
+      final db = await _exec();
+      removed = await db.rawDelete(
+        'DELETE FROM $dataTable WHERE id NOT IN ($waiting)',
+        synced,
+      );
+      await db.rawDelete(
+        'DELETE FROM $eventTable '
+        'WHERE ${LocalFirstEvent.kDataId} NOT IN ($waiting)',
+        synced,
+      );
+    });
+
+    if (removed > 0) await _notifyWatchers(tableName);
+    return removed;
   }
 
   /// Drops every state row whose [field] equals [value], and the events

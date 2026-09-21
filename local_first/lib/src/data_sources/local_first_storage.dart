@@ -97,6 +97,16 @@ abstract class LocalFirstStorage implements ConfigKeyValueStorage {
   /// Deletes all items from the event table/collection.
   Future<void> deleteAllEvents(String tableName);
 
+  /// Deletes every item of the state table whose events are all synced, with
+  /// those events, and returns how many items were removed. An item with a
+  /// write still waiting to be sent stays, with its events, so nothing the
+  /// device has yet to say is lost.
+  ///
+  /// For a full re-sync of one repository: what the device holds is replaced by
+  /// what the server sends, and what the device wrote and has not sent is
+  /// sent afterwards.
+  Future<int> deleteAllSynced(String tableName);
+
   /// Deletes every item of the state table whose [field] equals [value],
   /// together with the events logged for those items, and returns how many
   /// items were removed.

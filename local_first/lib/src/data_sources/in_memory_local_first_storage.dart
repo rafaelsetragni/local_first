@@ -424,6 +424,41 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     await _notifyWatchers(tableName);
   }
 
+  /// Drops every record whose events are all synced, and those events.
+  ///
+  /// - [tableName]: Repository name.
+  ///
+  /// Returns the number of records removed. A record with an event still
+  /// waiting to be sent stays, with its events.
+  ///
+  /// Throws [StateError] if called before [initialize].
+  @override
+  Future<int> deleteAllSynced(String tableName) async {
+    _ensureInitialized();
+    final rows = _data[tableName];
+    if (rows == null) return 0;
+
+    final events = _events[tableName] ?? const <String, JsonMap>{};
+    final waiting = <Object?>{
+      for (final event in events.values)
+        if (event[LocalFirstEvent.kSyncStatus] != SyncStatus.ok.index)
+          event[LocalFirstEvent.kDataId],
+    };
+    final ids = rows.keys.where((id) => !waiting.contains(id)).toSet();
+    if (ids.isEmpty && events.values.every(
+      (event) => waiting.contains(event[LocalFirstEvent.kDataId]),
+    )) {
+      return 0;
+    }
+
+    rows.removeWhere((id, _) => ids.contains(id));
+    _events[tableName]?.removeWhere(
+      (_, event) => !waiting.contains(event[LocalFirstEvent.kDataId]),
+    );
+    await _notifyWatchers(tableName);
+    return ids.length;
+  }
+
   /// Drops every record whose [field] equals [value], and their events.
   ///
   /// - [tableName]: Repository name.

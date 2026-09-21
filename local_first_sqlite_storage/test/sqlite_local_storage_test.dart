@@ -212,10 +212,21 @@ void main() {
         status: SyncStatus.ok,
         eventId: 'evt-del',
       );
-      expect(await storage.getAllEvents('users'), isNotEmpty);
-      await expectLater(
-        storage.deleteEvent('users', 'evt-del'),
-        throwsA(isA<DatabaseException>()),
+      await insertEvent(
+        dataId: 'kept',
+        op: SyncOperation.insert,
+        status: SyncStatus.pending,
+        eventId: 'evt-kept',
+      );
+
+      await storage.deleteEvent('users', 'evt-del');
+
+      // the one event asked for, by its event id, and no other
+      expect(
+        (await storage.getAllEvents(
+          'users',
+        )).map((event) => event[LocalFirstEvent.kEventId]),
+        ['evt-kept'],
       );
     });
 
@@ -232,6 +243,8 @@ void main() {
         LocalFirstEvent.kSyncCreatedAt: 1,
       });
       await storage.deleteEvent('users', 'evt-legacy');
+
+      expect(await storage.getAllEvents('users', dataId: 'legacy'), isEmpty);
     });
 
     test('watchQuery throws when not initialized', () {
@@ -504,6 +517,60 @@ void main() {
           1,
         );
         expect((await storage.getAll('users')).map((row) => row['id']), ['2']);
+      },
+    );
+
+    test(
+      'deleteAllSynced drops what is synced and keeps what still waits to be sent',
+      () async {
+        await insertRow({'id': 'synced', 'username': 'a'});
+        await insertRow({'id': 'waiting', 'username': 'b'});
+        await insertRow({'id': 'failed', 'username': 'c'});
+        await insertRow({'id': 'edited', 'username': 'd'});
+        await insertEvent(
+          dataId: 'synced',
+          op: SyncOperation.insert,
+          status: SyncStatus.ok,
+        );
+        await insertEvent(
+          dataId: 'waiting',
+          op: SyncOperation.insert,
+          status: SyncStatus.pending,
+        );
+        // a write that failed is still a write the device has to say
+        await insertEvent(
+          dataId: 'failed',
+          op: SyncOperation.insert,
+          status: SyncStatus.failed,
+        );
+        // created long ago and synced, edited since and not sent yet
+        await insertEvent(
+          dataId: 'edited',
+          op: SyncOperation.insert,
+          status: SyncStatus.ok,
+          eventId: 'evt-edited-1',
+        );
+        await insertEvent(
+          dataId: 'edited',
+          op: SyncOperation.update,
+          status: SyncStatus.pending,
+          eventId: 'evt-edited-2',
+        );
+
+        expect(await storage.deleteAllSynced('users'), 1);
+
+        expect(
+          (await storage.getAll('users')).map((row) => row['id']).toSet(),
+          {'waiting', 'failed', 'edited'},
+        );
+        expect(
+          (await storage.getAllEvents(
+            'users',
+          )).map((event) => event[LocalFirstEvent.kEventId]).toSet(),
+          {'evt-waiting', 'evt-failed', 'evt-edited-1', 'evt-edited-2'},
+        );
+        // nothing left that is synced: the second time removes nothing
+        expect(await storage.deleteAllSynced('users'), 0);
       },
     );
 

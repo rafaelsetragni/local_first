@@ -401,6 +401,44 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     await box.clear();
   }
 
+  /// Drops every record whose events are all synced, and those events.
+  ///
+  /// - [tableName]: Repository name.
+  ///
+  /// Returns the number of records removed. A record with an event still
+  /// waiting to be sent stays, with its events.
+  ///
+  /// Throws [StateError] if called before [initialize].
+  @override
+  Future<int> deleteAllSynced(String tableName) async {
+    final dataBox = await _getBox(tableName);
+    final eventBox = await _getBox(tableName, isEvent: true);
+
+    final waiting = <Object?>{};
+    final synced = <String>[];
+    for (final key in eventBox.keys.cast<String>()) {
+      final meta = await _readBoxValue(eventBox, key);
+      if (meta == null) continue;
+      if (meta[LocalFirstEvent.kSyncStatus] != SyncStatus.ok.index) {
+        waiting.add(meta[LocalFirstEvent.kDataId]);
+      }
+    }
+    for (final key in eventBox.keys.cast<String>()) {
+      final meta = await _readBoxValue(eventBox, key);
+      if (meta != null && !waiting.contains(meta[LocalFirstEvent.kDataId])) {
+        synced.add(key);
+      }
+    }
+    final ids = dataBox.keys
+        .cast<String>()
+        .where((id) => !waiting.contains(id))
+        .toList();
+
+    await eventBox.deleteAll(synced);
+    await dataBox.deleteAll(ids);
+    return ids.length;
+  }
+
   /// Drops every record whose [field] equals [value], and their events.
   ///
   /// - [tableName]: Repository name.

@@ -75,6 +75,9 @@ class _NoopStorage implements LocalFirstStorage {
   Future<void> deleteAllEvents(String tableName) async {}
 
   @override
+  Future<int> deleteAllSynced(String tableName) async => 0;
+
+  @override
   Future<int> deleteWhere(
     String tableName, {
     required String field,

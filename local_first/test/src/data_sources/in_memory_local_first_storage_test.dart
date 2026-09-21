@@ -502,6 +502,40 @@ void main() {
       expect(await storage.deleteWhere('nobody', field: 'age', value: 30), 0);
     });
 
+    test('deleteAllSynced drops what is synced and keeps what still waits', () async {
+      await writeState(id: 'synced', eventId: 'evt-synced');
+      await writeState(id: 'waiting', eventId: 'evt-waiting');
+      await writeEvent(
+        _event(
+          eventId: 'evt-synced',
+          dataId: 'synced',
+          operation: SyncOperation.insert,
+          status: SyncStatus.ok,
+        ),
+      );
+      await writeEvent(
+        _event(
+          eventId: 'evt-waiting',
+          dataId: 'waiting',
+          operation: SyncOperation.insert,
+        ),
+      );
+
+      expect(await storage.deleteAllSynced(repo.name), 1);
+
+      expect((await storage.getAll(repo.name)).map((row) => row['id']), [
+        'waiting',
+      ]);
+      expect(
+        (await storage.getAllEvents(
+          repo.name,
+        )).map((event) => event[LocalFirstEvent.kDataId]),
+        ['waiting'],
+      );
+      expect(await storage.deleteAllSynced(repo.name), 0);
+      expect(await storage.deleteAllSynced('nobody'), 0);
+    });
+
     test('deleteAll and deleteAllEvents clear respective tables', () async {
       await writeState(id: 'wipe', eventId: 'evt-wipe');
       await writeEvent(

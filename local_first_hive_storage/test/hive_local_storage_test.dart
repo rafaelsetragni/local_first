@@ -420,6 +420,31 @@ void main() {
       },
     );
 
+    test('deleteAllSynced drops what is synced and keeps what still waits', () async {
+      await storage.insert('users', {'id': '1', 'team': 'red'}, 'id');
+      await storage.insert('users', {'id': '2', 'team': 'red'}, 'id');
+      for (final (id, status) in [('1', SyncStatus.ok), ('2', SyncStatus.pending)]) {
+        await storage.insertEvent('users', {
+          LocalFirstEvent.kEventId: 'evt-$id',
+          LocalFirstEvent.kDataId: id,
+          LocalFirstEvent.kSyncStatus: status.index,
+          LocalFirstEvent.kOperation: SyncOperation.insert.index,
+          LocalFirstEvent.kSyncCreatedAt: 1,
+        }, LocalFirstEvent.kEventId);
+      }
+
+      expect(await storage.deleteAllSynced('users'), 1);
+
+      expect((await storage.getAll('users')).map((row) => row['id']), ['2']);
+      expect(
+        (await storage.getAllEvents(
+          'users',
+        )).map((event) => event[LocalFirstEvent.kDataId]),
+        ['2'],
+      );
+      expect(await storage.deleteAllSynced('users'), 0);
+    });
+
     test('deleteAllEvents clears event boxes', () async {
       await storage.insertEvent('users', {
         LocalFirstEvent.kEventId: 'evt-1',

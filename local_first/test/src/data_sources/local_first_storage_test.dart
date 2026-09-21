@@ -121,6 +121,9 @@ class _FakeStorage extends LocalFirstStorage {
   }
 
   @override
+  Future<int> deleteAllSynced(String tableName) async => 0;
+
+  @override
   Future<int> deleteWhere(
     String tableName, {
     required String field,
