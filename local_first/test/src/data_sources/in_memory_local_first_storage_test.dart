@@ -339,6 +339,38 @@ void main() {
       expect(await storage.getConfigValue('k'), 'v1');
     });
 
+    test(
+      'a watcher survives a namespace switch and follows the data of the '
+      'namespace that is current — like the SQLite storage',
+      () async {
+        // registered while 'default' is current, before any account signs in
+        final emissions = <List<LocalFirstEvent<_User>>>[];
+        final sub = storage.watchQuery(baseQuery).listen(emissions.add);
+        await pumpEventQueue();
+
+        // an account's namespace: what is written there reaches the watcher
+        await storage.useNamespace('ana');
+        await writeState(id: '1', eventId: 'evt-1', age: 20);
+        await writeEvent(
+          _event(eventId: 'evt-1', dataId: '1', operation: SyncOperation.insert),
+        );
+        await pumpEventQueue();
+        expect(emissions.last.map((e) => e.dataId), ['1']);
+
+        // signing out: the switch itself re-emits, with the empty default
+        await storage.useNamespace('default');
+        await pumpEventQueue();
+        expect(emissions.last, isEmpty);
+
+        // signing back in: the account's rows again, from the store alone
+        await storage.useNamespace('ana');
+        await pumpEventQueue();
+        expect(emissions.last.map((e) => e.dataId), ['1']);
+
+        await sub.cancel();
+      },
+    );
+
     test('close should terminate active watchers', () async {
       final stream = storage.watchQuery(baseQuery);
       final done = expectLater(stream, emitsDone);
