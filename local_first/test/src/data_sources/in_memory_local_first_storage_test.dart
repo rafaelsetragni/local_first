@@ -188,6 +188,46 @@ void main() {
       );
     });
 
+    test(
+      'a watched query survives a row deleted while it is being read',
+      () async {
+        // A remote delete logs its event and removes the row side by side.
+        // The event notifies the watcher, whose query awaits between rows —
+        // and the removal lands under it.
+        await writeState(id: '1', eventId: 'evt-1', age: 20);
+        await writeEvent(
+          _event(eventId: 'evt-1', dataId: '1', operation: SyncOperation.insert),
+        );
+        await writeState(id: '2', eventId: 'evt-2', age: 30);
+        await writeEvent(
+          _event(eventId: 'evt-2', dataId: '2', operation: SyncOperation.insert),
+        );
+
+        final errors = <Object>[];
+        final emissions = <List<LocalFirstEvent<_User>>>[];
+        final sub = storage
+            .watchQuery(baseQuery)
+            .listen(emissions.add, onError: errors.add);
+        await pumpEventQueue();
+
+        await Future.wait([
+          writeEvent(
+            _event(
+              eventId: 'evt-3',
+              dataId: '1',
+              operation: SyncOperation.delete,
+            ),
+          ),
+          storage.delete(repo.name, '1'),
+        ]);
+        await pumpEventQueue();
+
+        expect(errors, isEmpty);
+        expect(emissions.last.map((e) => e.dataId), ['2']);
+        await sub.cancel();
+      },
+    );
+
     test('watchQuery is reactive to state and event changes', () async {
       final emissions = <List<LocalFirstEvent<_User>>>[];
       final sub = storage.watchQuery(baseQuery).listen(emissions.add);
@@ -472,6 +512,68 @@ void main() {
 
       final updated = await storage.getById(repo.name, 'legacy-last');
       expect(updated?[LocalFirstEvent.kLastEventId], 'legacy-last-event');
+    });
+
+    test('deleteWhere drops the rows that match, and their events', () async {
+      await writeState(id: 'a', eventId: 'evt-a', age: 30);
+      await writeState(id: 'b', eventId: 'evt-b', age: 30);
+      await writeState(id: 'c', eventId: 'evt-c', age: 41);
+      for (final id in ['a', 'b', 'c']) {
+        await writeEvent(
+          _event(
+            eventId: 'evt-$id',
+            dataId: id,
+            operation: SyncOperation.insert,
+          ),
+        );
+      }
+
+      expect(await storage.deleteWhere(repo.name, field: 'age', value: 30), 2);
+
+      expect((await storage.getAll(repo.name)).map((row) => row['id']), ['c']);
+      expect(
+        (await storage.getAllEvents(
+          repo.name,
+        )).map((event) => event[LocalFirstEvent.kDataId]),
+        ['c'],
+      );
+      // nothing matches any more, and an unknown table has nothing to drop
+      expect(await storage.deleteWhere(repo.name, field: 'age', value: 30), 0);
+      expect(await storage.deleteWhere('nobody', field: 'age', value: 30), 0);
+    });
+
+    test('deleteAllSynced drops what is synced and keeps what still waits', () async {
+      await writeState(id: 'synced', eventId: 'evt-synced');
+      await writeState(id: 'waiting', eventId: 'evt-waiting');
+      await writeEvent(
+        _event(
+          eventId: 'evt-synced',
+          dataId: 'synced',
+          operation: SyncOperation.insert,
+          status: SyncStatus.ok,
+        ),
+      );
+      await writeEvent(
+        _event(
+          eventId: 'evt-waiting',
+          dataId: 'waiting',
+          operation: SyncOperation.insert,
+        ),
+      );
+
+      expect(await storage.deleteAllSynced(repo.name), 1);
+
+      expect((await storage.getAll(repo.name)).map((row) => row['id']), [
+        'waiting',
+      ]);
+      expect(
+        (await storage.getAllEvents(
+          repo.name,
+        )).map((event) => event[LocalFirstEvent.kDataId]),
+        ['waiting'],
+      );
+      expect(await storage.deleteAllSynced(repo.name), 0);
+      expect(await storage.deleteAllSynced('nobody'), 0);
     });
 
     test('deleteAll and deleteAllEvents clear respective tables', () async {

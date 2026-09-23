@@ -43,6 +43,16 @@ class _StubStorage implements LocalFirstStorage {
   Future<void> deleteAllEvents(String tableName) async {}
 
   @override
+  Future<int> deleteAllSynced(String tableName) async => 0;
+
+  @override
+  Future<int> deleteWhere(
+    String tableName, {
+    required String field,
+    required Object? value,
+  }) async => 0;
+
+  @override
   Future<void> deleteEvent(String repositoryName, String id) async {
     deleteCount++;
   }
@@ -245,9 +255,13 @@ void main() {
 
       expect(storage.deleteCount, 1);
       expect(storage.insertEventCount, 1);
+      // the delete event is the write to send: marking it ok would drop it,
+      // and it is never one of the events that came before it
       expect(
         storage.updatedEvents.map((e) => e[LocalFirstEvent.kEventId]),
-        isNotEmpty,
+        isNot(
+          contains(storage.lastInsertedEvent![LocalFirstEvent.kEventId]),
+        ),
       );
     });
 
@@ -968,6 +982,56 @@ void main() {
 
       expect(json[LocalFirstEvent.kLastEventId], event.eventId);
       expect(json['field'], 'value');
+    });
+  });
+
+  group('LocalFirstRepository delete over a real storage', () {
+    late InMemoryLocalFirstStorage storage;
+    late LocalFirstRepository<JsonMap> repository;
+    late LocalFirstClient client;
+
+    setUp(() async {
+      storage = InMemoryLocalFirstStorage();
+      repository = LocalFirstRepository<JsonMap>.create(
+        name: 'things',
+        getId: (item) => item['id'] as String,
+        toJson: (item) => item,
+        fromJson: (json) => json,
+      );
+      client = LocalFirstClient(
+        repositories: [repository],
+        localStorage: storage,
+      );
+      await client.initialize();
+    });
+
+    tearDown(() async => storage.close());
+
+    test('a delete that needs sync stays pending: it is the write to send', () async {
+      await repository.upsert({'id': 'thing-1'}, needSync: false);
+
+      await repository.delete('thing-1', needSync: true);
+
+      final pending = await repository.getPendingEvents();
+      expect(pending.map((event) => event.syncOperation), [SyncOperation.delete]);
+      expect(pending.single.dataId, 'thing-1');
+    });
+
+    test('the events before it are marked ok, and the delete is not one of them', () async {
+      await repository.upsert({'id': 'thing-2'}, needSync: true);
+
+      await repository.delete('thing-2', needSync: true);
+
+      final pending = await repository.getPendingEvents();
+      expect(pending.map((event) => event.syncOperation), [SyncOperation.delete]);
+    });
+
+    test('a delete that does not need sync leaves nothing to send', () async {
+      await repository.upsert({'id': 'thing-3'}, needSync: false);
+
+      await repository.delete('thing-3', needSync: false);
+
+      expect(await repository.getPendingEvents(), isEmpty);
     });
   });
 }

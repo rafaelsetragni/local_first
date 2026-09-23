@@ -401,6 +401,82 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
     await box.clear();
   }
 
+  /// Drops every record whose events are all synced, and those events.
+  ///
+  /// - [tableName]: Repository name.
+  ///
+  /// Returns the number of records removed. A record with an event still
+  /// waiting to be sent stays, with its events.
+  ///
+  /// Throws [StateError] if called before [initialize].
+  @override
+  Future<int> deleteAllSynced(String tableName) async {
+    final dataBox = await _getBox(tableName);
+    final eventBox = await _getBox(tableName, isEvent: true);
+
+    final waiting = <Object?>{};
+    final synced = <String>[];
+    for (final key in eventBox.keys.cast<String>()) {
+      final meta = await _readBoxValue(eventBox, key);
+      if (meta == null) continue;
+      if (meta[LocalFirstEvent.kSyncStatus] != SyncStatus.ok.index) {
+        waiting.add(meta[LocalFirstEvent.kDataId]);
+      }
+    }
+    for (final key in eventBox.keys.cast<String>()) {
+      final meta = await _readBoxValue(eventBox, key);
+      if (meta != null && !waiting.contains(meta[LocalFirstEvent.kDataId])) {
+        synced.add(key);
+      }
+    }
+    final ids = dataBox.keys
+        .cast<String>()
+        .where((id) => !waiting.contains(id))
+        .toList();
+
+    await eventBox.deleteAll(synced);
+    await dataBox.deleteAll(ids);
+    return ids.length;
+  }
+
+  /// Drops every record whose [field] equals [value], and their events.
+  ///
+  /// - [tableName]: Repository name.
+  /// - [field]: Payload field to match.
+  /// - [value]: Value the field must hold.
+  ///
+  /// Returns the number of records removed. Hive has no index to ask, so
+  /// the box is read through once.
+  ///
+  /// Throws [StateError] if called before [initialize].
+  @override
+  Future<int> deleteWhere(
+    String tableName, {
+    required String field,
+    required Object? value,
+  }) async {
+    final dataBox = await _getBox(tableName);
+    final ids = <String>{};
+    for (final key in dataBox.keys.cast<String>()) {
+      final item = await _readBoxValue(dataBox, key);
+      if (item != null && item[field] == value) ids.add(key);
+    }
+    if (ids.isEmpty) return 0;
+
+    final eventBox = await _getBox(tableName, isEvent: true);
+    final eventIds = <String>[];
+    for (final key in eventBox.keys.cast<String>()) {
+      final meta = await _readBoxValue(eventBox, key);
+      if (meta != null && ids.contains(meta[LocalFirstEvent.kDataId])) {
+        eventIds.add(key);
+      }
+    }
+
+    await eventBox.deleteAll(eventIds);
+    await dataBox.deleteAll(ids);
+    return ids.length;
+  }
+
   bool _isSupportedConfigValue(Object value) {
     if (value is bool || value is int || value is double || value is String) {
       return true;

@@ -424,6 +424,75 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     await _notifyWatchers(tableName);
   }
 
+  /// Drops every record whose events are all synced, and those events.
+  ///
+  /// - [tableName]: Repository name.
+  ///
+  /// Returns the number of records removed. A record with an event still
+  /// waiting to be sent stays, with its events.
+  ///
+  /// Throws [StateError] if called before [initialize].
+  @override
+  Future<int> deleteAllSynced(String tableName) async {
+    _ensureInitialized();
+    final rows = _data[tableName];
+    if (rows == null) return 0;
+
+    final events = _events[tableName] ?? const <String, JsonMap>{};
+    final waiting = <Object?>{
+      for (final event in events.values)
+        if (event[LocalFirstEvent.kSyncStatus] != SyncStatus.ok.index)
+          event[LocalFirstEvent.kDataId],
+    };
+    final ids = rows.keys.where((id) => !waiting.contains(id)).toSet();
+    if (ids.isEmpty && events.values.every(
+      (event) => waiting.contains(event[LocalFirstEvent.kDataId]),
+    )) {
+      return 0;
+    }
+
+    rows.removeWhere((id, _) => ids.contains(id));
+    _events[tableName]?.removeWhere(
+      (_, event) => !waiting.contains(event[LocalFirstEvent.kDataId]),
+    );
+    await _notifyWatchers(tableName);
+    return ids.length;
+  }
+
+  /// Drops every record whose [field] equals [value], and their events.
+  ///
+  /// - [tableName]: Repository name.
+  /// - [field]: Payload field to match.
+  /// - [value]: Value the field must hold.
+  ///
+  /// Returns the number of records removed. Watchers are notified only when
+  /// something was removed.
+  ///
+  /// Throws [StateError] if called before [initialize].
+  @override
+  Future<int> deleteWhere(
+    String tableName, {
+    required String field,
+    required Object? value,
+  }) async {
+    _ensureInitialized();
+    final rows = _data[tableName];
+    if (rows == null) return 0;
+
+    final ids = <String>{
+      for (final entry in rows.entries)
+        if (entry.value[field] == value) entry.key,
+    };
+    if (ids.isEmpty) return 0;
+
+    rows.removeWhere((id, _) => ids.contains(id));
+    _events[tableName]?.removeWhere(
+      (_, event) => ids.contains(event[LocalFirstEvent.kDataId]),
+    );
+    await _notifyWatchers(tableName);
+    return ids.length;
+  }
+
   bool _isSupportedConfigValue(Object value) {
     if (value is bool || value is int || value is double || value is String) {
       return true;
@@ -529,7 +598,10 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     }
 
     final results = <JsonMap>[];
-    for (final raw in dataTable.values) {
+    // A snapshot: the loop awaits, and a write that lands meanwhile — a
+    // watcher is notified while the row it watches is being deleted — would
+    // otherwise change the map under the iteration.
+    for (final raw in List.of(dataTable.values)) {
       final normalized = _normalizeLegacyMap(JsonMap.from(raw));
       final merged = await _attachEventMetadata(
         query.repositoryName,
@@ -617,13 +689,31 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
   Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query) {
     _ensureInitialized();
     final controller = StreamController<List<LocalFirstEvent<T>>>.broadcast();
+    // One read at a time per watcher. Two writes side by side notify twice,
+    // and two reads side by side may end in either order — the watcher would
+    // be left on the older one. A notification that arrives while a read is
+    // running asks for exactly one more, so the last emission is the newest.
+    var reading = false;
+    var askedAgain = false;
     final observer = _InMemoryQueryObserver<T>(
       emit: () async {
+        if (reading) {
+          askedAgain = true;
+          return;
+        }
+        reading = true;
         try {
-          final results = await this.query<T>(query);
-          if (!controller.isClosed) controller.add(results);
-        } catch (e, st) {
-          if (!controller.isClosed) controller.addError(e, st);
+          do {
+            askedAgain = false;
+            try {
+              final results = await this.query<T>(query);
+              if (!controller.isClosed) controller.add(results);
+            } catch (e, st) {
+              if (!controller.isClosed) controller.addError(e, st);
+            }
+          } while (askedAgain && !controller.isClosed);
+        } finally {
+          reading = false;
         }
       },
       controller: controller,
