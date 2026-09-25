@@ -9,11 +9,15 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
   final Map<String, JsonMap<Map<String, JsonMap>>> _dataByNamespace = {};
   final Map<String, JsonMap<Map<String, JsonMap>>> _eventsByNamespace = {};
   final Map<String, Map<String, Object>> _metadataByNamespace = {};
-  final Map<String, JsonMap<Set<_InMemoryQueryObserver>>>
-  _observersByNamespace = {};
-  final Map<String, JsonMap<Set<StreamController<void>>>>
-  _changeObserversByNamespace = {};
   final Map<String, JsonMap<JsonMap<LocalFieldType>>> _schemasByNamespace = {};
+
+  // Watchers belong to the storage, not to a namespace: a watcher registered
+  // before a switch keeps following the data of whichever namespace is
+  // current, and is re-emitted on every switch — the same contract the
+  // SQLite storage keeps, so a test over this storage proves the device's
+  // behaviour.
+  final JsonMap<Set<_InMemoryQueryObserver>> _observers = {};
+  final JsonMap<Set<StreamController<void>>> _changeObservers = {};
 
   JsonMap<Map<String, JsonMap>> get _data =>
       _dataByNamespace.putIfAbsent(_namespace, () => {});
@@ -21,10 +25,6 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
       _eventsByNamespace.putIfAbsent(_namespace, () => {});
   Map<String, Object> get _metadata =>
       _metadataByNamespace.putIfAbsent(_namespace, () => {});
-  JsonMap<Set<_InMemoryQueryObserver>> get _observers =>
-      _observersByNamespace.putIfAbsent(_namespace, () => {});
-  JsonMap<Set<StreamController<void>>> get _changeObservers =>
-      _changeObserversByNamespace.putIfAbsent(_namespace, () => {});
   JsonMap<JsonMap<LocalFieldType>> get _schemas =>
       _schemasByNamespace.putIfAbsent(_namespace, () => {});
 
@@ -50,18 +50,15 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
   Future<void> close({bool preserveObservers = false}) async {
     if (!_initialized) return;
     if (!preserveObservers) {
-      for (final observerSet in _observersByNamespace.values) {
-        for (final observer in observerSet.values.expand((o) => o).toList()) {
-          await observer.controller.close();
-        }
-        observerSet.clear();
+      for (final observer in _observers.values.expand((o) => o).toList()) {
+        await observer.controller.close();
       }
-      for (final observerSet in _changeObserversByNamespace.values) {
-        for (final controller in observerSet.values.expand((o) => o).toList()) {
-          await controller.close();
-        }
-        observerSet.clear();
+      _observers.clear();
+      for (final controller
+          in _changeObservers.values.expand((o) => o).toList()) {
+        await controller.close();
       }
+      _changeObservers.clear();
     }
     _initialized = false;
   }
@@ -825,7 +822,7 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     JsonMap? data, {
     Object? lastEventId,
   }) {
-    final merged = <String, dynamic>{if (data != null) ...data, ...meta};
+    final merged = <String, dynamic>{...?data, ...meta};
     final dataId = meta[LocalFirstEvent.kDataId];
     if (dataId is String) {
       merged.putIfAbsent('id', () => dataId);

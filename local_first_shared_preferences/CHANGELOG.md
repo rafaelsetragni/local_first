@@ -1,3 +1,9 @@
+## 0.1.2
+
+- Requires `local_first` `^0.9.0`. This adapter implements
+  `ConfigKeyValueStorage`, which did not change.
+- The README's installation snippet now names the real package versions.
+
 ## 0.1.1
 
 - Updated documentation: standardized Contributing and Support the Project sections.
