@@ -822,7 +822,7 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     JsonMap? data, {
     Object? lastEventId,
   }) {
-    final merged = <String, dynamic>{if (data != null) ...data, ...meta};
+    final merged = <String, dynamic>{...?data, ...meta};
     final dataId = meta[LocalFirstEvent.kDataId];
     if (dataId is String) {
       merged.putIfAbsent('id', () => dataId);

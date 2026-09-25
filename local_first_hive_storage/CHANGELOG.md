@@ -1,3 +1,15 @@
+## 0.3.0
+
+- Implemented `LocalFirstStorage.deleteAllSynced`: drops every record whose
+  events are all synced, with those events, and returns how many records went. A
+  record with an event still waiting to be sent stays, with its events.
+- Implemented `LocalFirstStorage.deleteWhere`: drops every record whose `field`
+  equals `value`, and their events, and returns how many records went. Hive has
+  no index to ask, so the box is read through once — a large box pays for it.
+- Requires `local_first` `^0.9.0`.
+- The README documents the new operations, and its installation snippet now
+  names the real package versions.
+
 ## 0.2.3
 
 - `getAllEvents` now accepts an optional `dataId` filter, matching the updated

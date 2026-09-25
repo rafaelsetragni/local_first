@@ -39,11 +39,11 @@ Add the dependencies to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  local_first: ^0.7.0
-  local_first_gdrive_backup: ^0.1.0
+  local_first: ^0.9.0
+  local_first_gdrive_backup: ^0.1.1
   # Choose your storage adapter
-  local_first_hive_storage: ^0.2.0  # or
-  local_first_sqlite_storage: ^0.3.0
+  local_first_hive_storage: ^0.3.0  # or
+  local_first_sqlite_storage: ^0.5.0
 ```
 
 Then install:

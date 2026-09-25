@@ -1,3 +1,57 @@
+## 0.9.0
+
+### Dropping local data without telling the server
+
+Two members on `LocalFirstStorage` (and so on every repository's storage) for
+the cases where the device has to let data go, while what it still owes the
+server is kept:
+
+- **`deleteAllSynced(tableName)`** drops every item whose events are all
+  synced, together with those events, and returns how many items went. An item
+  with a write still waiting to be sent stays, with its events. This is the
+  primitive behind a full re-sync of one repository: what the device holds is
+  replaced by what the server sends, and what the device wrote and has not sent
+  is sent afterwards — a re-sync that used to mean losing offline writes.
+- **`deleteWhere(tableName, field:, value:)`** drops every item whose `field`
+  equals `value`, with their events, and returns how many went. It is a local
+  drop, not a delete to be synced: nothing is queued for the remote. It is for
+  data that stopped being the device's to hold — the rows of a conversation the
+  account left, of a page it unfollowed — where the server already knows and
+  only the local copy has to go. A field declared in the repository's schema is
+  matched on its own column; any other field is matched inside the stored
+  payload.
+
+### A delete that needs sync is sent
+
+`_markAllPreviousEventAsOk` recognized the incoming event by its moment, and a
+stored moment is kept in milliseconds: the event read back from storage was a
+few microseconds behind the one in hand, so it counted as *previous* and was
+marked `ok` — the write it carried was never sent. A removal made offline
+vanished silently. The event is now recognized by its id, and is never one of
+its own previous events.
+
+### Watched queries — `InMemoryLocalFirstStorage`
+
+- A watcher reads **one query at a time**. Two writes side by side notified
+  twice, the two reads could finish in either order, and the watcher was left
+  showing the older result. A notification that arrives while a read is running
+  asks for exactly one more read, so the last emission is the newest state.
+- A read iterates a snapshot of the table, so a row deleted while the read is
+  in progress no longer breaks it with a concurrent-modification error — which
+  is exactly what `deleteWhere` does to a watcher of the rows it removes.
+- **Watchers belong to the storage, not to a namespace.** A watcher registered
+  before `useNamespace` was kept in the old namespace's bucket and went silent
+  after the switch; it now follows the data of whichever namespace is current
+  and is re-emitted on every switch. This is
+  the contract `SqliteLocalFirstStorage` already kept, so a test written over
+  the in-memory storage now proves the behaviour the device gets.
+
+> ⚠️ **For custom `LocalFirstStorage` implementations:** `deleteAllSynced` and
+> `deleteWhere` are new required members — a storage that does not implement
+> them no longer compiles. A backend with no way to ask for unsynced events can
+> return `0` and do nothing, as long as callers are not offered a re-sync. The
+> built-in Hive, SQLite and in-memory backends are already updated.
+
 ## 0.8.2
 
 ### Performance — large remote-event batches (cold sync) are now ~O(n)
