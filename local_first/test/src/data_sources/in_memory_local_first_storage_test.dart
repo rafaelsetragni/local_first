@@ -88,6 +88,87 @@ void main() {
       return storage.insertEvent(repo.name, event, LocalFirstEvent.kEventId);
     }
 
+    test(
+      'one row per group keeps the first of each in the order asked',
+      () async {
+        Future<void> said(String id, int age) async {
+          await storage.insert(repo.name, {
+            'id': id,
+            'username': 'user-${id[0]}',
+            'age': age,
+            LocalFirstEvent.kLastEventId: 'evt-$id',
+          }, 'id');
+          await writeEvent(
+            _event(
+              eventId: 'evt-$id',
+              dataId: id,
+              operation: SyncOperation.insert,
+              status: SyncStatus.ok,
+            ),
+          );
+        }
+
+        await said('a1', 1);
+        await said('a2', 5);
+        await said('b1', 3);
+
+        final newest = await storage.query(
+          baseQuery.orderBy('age', descending: true).distinctOn('username'),
+        );
+
+        expect(newest.map((event) => event.data!.id), ['a2', 'b1']);
+      },
+    );
+
+    test('a read of many is one question with the set in it', () async {
+      await writeState(id: 'one', eventId: 'evt-one');
+      await writeEvent(
+        _event(
+          eventId: 'evt-one',
+          dataId: 'one',
+          operation: SyncOperation.insert,
+          status: SyncStatus.ok,
+        ),
+      );
+      await writeState(id: 'two', eventId: 'evt-two');
+      await writeEvent(
+        _event(
+          eventId: 'evt-two',
+          dataId: 'two',
+          operation: SyncOperation.insert,
+          status: SyncStatus.ok,
+        ),
+      );
+
+      final held = await storage.getByIds(repo.name, ['one', 'two', 'never']);
+
+      expect(held.keys.toSet(), {'one', 'two'});
+    });
+
+    test('a pending read answers with what is waiting alone', () async {
+      await writeState(id: 'sent', eventId: 'evt-sent');
+      await writeEvent(
+        _event(
+          eventId: 'evt-sent',
+          dataId: 'sent',
+          operation: SyncOperation.insert,
+          status: SyncStatus.ok,
+        ),
+      );
+      await writeState(id: 'waiting', eventId: 'evt-waiting');
+      await writeEvent(
+        _event(
+          eventId: 'evt-waiting',
+          dataId: 'waiting',
+          operation: SyncOperation.insert,
+        ),
+      );
+
+      final pending = await storage.getAllEvents(repo.name, pendingOnly: true);
+
+      expect(pending.map((row) => row[LocalFirstEvent.kDataId]), ['waiting']);
+    });
+
     test('persists state and attaches event metadata', () async {
       await writeState(id: '1', eventId: 'evt-1', age: 20);
       await writeEvent(
@@ -196,11 +277,19 @@ void main() {
         // and the removal lands under it.
         await writeState(id: '1', eventId: 'evt-1', age: 20);
         await writeEvent(
-          _event(eventId: 'evt-1', dataId: '1', operation: SyncOperation.insert),
+          _event(
+            eventId: 'evt-1',
+            dataId: '1',
+            operation: SyncOperation.insert,
+          ),
         );
         await writeState(id: '2', eventId: 'evt-2', age: 30);
         await writeEvent(
-          _event(eventId: 'evt-2', dataId: '2', operation: SyncOperation.insert),
+          _event(
+            eventId: 'evt-2',
+            dataId: '2',
+            operation: SyncOperation.insert,
+          ),
         );
 
         final errors = <Object>[];
@@ -339,37 +428,34 @@ void main() {
       expect(await storage.getConfigValue('k'), 'v1');
     });
 
-    test(
-      'a watcher survives a namespace switch and follows the data of the '
-      'namespace that is current — like the SQLite storage',
-      () async {
-        // registered while 'default' is current, before any account signs in
-        final emissions = <List<LocalFirstEvent<_User>>>[];
-        final sub = storage.watchQuery(baseQuery).listen(emissions.add);
-        await pumpEventQueue();
+    test('a watcher survives a namespace switch and follows the data of the '
+        'namespace that is current — like the SQLite storage', () async {
+      // registered while 'default' is current, before any account signs in
+      final emissions = <List<LocalFirstEvent<_User>>>[];
+      final sub = storage.watchQuery(baseQuery).listen(emissions.add);
+      await pumpEventQueue();
 
-        // an account's namespace: what is written there reaches the watcher
-        await storage.useNamespace('ana');
-        await writeState(id: '1', eventId: 'evt-1', age: 20);
-        await writeEvent(
-          _event(eventId: 'evt-1', dataId: '1', operation: SyncOperation.insert),
-        );
-        await pumpEventQueue();
-        expect(emissions.last.map((e) => e.dataId), ['1']);
+      // an account's namespace: what is written there reaches the watcher
+      await storage.useNamespace('ana');
+      await writeState(id: '1', eventId: 'evt-1', age: 20);
+      await writeEvent(
+        _event(eventId: 'evt-1', dataId: '1', operation: SyncOperation.insert),
+      );
+      await pumpEventQueue();
+      expect(emissions.last.map((e) => e.dataId), ['1']);
 
-        // signing out: the switch itself re-emits, with the empty default
-        await storage.useNamespace('default');
-        await pumpEventQueue();
-        expect(emissions.last, isEmpty);
+      // signing out: the switch itself re-emits, with the empty default
+      await storage.useNamespace('default');
+      await pumpEventQueue();
+      expect(emissions.last, isEmpty);
 
-        // signing back in: the account's rows again, from the store alone
-        await storage.useNamespace('ana');
-        await pumpEventQueue();
-        expect(emissions.last.map((e) => e.dataId), ['1']);
+      // signing back in: the account's rows again, from the store alone
+      await storage.useNamespace('ana');
+      await pumpEventQueue();
+      expect(emissions.last.map((e) => e.dataId), ['1']);
 
-        await sub.cancel();
-      },
-    );
+      await sub.cancel();
+    });
 
     test('close should terminate active watchers', () async {
       final stream = storage.watchQuery(baseQuery);
@@ -574,39 +660,42 @@ void main() {
       expect(await storage.deleteWhere('nobody', field: 'age', value: 30), 0);
     });
 
-    test('deleteAllSynced drops what is synced and keeps what still waits', () async {
-      await writeState(id: 'synced', eventId: 'evt-synced');
-      await writeState(id: 'waiting', eventId: 'evt-waiting');
-      await writeEvent(
-        _event(
-          eventId: 'evt-synced',
-          dataId: 'synced',
-          operation: SyncOperation.insert,
-          status: SyncStatus.ok,
-        ),
-      );
-      await writeEvent(
-        _event(
-          eventId: 'evt-waiting',
-          dataId: 'waiting',
-          operation: SyncOperation.insert,
-        ),
-      );
+    test(
+      'deleteAllSynced drops what is synced and keeps what still waits',
+      () async {
+        await writeState(id: 'synced', eventId: 'evt-synced');
+        await writeState(id: 'waiting', eventId: 'evt-waiting');
+        await writeEvent(
+          _event(
+            eventId: 'evt-synced',
+            dataId: 'synced',
+            operation: SyncOperation.insert,
+            status: SyncStatus.ok,
+          ),
+        );
+        await writeEvent(
+          _event(
+            eventId: 'evt-waiting',
+            dataId: 'waiting',
+            operation: SyncOperation.insert,
+          ),
+        );
 
-      expect(await storage.deleteAllSynced(repo.name), 1);
+        expect(await storage.deleteAllSynced(repo.name), 1);
 
-      expect((await storage.getAll(repo.name)).map((row) => row['id']), [
-        'waiting',
-      ]);
-      expect(
-        (await storage.getAllEvents(
-          repo.name,
-        )).map((event) => event[LocalFirstEvent.kDataId]),
-        ['waiting'],
-      );
-      expect(await storage.deleteAllSynced(repo.name), 0);
-      expect(await storage.deleteAllSynced('nobody'), 0);
-    });
+        expect((await storage.getAll(repo.name)).map((row) => row['id']), [
+          'waiting',
+        ]);
+        expect(
+          (await storage.getAllEvents(
+            repo.name,
+          )).map((event) => event[LocalFirstEvent.kDataId]),
+          ['waiting'],
+        );
+        expect(await storage.deleteAllSynced(repo.name), 0);
+        expect(await storage.deleteAllSynced('nobody'), 0);
+      },
+    );
 
     test('deleteAll and deleteAllEvents clear respective tables', () async {
       await writeState(id: 'wipe', eventId: 'evt-wipe');

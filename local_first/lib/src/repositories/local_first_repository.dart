@@ -205,7 +205,9 @@ abstract class LocalFirstRepository<T> {
 
   /// Deletes an item by its ID (soft delete).
   Future<void> delete(String id, {required bool needSync}) async {
-    final events = await _getAllEvents();
+    // only this record's history: finding one record's latest state reads that
+    // record, not the table
+    final events = await _getAllEvents(dataId: id);
     final existing = events
         .where((event) => event.dataId == id)
         .fold<LocalFirstEvent<T>?>(null, (latest, current) {
@@ -265,6 +267,26 @@ abstract class LocalFirstRepository<T> {
     return event.data;
   }
 
+  /// Fetches several items by their ids in **one** question with the set in
+  /// it, keyed by id. Ids the device does not hold, and the rows it holds as
+  /// deleted, are absent from the answer.
+  Future<JsonMap<T>> getByIds(Iterable<String> ids) async {
+    final wanted = ids.toSet();
+    if (wanted.isEmpty) return <String, T>{};
+    final rows = await _client.localStorage.getByIds(name, wanted);
+    final held = <String, T>{};
+    for (final entry in rows.entries) {
+      final event = LocalFirstEvent<T>.fromLocalStorage(
+        repository: this,
+        json: entry.value,
+      );
+      if (event.isDeleted) continue;
+      final data = event.data;
+      if (data != null) held[entry.key] = data;
+    }
+    return held;
+  }
+
   /// Applies a single remote event, handling operation-specific logic.
   Future<void> mergeRemoteEvent({
     required LocalFirstEvent<T> remoteEvent,
@@ -279,9 +301,9 @@ abstract class LocalFirstRepository<T> {
 
     final LocalFirstEvent<T>? localPendingEvent =
         await getLastRespectivePendingEvent(
-      reference: typedRemote,
-      knownEvents: knownEvents,
-    );
+          reference: typedRemote,
+          knownEvents: knownEvents,
+        );
 
     if (localPendingEvent != null &&
         localPendingEvent.eventId == remoteEvent.eventId) {
@@ -393,17 +415,27 @@ abstract class LocalFirstRepository<T> {
   }
 
   /// Returns all state events that still require sync.
-  Future<List<LocalFirstEvent<T>>> getPendingEvents() async {
-    final allEvents = await _getAllEvents();
-    return allEvents.where((event) => event.needSync).toList();
-  }
+  ///
+  /// The condition travels with the question: the storage answers with what is
+  /// waiting, and the whole history is never read to find it.
+  Future<List<LocalFirstEvent<T>>> getPendingEvents() =>
+      _getAllEvents(pendingOnly: true);
 
-  Future<List<LocalFirstEvent<T>>> _getAllEvents({String? dataId}) async {
-    final maps = await _client.localStorage.getAllEvents(name, dataId: dataId);
+  Future<List<LocalFirstEvent<T>>> _getAllEvents({
+    String? dataId,
+    bool pendingOnly = false,
+  }) async {
+    final maps = await _client.localStorage.getAllEvents(
+      name,
+      dataId: dataId,
+      pendingOnly: pendingOnly,
+    );
     final result = <LocalFirstEvent<T>>[];
     for (final json in maps) {
       try {
-        result.add(LocalFirstEvent<T>.fromLocalStorage(repository: this, json: json));
+        result.add(
+          LocalFirstEvent<T>.fromLocalStorage(repository: this, json: json),
+        );
       } catch (_) {
         // Skip orphaned events whose data row was deleted (e.g. after a delete
         // operation the old INSERT/UPDATE events have no data in the JOIN).
@@ -458,22 +490,34 @@ abstract class LocalFirstRepository<T> {
     }
   }
 
-  Future<void> _insertDataAndEvent(LocalFirstStateEvent<T> event) async {
-    await Future.wait([_insertDataFromEvent(event), _persistEvent(event)]);
+  /// A write of one record is **one** transaction, and notifies once: the row
+  /// and the event it was written by commit together, and whoever watches the
+  /// repository hears of it a single time instead of once per statement.
+  Future<void> _asOneWrite(Future<void> Function() write) =>
+      _client.localStorage.runInTransaction(write);
+
+  Future<void> _insertDataAndEvent(LocalFirstStateEvent<T> event) {
+    return _asOneWrite(
+      () => Future.wait([_insertDataFromEvent(event), _persistEvent(event)]),
+    );
   }
 
-  Future<void> _updateDataAndEvent(LocalFirstEvent<T> event) async {
-    await Future.wait([
-      if (event is LocalFirstStateEvent<T>) _updateDataFromEvent(event),
-      _persistEvent(event),
-    ]);
+  Future<void> _updateDataAndEvent(LocalFirstEvent<T> event) {
+    return _asOneWrite(
+      () => Future.wait([
+        if (event is LocalFirstStateEvent<T>) _updateDataFromEvent(event),
+        _persistEvent(event),
+      ]),
+    );
   }
 
-  Future<void> _deleteDataAndLogEvent(LocalFirstEvent<T> event) async {
-    await Future.wait([
-      _insertEventRecord(event),
-      _deleteDataById(event.dataId),
-    ]);
+  Future<void> _deleteDataAndLogEvent(LocalFirstEvent<T> event) {
+    return _asOneWrite(
+      () => Future.wait([
+        _insertEventRecord(event),
+        _deleteDataById(event.dataId),
+      ]),
+    );
   }
 
   Future<void> _insertDataFromEvent(LocalFirstStateEvent<T> event) {
