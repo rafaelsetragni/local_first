@@ -2663,6 +2663,31 @@ void main() {
       },
     );
 
+    test(
+      'the account database is named before the first table is created',
+      () async {
+        final fresh = SqliteLocalFirstStorage(
+          databaseName: 'boot.db',
+          databasePath: '${folder.path}/named__boot.db',
+          dbFactory: databaseFactoryFfi,
+        );
+        fresh.prepareNamespace('account');
+        expect(fresh.namespace, 'account');
+
+        await fresh.initialize();
+        await fresh.ensureSchema('users', schema, idFieldName: 'id');
+        final helper = TestHelperSqliteLocalFirstStorage(fresh);
+
+        // opened on the account's own file: one verification, and no switch
+        expect(helper.tableVerifications['users'], 1);
+        expect(
+          () => fresh.prepareNamespace('other'),
+          throwsA(isA<StateError>()),
+        );
+        await fresh.close();
+      },
+    );
+
     test('every cursor of a round is read in one question', () async {
       await storage.setConfigValue<String>('sync_cursor_pages', 'p1');
       await storage.setConfigValue<String>('sync_cursor_members', 'm1');

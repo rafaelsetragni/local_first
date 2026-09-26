@@ -48,6 +48,24 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   /// Current namespace used to derive the database file name.
   String get namespace => _namespace;
 
+  /// Names the namespace to open, while nothing is open yet.
+  ///
+  /// Which database an account's data lives in is known before the first table
+  /// is created, so [initialize] opens that file and its schema is verified
+  /// there, once — never on a shared file first and again after the account is
+  /// known. Once the database is open, [useNamespace] is what changes it.
+  ///
+  /// Throws [StateError] when the database is already open.
+  void prepareNamespace(String namespace) {
+    if (_initialized) {
+      throw StateError(
+        'The database is already open: use useNamespace to change namespace.',
+      );
+    }
+    _validateIdentifier(namespace, 'namespace');
+    _namespace = namespace;
+  }
+
   Database? _db;
   bool _initialized = false;
 
