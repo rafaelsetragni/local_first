@@ -48,6 +48,24 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   /// Current namespace used to derive the database file name.
   String get namespace => _namespace;
 
+  /// Names the namespace to open, while nothing is open yet.
+  ///
+  /// Which database an account's data lives in is known before the first table
+  /// is created, so [initialize] opens that file and its schema is verified
+  /// there, once — never on a shared file first and again after the account is
+  /// known. Once the database is open, [useNamespace] is what changes it.
+  ///
+  /// Throws [StateError] when the database is already open.
+  void prepareNamespace(String namespace) {
+    if (_initialized) {
+      throw StateError(
+        'The database is already open: use useNamespace to change namespace.',
+      );
+    }
+    _validateIdentifier(namespace, 'namespace');
+    _namespace = namespace;
+  }
+
   Database? _db;
   bool _initialized = false;
 
@@ -129,16 +147,37 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   DatabaseExecutor? _txn;
 
   /// Repositories whose data + event tables (and schema columns) have been
-  /// verified on the currently open database. Verification runs once per
-  /// repository per open instead of on every CRUD/query call, and is reset by
-  /// [close] (a namespace switch opens a different file) and by [ensureSchema]
-  /// (a new schema may need columns migrated).
-  final Set<String> _ensuredRepositories = {};
+  /// verified, kept per namespace — one entry per database file. Verification
+  /// runs once per repository per file instead of on every CRUD/query call,
+  /// and it is remembered across a [close]: a namespace switch opens a
+  /// different file, and the tables of the file it left are still there when
+  /// it comes back. Only [ensureSchema] resets it — a re-declared schema may
+  /// need columns migrated, on every file that holds the table.
+  final Map<String, Set<String>> _ensuredRepositories = {};
 
-  /// Table verifications in flight, keyed by repository. Concurrent first
-  /// touches of the same repository share one run instead of racing each
-  /// other through the same `ALTER TABLE` (which fails with "duplicate column"
-  /// for whoever comes second and serialises everyone else behind the lock).
+  Set<String> get _ensuredHere =>
+      _ensuredRepositories[_namespace] ??= <String>{};
+
+  /// The namespaces whose metadata table has been verified. The table that
+  /// holds the config values — the cursors of the sync among them — is
+  /// declared when its database opens, not on every read of a key.
+  final Set<String> _metadataEnsured = {};
+
+  /// How many times each repository's tables were really verified — the
+  /// declaration run against the database, not a memo hit. A launch verifies
+  /// each repository once, on the file the account owns.
+  final Map<String, int> _tableVerifications = {};
+
+  /// How many times the metadata table was really declared. It holds the
+  /// config values — the cursors of the sync among them — and a read of one
+  /// must not declare it again.
+  int _metadataDeclarations = 0;
+
+  /// Table verifications in flight, keyed by namespace and repository.
+  /// Concurrent first touches of the same repository share one run instead of
+  /// racing each other through the same `ALTER TABLE` (which fails with
+  /// "duplicate column" for whoever comes second and serialises everyone else
+  /// behind the lock).
   final Map<String, Future<void>> _ensuring = {};
 
   /// While a batch is running, watcher notifications are collected here (one
@@ -239,7 +278,9 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     );
 
     _initialized = true;
+    await _forgetTablesTheFileNoLongerHolds();
     await _ensureMetadataTable(db: _db);
+    _metadataEnsured.add(_namespace);
 
     // Perf probe: confirm WAL is active in the session log.
     if (enableQueryProfiling) {
@@ -278,8 +319,10 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     await _db?.close();
     _db = null;
     _initialized = false;
-    // The next open may be a different file (namespace switch) — verify again.
-    _ensuredRepositories.clear();
+    // What was verified stays verified: it is remembered per namespace, so a
+    // switch to another file — and back — creates no table twice. Only the
+    // verifications still in flight are dropped: they belong to the
+    // connection that is closing.
     _ensuring.clear();
   }
 
@@ -365,8 +408,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     required String idFieldName,
   }) async {
     _schemas[tableName] = Map.unmodifiable(schema);
-    // A (re)declared schema may add columns: force the next verification.
-    _ensuredRepositories.remove(tableName);
+    // A (re)declared schema may add columns: force the next verification, on
+    // every file that holds the table.
+    for (final ensured in _ensuredRepositories.values) {
+      ensured.remove(tableName);
+    }
     await _ensureTables(tableName);
   }
 
@@ -935,6 +981,39 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return _decodeConfigValue<T>(value);
   }
 
+  /// Reads several config values in **one** statement.
+  ///
+  /// What a sync round asks of the store: the cursor of every domain at once,
+  /// never one read per domain. Keys the database does not hold are left out
+  /// of the answer.
+  ///
+  /// - [keys]: the config keys to read.
+  ///
+  /// Throws [StateError] if called before [initialize].
+  Future<Map<String, T?>> getConfigValues<T>(Iterable<String> keys) =>
+      _withDb(() async {
+        final wanted = keys.toList();
+        if (wanted.isEmpty) return <String, T?>{};
+        final db = await _exec();
+        await _ensureMetadataTable();
+
+        final placeholders = List.filled(wanted.length, '?').join(', ');
+        final rows = await db.query(
+          _metadataTable,
+          where: 'key IN ($placeholders)',
+          whereArgs: wanted,
+        );
+
+        final values = <String, T?>{};
+        for (final row in rows) {
+          final key = row['key'];
+          final value = row['value'];
+          if (key is! String || value is! String) continue;
+          values[key] = _decodeConfigValue<T>(value);
+        }
+        return values;
+      });
+
   /// Removes a config entry from the metadata table.
   ///
   /// - [key]: Config key to remove.
@@ -1074,11 +1153,43 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return controller.stream;
   }
 
+  /// What a namespace was remembered to hold, against what the file it just
+  /// opened really holds. A database can be gone since it was last open — an
+  /// in-memory one is a new database on every open — and a table remembered
+  /// as verified that is not there would never be created.
+  Future<void> _forgetTablesTheFileNoLongerHolds() async {
+    final remembered = _ensuredRepositories[_namespace];
+    final metadataRemembered = _metadataEnsured.contains(_namespace);
+    if ((remembered == null || remembered.isEmpty) && !metadataRemembered) {
+      return;
+    }
+
+    final rows = await _db!.rawQuery(
+      "SELECT name FROM sqlite_master WHERE type = 'table'",
+    );
+    final held = {
+      for (final row in rows)
+        if (row['name'] is String) row['name'] as String,
+    };
+
+    if (!held.contains(_metadataTable)) _metadataEnsured.remove(_namespace);
+    remembered?.removeWhere(
+      (repository) =>
+          !held.contains(_tableName(repository)) ||
+          !held.contains(_tableName(repository, isEvent: true)),
+    );
+  }
+
   Future<void> _ensureMetadataTable({DatabaseExecutor? db}) async {
+    if (_metadataEnsured.contains(_namespace)) return;
     db ??= await _exec();
     await db.execute(
       'CREATE TABLE IF NOT EXISTS $_metadataTable (key TEXT PRIMARY KEY, value TEXT)',
     );
+    _metadataDeclarations++;
+    // Inside a transaction the declaration can still be rolled back, so it is
+    // only remembered once it stands on the connection itself.
+    if (_txn == null) _metadataEnsured.add(_namespace);
   }
 
   JsonMap<LocalFieldType> _schemaFor(String repositoryName) {
@@ -1089,7 +1200,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     String repositoryName, [
     DatabaseExecutor? executor,
   ]) async {
-    if (_ensuredRepositories.contains(repositoryName)) return;
+    if (_ensuredHere.contains(repositoryName)) return;
 
     if (executor != null || _txn != null) {
       // Inside a transaction (a caller-supplied executor or a running batch):
@@ -1099,22 +1210,34 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       // is deliberately NOT memoised: a rollback would undo the DDL.
       await _ensureDataTable(repositoryName, executor);
       await _ensureEventTable(repositoryName, executor);
+      _tableVerifications.update(
+        repositoryName,
+        (count) => count + 1,
+        ifAbsent: () => 1,
+      );
       return;
     }
 
-    final inFlight = _ensuring[repositoryName];
+    final namespace = _namespace;
+    final inFlightKey = '$namespace/$repositoryName';
+    final inFlight = _ensuring[inFlightKey];
     if (inFlight != null) return inFlight;
 
     final run = () async {
       await _ensureDataTable(repositoryName);
       await _ensureEventTable(repositoryName);
-      _ensuredRepositories.add(repositoryName);
+      (_ensuredRepositories[namespace] ??= <String>{}).add(repositoryName);
+      _tableVerifications.update(
+        repositoryName,
+        (count) => count + 1,
+        ifAbsent: () => 1,
+      );
     }();
-    _ensuring[repositoryName] = run;
+    _ensuring[inFlightKey] = run;
     try {
       await run;
     } finally {
-      _ensuring.remove(repositoryName);
+      _ensuring.remove(inFlightKey);
     }
   }
 
@@ -1650,8 +1773,21 @@ class TestHelperSqliteLocalFirstStorage {
       storage._notifyWatchers(repositoryName);
   Future<void> ensureTables(String repositoryName) =>
       storage._ensureTables(repositoryName);
-  void invalidateEnsured(String repositoryName) =>
-      storage._ensuredRepositories.remove(repositoryName);
+  void invalidateEnsured(String repositoryName) {
+    for (final ensured in storage._ensuredRepositories.values) {
+      ensured.remove(repositoryName);
+    }
+  }
+
+  /// How many times a table has been verified on the open database, by name.
+  Map<String, int> get tableVerifications => storage._tableVerifications;
+
+  /// Whether the metadata table stands verified for the open namespace.
+  bool get metadataEnsured =>
+      storage._metadataEnsured.contains(storage.namespace);
+
+  /// How many times the metadata table was really declared.
+  int get metadataDeclarations => storage._metadataDeclarations;
   Future<void> ensureDataTable(String repositoryName) =>
       storage._ensureDataTable(repositoryName);
   Future<void> ensureEventTable(String repositoryName) =>
