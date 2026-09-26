@@ -183,13 +183,31 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     return items;
   }
 
-  /// Returns all events for a repository merged with their latest state.
-  ///
-  /// - [tableName]: Repository name to query.
-  ///
-  /// Throws [StateError] if called before [initialize].
+  /// Runs [action] as one write. There is no database to commit, but the
+  /// notifications it produces are collected and told **once** per repository
+  /// at the end — a write of one record notifies once, as it does over SQLite.
+  /// A nested call joins the batch that is running.
   @override
-  Future<void> runInTransaction(Future<void> Function() action) => action();
+  Future<void> runInTransaction(Future<void> Function() action) async {
+    if (_batchedNotify != null) {
+      await action();
+      return;
+    }
+    final batched = <String>{};
+    _batchedNotify = batched;
+    try {
+      await action();
+    } finally {
+      _batchedNotify = null;
+      for (final repositoryName in batched) {
+        await _notifyWatchers(repositoryName);
+      }
+    }
+  }
+
+  /// While a batch is running, the repositories written to are collected here
+  /// and told once after it, instead of once per statement.
+  Set<String>? _batchedNotify;
 
   @override
   Future<List<JsonMap>> getAllEvents(
@@ -807,6 +825,12 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
   }
 
   Future<void> _notifyWatchers(String repositoryName) async {
+    final batched = _batchedNotify;
+    if (batched != null) {
+      batched.add(repositoryName);
+      return;
+    }
+
     final changeObservers = _changeObservers[repositoryName];
     if (changeObservers != null && changeObservers.isNotEmpty) {
       for (final controller in List.of(changeObservers)) {

@@ -490,22 +490,34 @@ abstract class LocalFirstRepository<T> {
     }
   }
 
-  Future<void> _insertDataAndEvent(LocalFirstStateEvent<T> event) async {
-    await Future.wait([_insertDataFromEvent(event), _persistEvent(event)]);
+  /// A write of one record is **one** transaction, and notifies once: the row
+  /// and the event it was written by commit together, and whoever watches the
+  /// repository hears of it a single time instead of once per statement.
+  Future<void> _asOneWrite(Future<void> Function() write) =>
+      _client.localStorage.runInTransaction(write);
+
+  Future<void> _insertDataAndEvent(LocalFirstStateEvent<T> event) {
+    return _asOneWrite(
+      () => Future.wait([_insertDataFromEvent(event), _persistEvent(event)]),
+    );
   }
 
-  Future<void> _updateDataAndEvent(LocalFirstEvent<T> event) async {
-    await Future.wait([
-      if (event is LocalFirstStateEvent<T>) _updateDataFromEvent(event),
-      _persistEvent(event),
-    ]);
+  Future<void> _updateDataAndEvent(LocalFirstEvent<T> event) {
+    return _asOneWrite(
+      () => Future.wait([
+        if (event is LocalFirstStateEvent<T>) _updateDataFromEvent(event),
+        _persistEvent(event),
+      ]),
+    );
   }
 
-  Future<void> _deleteDataAndLogEvent(LocalFirstEvent<T> event) async {
-    await Future.wait([
-      _insertEventRecord(event),
-      _deleteDataById(event.dataId),
-    ]);
+  Future<void> _deleteDataAndLogEvent(LocalFirstEvent<T> event) {
+    return _asOneWrite(
+      () => Future.wait([
+        _insertEventRecord(event),
+        _deleteDataById(event.dataId),
+      ]),
+    );
   }
 
   Future<void> _insertDataFromEvent(LocalFirstStateEvent<T> event) {

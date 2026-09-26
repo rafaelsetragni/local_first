@@ -1067,6 +1067,23 @@ void main() {
       },
     );
 
+    test('a write of one record notifies once, not once per statement', () async {
+      final told = <void>[];
+      final watching = repository.watchChanges().listen(told.add);
+      addTearDown(watching.cancel);
+      await Future<void>.delayed(Duration.zero);
+      final before = told.length;
+
+      await repository.upsert({'id': 'thing-4'}, needSync: false);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(
+        told.length - before,
+        1,
+        reason: 'the row and the event it was written by are one write',
+      );
+    });
+
     test('a delete that does not need sync leaves nothing to send', () async {
       await repository.upsert({'id': 'thing-3'}, needSync: false);
 
