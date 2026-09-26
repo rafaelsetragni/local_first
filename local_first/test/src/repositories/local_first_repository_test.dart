@@ -70,8 +70,41 @@ class _StubStorage implements LocalFirstStorage {
   Future<List<JsonMap>> getAll(String tableName) async => [];
 
   @override
-  Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId}) async =>
-      List.unmodifiable(events);
+  Future<JsonMap<JsonMap>> getByIds(
+    String tableName,
+    Iterable<String> ids,
+  ) async {
+    idSetsAsked.add(ids.toSet());
+    return {
+      for (final entry in byIds.entries)
+        if (ids.contains(entry.key)) entry.key: entry.value,
+    };
+  }
+
+  /// The id sets asked for, one entry per question: a read of many must be one
+  /// question, never one per id.
+  final List<Set<String>> idSetsAsked = [];
+  JsonMap<JsonMap> byIds = const {};
+
+  @override
+  Future<List<JsonMap>> getAllEvents(
+    String tableName, {
+    String? dataId,
+    bool pendingOnly = false,
+  }) async {
+    // Every question asked of the event log, in order, so a test can count
+    // them and see the conditions that travelled with them.
+    eventQuestions.add((dataId: dataId, pendingOnly: pendingOnly));
+    return List.unmodifiable([
+      for (final event in events)
+        if (dataId == null || event[LocalFirstEvent.kDataId] == dataId)
+          if (!pendingOnly ||
+              event[LocalFirstEvent.kSyncStatus] != SyncStatus.ok.index)
+            event,
+    ]);
+  }
+
+  final List<({String? dataId, bool pendingOnly})> eventQuestions = [];
 
   @override
   Future<JsonMap?> getById(String tableName, String id) async => null;
@@ -259,9 +292,7 @@ void main() {
       // and it is never one of the events that came before it
       expect(
         storage.updatedEvents.map((e) => e[LocalFirstEvent.kEventId]),
-        isNot(
-          contains(storage.lastInsertedEvent![LocalFirstEvent.kEventId]),
-        ),
+        isNot(contains(storage.lastInsertedEvent![LocalFirstEvent.kEventId])),
       );
     });
 
@@ -1007,24 +1038,34 @@ void main() {
 
     tearDown(() async => storage.close());
 
-    test('a delete that needs sync stays pending: it is the write to send', () async {
-      await repository.upsert({'id': 'thing-1'}, needSync: false);
+    test(
+      'a delete that needs sync stays pending: it is the write to send',
+      () async {
+        await repository.upsert({'id': 'thing-1'}, needSync: false);
 
-      await repository.delete('thing-1', needSync: true);
+        await repository.delete('thing-1', needSync: true);
 
-      final pending = await repository.getPendingEvents();
-      expect(pending.map((event) => event.syncOperation), [SyncOperation.delete]);
-      expect(pending.single.dataId, 'thing-1');
-    });
+        final pending = await repository.getPendingEvents();
+        expect(pending.map((event) => event.syncOperation), [
+          SyncOperation.delete,
+        ]);
+        expect(pending.single.dataId, 'thing-1');
+      },
+    );
 
-    test('the events before it are marked ok, and the delete is not one of them', () async {
-      await repository.upsert({'id': 'thing-2'}, needSync: true);
+    test(
+      'the events before it are marked ok, and the delete is not one of them',
+      () async {
+        await repository.upsert({'id': 'thing-2'}, needSync: true);
 
-      await repository.delete('thing-2', needSync: true);
+        await repository.delete('thing-2', needSync: true);
 
-      final pending = await repository.getPendingEvents();
-      expect(pending.map((event) => event.syncOperation), [SyncOperation.delete]);
-    });
+        final pending = await repository.getPendingEvents();
+        expect(pending.map((event) => event.syncOperation), [
+          SyncOperation.delete,
+        ]);
+      },
+    );
 
     test('a delete that does not need sync leaves nothing to send', () async {
       await repository.upsert({'id': 'thing-3'}, needSync: false);
@@ -1032,6 +1073,94 @@ void main() {
       await repository.delete('thing-3', needSync: false);
 
       expect(await repository.getPendingEvents(), isEmpty);
+    });
+  });
+
+  group('LocalFirstRepository reads the store by shape', () {
+    late _StubStorage storage;
+    late LocalFirstRepository<JsonMap> repository;
+
+    setUp(() {
+      storage = _StubStorage();
+      repository = LocalFirstRepository<JsonMap>.create(
+        name: 'things',
+        getId: (item) => item['id'] as String,
+        toJson: (item) => item,
+        fromJson: (json) => json,
+      );
+      LocalFirstClient(repositories: [repository], localStorage: storage);
+    });
+
+    test('a pending read asks for what is pending, and nothing else', () async {
+      await repository.getPendingEvents();
+
+      expect(storage.eventQuestions, [(dataId: null, pendingOnly: true)]);
+    });
+
+    test(
+      'sending what is pending reads no record that is not pending',
+      () async {
+        final pending = LocalFirstEvent.createNewInsertEvent(
+          repository: repository,
+          data: {'id': 'waiting'},
+          needSync: true,
+        );
+        final sent = LocalFirstEvent.createNewInsertEvent(
+          repository: repository,
+          data: {'id': 'already-sent'},
+          needSync: false,
+        );
+        storage.events
+          ..add(pending.toLocalStorageJson())
+          ..add(sent.toLocalStorageJson());
+
+        final waiting = await repository.getPendingEvents();
+
+        expect(waiting.map((event) => event.dataId), ['waiting']);
+      },
+    );
+
+    test('removing one record reads that record, not the table', () async {
+      final existing = LocalFirstEvent.createNewInsertEvent(
+        repository: repository,
+        data: {'id': 'thing-1'},
+        needSync: false,
+      );
+      storage.events.add(existing.toLocalStorageJson());
+
+      await repository.delete('thing-1', needSync: true);
+
+      expect(
+        storage.eventQuestions.map((question) => question.dataId),
+        everyElement('thing-1'),
+      );
+    });
+
+    test('a read of many is one question with the set in it', () async {
+      JsonMap held(String id) => {
+        'id': id,
+        LocalFirstEvent.kEventId: 'event-$id',
+        LocalFirstEvent.kSyncStatus: SyncStatus.ok.index,
+        LocalFirstEvent.kOperation: SyncOperation.insert.index,
+        LocalFirstEvent.kSyncCreatedAt: DateTime.utc(
+          2026,
+        ).millisecondsSinceEpoch,
+      };
+      storage.byIds = {'a': held('a'), 'b': held('b')};
+
+      final rows = await repository.getByIds(['a', 'b', 'c', 'a']);
+
+      expect(rows.keys, ['a', 'b']);
+      expect(storage.idSetsAsked, [
+        {'a', 'b', 'c'},
+      ]);
+    });
+
+    test('a read of no ids asks nothing at all', () async {
+      final held = await repository.getByIds(const <String>[]);
+
+      expect(held, isEmpty);
+      expect(storage.idSetsAsked, isEmpty);
     });
   });
 }

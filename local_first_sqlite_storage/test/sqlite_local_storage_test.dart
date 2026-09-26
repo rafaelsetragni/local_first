@@ -94,6 +94,7 @@ void main() {
       int? limit,
       int? offset,
       bool includeDeleted = false,
+      String? distinctField,
     }) {
       return LocalFirstQuery<DummyModel>(
         repositoryName: 'users',
@@ -110,6 +111,7 @@ void main() {
         limit: limit,
         offset: offset,
         includeDeleted: includeDeleted,
+        distinctField: distinctField,
       );
     }
 
@@ -173,6 +175,121 @@ void main() {
         await defaultStorage.close();
       },
     );
+
+    test('a pending read asks the events for what is pending', () async {
+      await insertRow({'id': 'sent', 'username': 'a', 'age': 1});
+      await insertEvent(
+        dataId: 'sent',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+      );
+      await insertRow({'id': 'waiting', 'username': 'b', 'age': 2});
+      await insertEvent(
+        dataId: 'waiting',
+        op: SyncOperation.insert,
+        status: SyncStatus.pending,
+      );
+
+      final pending = await storage.getAllEvents('users', pendingOnly: true);
+
+      expect(pending.map((event) => event[LocalFirstEvent.kDataId]), [
+        'waiting',
+      ]);
+    });
+
+    test('a read of many is one statement with the set in it', () async {
+      await insertRow({'id': 'one', 'username': 'a', 'age': 1});
+      await insertEvent(
+        dataId: 'one',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+      );
+      await insertRow({'id': 'two', 'username': 'b', 'age': 2});
+      await insertEvent(
+        dataId: 'two',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+      );
+      await insertRow({'id': 'gone', 'username': 'c', 'age': 3});
+      await insertEvent(
+        dataId: 'gone',
+        op: SyncOperation.delete,
+        status: SyncStatus.ok,
+      );
+
+      final held = await storage.getByIds('users', [
+        'one',
+        'two',
+        'gone',
+        'never',
+      ]);
+
+      expect(held.keys.toSet(), {'one', 'two'});
+      expect(held['one']!['username'], 'a');
+    });
+
+    test('one row per group is the newest of each group', () async {
+      Future<void> said(String id, String user, int age) async {
+        await insertRow({'id': id, 'username': user, 'age': age});
+        await insertEvent(
+          dataId: id,
+          op: SyncOperation.insert,
+          status: SyncStatus.ok,
+        );
+      }
+
+      await said('a1', 'ana', 1);
+      await said('a2', 'ana', 5);
+      await said('b1', 'bea', 3);
+      await said('b2', 'bea', 2);
+
+      final newest = await storage.query(
+        buildQuery(
+          sorts: const [QuerySort(field: 'age', descending: true)],
+          distinctField: 'username',
+        ),
+      );
+
+      expect(newest.length, 2);
+      expect(
+        {for (final event in newest) event.data!.username: event.data!.age},
+        {'ana': 5, 'bea': 3},
+      );
+    });
+
+    test('one row per group answers a filtered set in one question', () async {
+      Future<void> said(String id, String user, int age) async {
+        await insertRow({'id': id, 'username': user, 'age': age});
+        await insertEvent(
+          dataId: id,
+          op: SyncOperation.insert,
+          status: SyncStatus.ok,
+        );
+      }
+
+      await said('a1', 'ana', 1);
+      await said('a2', 'ana', 5);
+      await said('c1', 'cid', 9);
+
+      final oldest = await storage.query(
+        buildQuery(
+          filters: const [
+            QueryFilter(field: 'username', whereIn: ['ana']),
+          ],
+          sorts: const [QuerySort(field: 'age')],
+          distinctField: 'username',
+        ),
+      );
+
+      expect(oldest.map((event) => event.data!.id), ['a1']);
+    });
+
+    test('a group asked on a field that is not a column is refused', () async {
+      await expectLater(
+        storage.query(buildQuery(distinctField: 'not_a_column')),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
 
     test('close shuts down active watchers', () async {
       final sub = storage.watchQuery(buildQuery()).listen((_) {});

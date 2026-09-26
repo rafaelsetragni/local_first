@@ -201,7 +201,9 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
       final raw = await _readBoxValue(box, key);
       if (raw == null) continue;
       final merged = await _attachEventMetadata(tableName, raw);
-      if (merged[LocalFirstEvent.kOperation] == SyncOperation.delete.index) continue;
+      if (merged[LocalFirstEvent.kOperation] == SyncOperation.delete.index) {
+        continue;
+      }
       items.add(merged);
     }
     return items;
@@ -216,7 +218,11 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
   Future<void> runInTransaction(Future<void> Function() action) => action();
 
   @override
-  Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId}) async {
+  Future<List<JsonMap>> getAllEvents(
+    String tableName, {
+    String? dataId,
+    bool pendingOnly = false,
+  }) async {
     final eventBox = await _getBox(tableName, isEvent: true);
     final dataBox = await _getBox(tableName);
     final keys = eventBox.keys.cast<String>();
@@ -226,9 +232,20 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
       if (meta == null) continue;
       final eventDataId = meta[LocalFirstEvent.kDataId] as String?;
       if (dataId != null && eventDataId != dataId) continue;
-      final data =
-          eventDataId != null ? await _readBoxValue(dataBox, eventDataId) : null;
-      items.add(_mergeEventWithData(meta, data, lastEventId: meta[LocalFirstEvent.kEventId]));
+      if (pendingOnly &&
+          meta[LocalFirstEvent.kSyncStatus] == SyncStatus.ok.index) {
+        continue;
+      }
+      final data = eventDataId != null
+          ? await _readBoxValue(dataBox, eventDataId)
+          : null;
+      items.add(
+        _mergeEventWithData(
+          meta,
+          data,
+          lastEventId: meta[LocalFirstEvent.kEventId],
+        ),
+      );
     }
     return items;
   }
@@ -245,9 +262,32 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
       final rawItem = await _readBoxValue(box, id);
       if (rawItem == null) return null;
       final merged = await _attachEventMetadata(tableName, rawItem);
-      if (merged[LocalFirstEvent.kOperation] == SyncOperation.delete.index) return null;
+      if (merged[LocalFirstEvent.kOperation] == SyncOperation.delete.index) {
+        return null;
+      }
       return merged;
     });
+  }
+
+  /// Fetches the records of [ids] the box holds and does not hold as deleted,
+  /// keyed by id — one pass over the set asked for.
+  @override
+  Future<JsonMap<JsonMap>> getByIds(
+    String tableName,
+    Iterable<String> ids,
+  ) async {
+    final box = await _getBox(tableName);
+    final held = <String, JsonMap>{};
+    for (final id in ids.toSet()) {
+      final rawItem = await _readBoxValue(box, id);
+      if (rawItem == null) continue;
+      final merged = await _attachEventMetadata(tableName, rawItem);
+      if (merged[LocalFirstEvent.kOperation] == SyncOperation.delete.index) {
+        continue;
+      }
+      held[id] = merged;
+    }
+    return held;
   }
 
   /// Fetches an event by id merged with its data payload.
@@ -264,7 +304,11 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
       final dataId = meta[LocalFirstEvent.kDataId] as String?;
       final dataBox = await _getBox(tableName);
       final data = dataId != null ? await _readBoxValue(dataBox, dataId) : null;
-      return _mergeEventWithData(meta, data, lastEventId: meta[LocalFirstEvent.kEventId]);
+      return _mergeEventWithData(
+        meta,
+        data,
+        lastEventId: meta[LocalFirstEvent.kEventId],
+      );
     });
   }
 
@@ -782,7 +826,10 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
         final rawEvent = await _readBoxValue(eventBox, key);
         if (rawEvent == null) continue;
         if (!_hasRequiredEventFields(rawEvent)) continue;
-        if (rawEvent[LocalFirstEvent.kOperation] != SyncOperation.delete.index) continue;
+        if (rawEvent[LocalFirstEvent.kOperation] !=
+            SyncOperation.delete.index) {
+          continue;
+        }
         results.add(rawEvent);
       }
     }
@@ -803,8 +850,23 @@ class HiveLocalFirstStorage implements LocalFirstStorage {
             return sort.descending ? -comparison : comparison;
           }
         }
+        // two rows that sort the same are ordered by their id, so the row a
+        // grouped question keeps is the one the SQL backends keep
+        final aId = a[repo.idFieldName];
+        final bId = b[repo.idFieldName];
+        if (aId is Comparable && bId is Comparable) return aId.compareTo(bId);
         return 0;
       });
+    }
+
+    if (query.distinctField != null) {
+      final grouped = LocalFirstQuery.keepFirstPerGroup(
+        results,
+        query.distinctField!,
+      );
+      results
+        ..clear()
+        ..addAll(grouped);
     }
 
     // Apply offset and limit (pagination)

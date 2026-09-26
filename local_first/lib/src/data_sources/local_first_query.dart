@@ -11,6 +11,13 @@ class LocalFirstQuery<T> {
   final int? limit;
   final int? offset;
   final bool includeDeleted;
+
+  /// When set, the answer holds **one row per distinct value of this field**:
+  /// the first one in the query's order. It is what a list of conversations
+  /// asks for the newest message of each of them — one question for the whole
+  /// list, not one per conversation.
+  final String? distinctField;
+
   final LocalFirstStorage _delegate;
   final LocalFirstRepository<T> _repository;
 
@@ -25,6 +32,7 @@ class LocalFirstQuery<T> {
     this.limit,
     this.offset,
     this.includeDeleted = false,
+    this.distinctField,
   }) : _delegate = delegate,
        _repository = repository;
 
@@ -34,6 +42,7 @@ class LocalFirstQuery<T> {
     int? limit,
     int? offset,
     bool? includeDeleted,
+    String? distinctField,
   }) {
     return LocalFirstQuery<T>(
       repositoryName: repositoryName,
@@ -44,6 +53,7 @@ class LocalFirstQuery<T> {
       limit: limit ?? this.limit,
       offset: offset ?? this.offset,
       includeDeleted: includeDeleted ?? this.includeDeleted,
+      distinctField: distinctField ?? this.distinctField,
     );
   }
 
@@ -125,6 +135,41 @@ class LocalFirstQuery<T> {
   /// Includes soft-deleted items (delete events) in results.
   LocalFirstQuery<T> withDeleted({bool include = true}) {
     return copyWith(includeDeleted: include);
+  }
+
+  /// Keeps **one row per distinct value of [field]** — the first one in the
+  /// order the query asks for. What a list wants of all its rows is asked
+  /// once: the newest message of every conversation is
+  /// `orderBy(createdAt, descending: true).distinctOn(pageId)`, one question
+  /// whatever the number of conversations.
+  ///
+  /// Schema-aware backends require [field] and the first sort field to be
+  /// declared columns of the repository, so the grouping is decided by the
+  /// storage and not by the app.
+  ///
+  /// Example:
+  /// ```dart
+  /// query()
+  ///   .where('page_id', whereIn: pageIds)
+  ///   .orderBy('created_at', descending: true)
+  ///   .distinctOn('page_id')
+  /// ```
+  LocalFirstQuery<T> distinctOn(String field) {
+    return copyWith(distinctField: field);
+  }
+
+  /// Keeps the first row of each distinct value of [field], in the order the
+  /// rows already are — the fallback for backends that filter in Dart. The
+  /// rows must already be in the order the query asked for; SQL backends push
+  /// the same rule down into the statement.
+  static List<JsonMap> keepFirstPerGroup(List<JsonMap> rows, String field) {
+    final seen = <Object?>{};
+    final kept = <JsonMap>[];
+    for (final row in rows) {
+      if (!seen.add(row[field])) continue;
+      kept.add(row);
+    }
+    return kept;
   }
 
   /// Executes the query and returns all matching results.
