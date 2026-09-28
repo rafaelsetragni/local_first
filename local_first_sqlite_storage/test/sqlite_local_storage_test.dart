@@ -2621,4 +2621,112 @@ void main() {
       await storage.close();
     });
   });
+
+  group('the store is built once, and read in one question', () {
+    late Directory folder;
+    late SqliteLocalFirstStorage storage;
+
+    const schema = {'username': LocalFieldType.text};
+
+    setUp(() async {
+      folder = await Directory.systemTemp.createTemp('local_first_boot');
+      storage = SqliteLocalFirstStorage(
+        databaseName: 'boot.db',
+        databasePath: '${folder.path}/account__boot.db',
+        dbFactory: databaseFactoryFfi,
+        namespace: 'account',
+      );
+      await storage.initialize();
+      await storage.ensureSchema('users', schema, idFieldName: 'id');
+    });
+
+    tearDown(() async {
+      await storage.close();
+      await folder.delete(recursive: true);
+    });
+
+    test(
+      'the metadata table is declared once, however many cursors are read',
+      () async {
+        final helper = TestHelperSqliteLocalFirstStorage(storage);
+        final declaredAfterOpen = helper.metadataDeclarations;
+
+        for (final domain in ['pages', 'members', 'memories', 'likes']) {
+          await storage.setConfigValue<String>('sync_cursor_$domain', 'c1');
+        }
+        for (var i = 0; i < 20; i++) {
+          await storage.getConfigValue<String>('sync_cursor_pages');
+        }
+
+        expect(declaredAfterOpen, 1);
+        expect(helper.metadataDeclarations, declaredAfterOpen);
+      },
+    );
+
+    test(
+      'the account database is named before the first table is created',
+      () async {
+        final fresh = SqliteLocalFirstStorage(
+          databaseName: 'boot.db',
+          databasePath: '${folder.path}/named__boot.db',
+          dbFactory: databaseFactoryFfi,
+        );
+        fresh.prepareNamespace('account');
+        expect(fresh.namespace, 'account');
+
+        await fresh.initialize();
+        await fresh.ensureSchema('users', schema, idFieldName: 'id');
+        final helper = TestHelperSqliteLocalFirstStorage(fresh);
+
+        // opened on the account's own file: one verification, and no switch
+        expect(helper.tableVerifications['users'], 1);
+        expect(
+          () => fresh.prepareNamespace('other'),
+          throwsA(isA<StateError>()),
+        );
+        await fresh.close();
+      },
+    );
+
+    test('every cursor of a round is read in one question', () async {
+      await storage.setConfigValue<String>('sync_cursor_pages', 'p1');
+      await storage.setConfigValue<String>('sync_cursor_members', 'm1');
+
+      final read = await storage.getConfigValues<String>([
+        'sync_cursor_pages',
+        'sync_cursor_members',
+        'sync_cursor_memories',
+      ]);
+
+      expect(read, {'sync_cursor_pages': 'p1', 'sync_cursor_members': 'm1'});
+      expect(await storage.getConfigValues<String>(const []), isEmpty);
+    });
+
+    test(
+      'a repository is verified once while its database stays open, and a '
+      'namespace returned to declares nothing again',
+      () async {
+        final helper = TestHelperSqliteLocalFirstStorage(storage);
+        await storage.insert('users', {
+          'id': 'u1',
+          'username': 'alice',
+          '_lasteventId': 'evt-u1',
+        }, 'id');
+        final afterFirstOpen = helper.tableVerifications['users'];
+
+        await storage.useNamespace('other');
+        await storage.getAll('users');
+        final afterOther = helper.tableVerifications['users'];
+
+        await storage.useNamespace('account');
+        await storage.getAll('users');
+
+        // one verification per namespace, and none again for the namespace it
+        // left and came back to
+        expect(afterFirstOpen, 1);
+        expect(afterOther, 2);
+        expect(helper.tableVerifications['users'], 2);
+      },
+    );
+  });
 }
