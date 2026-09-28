@@ -183,16 +183,38 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     return items;
   }
 
-  /// Returns all events for a repository merged with their latest state.
-  ///
-  /// - [tableName]: Repository name to query.
-  ///
-  /// Throws [StateError] if called before [initialize].
+  /// Runs [action] as one write. There is no database to commit, but the
+  /// notifications it produces are collected and told **once** per repository
+  /// at the end — a write of one record notifies once, as it does over SQLite.
+  /// A nested call joins the batch that is running.
   @override
-  Future<void> runInTransaction(Future<void> Function() action) => action();
+  Future<void> runInTransaction(Future<void> Function() action) async {
+    if (_batchedNotify != null) {
+      await action();
+      return;
+    }
+    final batched = <String>{};
+    _batchedNotify = batched;
+    try {
+      await action();
+    } finally {
+      _batchedNotify = null;
+      for (final repositoryName in batched) {
+        await _notifyWatchers(repositoryName);
+      }
+    }
+  }
+
+  /// While a batch is running, the repositories written to are collected here
+  /// and told once after it, instead of once per statement.
+  Set<String>? _batchedNotify;
 
   @override
-  Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId}) async {
+  Future<List<JsonMap>> getAllEvents(
+    String tableName, {
+    String? dataId,
+    bool pendingOnly = false,
+  }) async {
     _ensureInitialized();
     final events = _events[tableName];
     if (events == null) return const [];
@@ -203,6 +225,10 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
       final normalized = _normalizeLegacyMap(JsonMap.from(event));
       final eventDataId = normalized[LocalFirstEvent.kDataId] as String?;
       if (dataId != null && eventDataId != dataId) continue;
+      if (pendingOnly &&
+          normalized[LocalFirstEvent.kSyncStatus] == SyncStatus.ok.index) {
+        continue;
+      }
       final data = eventDataId != null ? dataTable[eventDataId] : null;
       items.add(
         _mergeEventWithData(
@@ -234,6 +260,31 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
       return null;
     }
     return merged;
+  }
+
+  /// Returns the records of [ids] that the table holds and does not hold as
+  /// deleted, keyed by id — one pass over the set asked for, never one read
+  /// per id.
+  @override
+  Future<JsonMap<JsonMap>> getByIds(
+    String tableName,
+    Iterable<String> ids,
+  ) async {
+    _ensureInitialized();
+    final table = _data[tableName];
+    if (table == null) return <String, JsonMap>{};
+
+    final held = <String, JsonMap>{};
+    for (final id in ids.toSet()) {
+      final raw = table[id];
+      if (raw == null) continue;
+      final merged = await _attachEventMetadata(tableName, JsonMap.from(raw));
+      if (merged[LocalFirstEvent.kOperation] == SyncOperation.delete.index) {
+        continue;
+      }
+      held[id] = merged;
+    }
+    return held;
   }
 
   /// Returns whether a record id exists in the state table.
@@ -442,9 +493,10 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
           event[LocalFirstEvent.kDataId],
     };
     final ids = rows.keys.where((id) => !waiting.contains(id)).toSet();
-    if (ids.isEmpty && events.values.every(
-      (event) => waiting.contains(event[LocalFirstEvent.kDataId]),
-    )) {
+    if (ids.isEmpty &&
+        events.values.every(
+          (event) => waiting.contains(event[LocalFirstEvent.kDataId]),
+        )) {
       return 0;
     }
 
@@ -634,6 +686,7 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
       }
     }
 
+    final idField = repo.idFieldName;
     if (query.sorts.isNotEmpty) {
       results.sort((a, b) {
         for (final sort in query.sorts) {
@@ -649,8 +702,23 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
             return sort.descending ? -comparison : comparison;
           }
         }
+        // two rows that sort the same are ordered by their id, so the row a
+        // grouped question keeps is the one the SQL backends keep
+        final aId = a[idField];
+        final bId = b[idField];
+        if (aId is Comparable && bId is Comparable) return aId.compareTo(bId);
         return 0;
       });
+    }
+
+    if (query.distinctField != null) {
+      final grouped = LocalFirstQuery.keepFirstPerGroup(
+        results,
+        query.distinctField!,
+      );
+      results
+        ..clear()
+        ..addAll(grouped);
     }
 
     final start = query.offset ?? 0;
@@ -757,6 +825,12 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
   }
 
   Future<void> _notifyWatchers(String repositoryName) async {
+    final batched = _batchedNotify;
+    if (batched != null) {
+      batched.add(repositoryName);
+      return;
+    }
+
     final changeObservers = _changeObservers[repositoryName];
     if (changeObservers != null && changeObservers.isNotEmpty) {
       for (final controller in List.of(changeObservers)) {

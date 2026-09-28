@@ -46,7 +46,17 @@ class _StorageStub implements LocalFirstStorage {
   Future<List<JsonMap>> getAll(String tableName) async => const [];
 
   @override
-  Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId}) async => const [];
+  Future<List<JsonMap>> getAllEvents(
+    String tableName, {
+    String? dataId,
+    bool pendingOnly = false,
+  }) async => const [];
+
+  @override
+  Future<JsonMap<JsonMap>> getByIds(
+    String tableName,
+    Iterable<String> ids,
+  ) async => const {};
 
   @override
   Future<JsonMap?> getById(String tableName, String id) async => null;

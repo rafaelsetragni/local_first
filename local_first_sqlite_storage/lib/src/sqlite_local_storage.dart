@@ -454,15 +454,27 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   Future<List<JsonMap>> getAllEvents(
     String tableName, {
     String? dataId,
+    bool pendingOnly = false,
   }) => _withDb(() async {
     final db = await _exec();
     await _ensureTables(tableName);
     final eventTable = _tableName(tableName, isEvent: true);
     final dataTable = _tableName(tableName);
 
-    final where = dataId != null
-        ? 'WHERE e.${LocalFirstEvent.kDataId} = ?'
-        : '';
+    // Both conditions travel with the question. A pending read above all:
+    // what is waiting to be sent is asked for by its status, never the whole
+    // history read back and sifted afterwards.
+    final conditions = <String>[];
+    final args = <Object?>[];
+    if (dataId != null) {
+      conditions.add('e.${LocalFirstEvent.kDataId} = ?');
+      args.add(dataId);
+    }
+    if (pendingOnly) {
+      conditions.add('e.${LocalFirstEvent.kSyncStatus} != ?');
+      args.add(SyncStatus.ok.index);
+    }
+    final where = conditions.isEmpty ? '' : 'WHERE ${conditions.join(' AND ')}';
 
     final rows = await db.rawQuery(
       'SELECT d.data, d._lasteventId, '
@@ -471,7 +483,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       'FROM $eventTable e '
       'LEFT JOIN $dataTable d ON e.${LocalFirstEvent.kDataId} = d.id '
       '$where',
-      dataId != null ? [dataId] : null,
+      args.isEmpty ? null : args,
     );
 
     return rows.map(_decodeJoinedRow).toList();
@@ -503,6 +515,42 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     if (rows.isEmpty || rows.first['data'] == null) return null;
     return _decodeJoinedRow(rows.first);
+  });
+
+  /// Fetches the records of [ids] in one statement, keyed by id: a read of
+  /// many is one read, with the set in the question. Rows the table does not
+  /// hold, and rows it holds as deleted, are absent from the answer.
+  @override
+  Future<JsonMap<JsonMap>> getByIds(
+    String tableName,
+    Iterable<String> ids,
+  ) => _withDb(() async {
+    final wanted = ids.toSet().toList();
+    if (wanted.isEmpty) return <String, JsonMap>{};
+    final db = await _exec();
+    await _ensureTables(tableName);
+    final dataTable = _tableName(tableName);
+    final eventTable = _tableName(tableName, isEvent: true);
+    final placeholders = List.filled(wanted.length, '?').join(', ');
+
+    final rows = await db.rawQuery(
+      'SELECT d.id, d.data, d._lasteventId, '
+      'e.${LocalFirstEvent.kEventId}, e.${LocalFirstEvent.kSyncStatus}, e.${LocalFirstEvent.kOperation}, e.${LocalFirstEvent.kSyncCreatedAt} '
+      'FROM $dataTable d '
+      'LEFT JOIN $eventTable e ON d._lasteventId = e.${LocalFirstEvent.kEventId} '
+      'WHERE d.id IN ($placeholders) '
+      'AND (e.${LocalFirstEvent.kOperation} IS NULL OR e.${LocalFirstEvent.kOperation} != ?)',
+      [...wanted, SyncOperation.delete.index],
+    );
+
+    final held = <String, JsonMap>{};
+    for (final row in rows) {
+      if (row['data'] == null) continue;
+      final id = row['id'];
+      if (id is! String) continue;
+      held[id] = _decodeJoinedRow(row);
+    }
+    return held;
   });
 
   /// Fetches a specific event by id joined with its data payload (if present).
@@ -1572,90 +1620,140 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       }
     }
 
-    final whereClauses = <String>[];
     final orderClauses = <String>[];
     final args = <Object?>[];
 
-    String columnExpr(String field) {
+    String columnExpr(String field, [String alias = 'd']) {
       if (schema.containsKey(field)) {
-        return 'd."$field"';
+        return '$alias."$field"';
       }
       args.add('\$.$field');
-      return 'json_extract(d.data, ?)';
+      return 'json_extract($alias.data, ?)';
     }
 
     Object? encode(String field, dynamic value) {
       return _encodeValue(schema[field], value);
     }
 
-    for (final filter in query.filters) {
-      final column = columnExpr(filter.field);
+    // The conditions of the question, built for a given pair of aliases so the
+    // same rules can be repeated inside a grouped question's sub-select. Args
+    // are appended in the order the SQL text places them.
+    List<String> whereClausesFor(String dataAlias, String eventAlias) {
+      final whereClauses = <String>[];
+      for (final filter in query.filters) {
+        final column = columnExpr(filter.field, dataAlias);
 
-      if (filter.isNull != null) {
-        whereClauses.add('$column IS ${filter.isNull! ? '' : 'NOT '}NULL');
-        continue;
+        if (filter.isNull != null) {
+          whereClauses.add('$column IS ${filter.isNull! ? '' : 'NOT '}NULL');
+          continue;
+        }
+
+        if (filter.isEqualTo != null) {
+          whereClauses.add('$column = ?');
+          args.add(encode(filter.field, filter.isEqualTo));
+        }
+
+        if (filter.isNotEqualTo != null) {
+          whereClauses.add('$column != ?');
+          args.add(encode(filter.field, filter.isNotEqualTo));
+        }
+
+        if (filter.isLessThan != null) {
+          whereClauses.add('$column < ?');
+          args.add(encode(filter.field, filter.isLessThan));
+        }
+
+        if (filter.isLessThanOrEqualTo != null) {
+          whereClauses.add('$column <= ?');
+          args.add(encode(filter.field, filter.isLessThanOrEqualTo));
+        }
+
+        if (filter.isGreaterThan != null) {
+          whereClauses.add('$column > ?');
+          args.add(encode(filter.field, filter.isGreaterThan));
+        }
+
+        if (filter.isGreaterThanOrEqualTo != null) {
+          whereClauses.add('$column >= ?');
+          args.add(encode(filter.field, filter.isGreaterThanOrEqualTo));
+        }
+
+        if (filter.whereIn != null) {
+          final placeholders = List.filled(
+            filter.whereIn!.length,
+            '?',
+          ).join(', ');
+          whereClauses.add('$column IN ($placeholders)');
+          args.addAll(
+            filter.whereIn!.map<Object?>(
+              (value) => encode(filter.field, value),
+            ),
+          );
+        }
+
+        if (filter.whereNotIn != null && filter.whereNotIn!.isNotEmpty) {
+          final placeholders = List.filled(
+            filter.whereNotIn!.length,
+            '?',
+          ).join(', ');
+          whereClauses.add('$column NOT IN ($placeholders)');
+          args.addAll(
+            filter.whereNotIn!.map<Object?>(
+              (value) => encode(filter.field, value),
+            ),
+          );
+        }
       }
 
-      if (filter.isEqualTo != null) {
-        whereClauses.add('$column = ?');
-        args.add(encode(filter.field, filter.isEqualTo));
+      // Added BEFORE the sorts are processed, so the args stay in the order
+      // of the SQL placeholders.
+      if (!query.includeDeleted) {
+        whereClauses.add('$eventAlias.${LocalFirstEvent.kOperation} != ?');
+        args.add(SyncOperation.delete.index);
       }
-
-      if (filter.isNotEqualTo != null) {
-        whereClauses.add('$column != ?');
-        args.add(encode(filter.field, filter.isNotEqualTo));
-      }
-
-      if (filter.isLessThan != null) {
-        whereClauses.add('$column < ?');
-        args.add(encode(filter.field, filter.isLessThan));
-      }
-
-      if (filter.isLessThanOrEqualTo != null) {
-        whereClauses.add('$column <= ?');
-        args.add(encode(filter.field, filter.isLessThanOrEqualTo));
-      }
-
-      if (filter.isGreaterThan != null) {
-        whereClauses.add('$column > ?');
-        args.add(encode(filter.field, filter.isGreaterThan));
-      }
-
-      if (filter.isGreaterThanOrEqualTo != null) {
-        whereClauses.add('$column >= ?');
-        args.add(encode(filter.field, filter.isGreaterThanOrEqualTo));
-      }
-
-      if (filter.whereIn != null) {
-        final placeholders = List.filled(
-          filter.whereIn!.length,
-          '?',
-        ).join(', ');
-        whereClauses.add('$column IN ($placeholders)');
-        args.addAll(
-          filter.whereIn!.map<Object?>((value) => encode(filter.field, value)),
-        );
-      }
-
-      if (filter.whereNotIn != null && filter.whereNotIn!.isNotEmpty) {
-        final placeholders = List.filled(
-          filter.whereNotIn!.length,
-          '?',
-        ).join(', ');
-        whereClauses.add('$column NOT IN ($placeholders)');
-        args.addAll(
-          filter.whereNotIn!.map<Object?>(
-            (value) => encode(filter.field, value),
-          ),
-        );
-      }
+      return whereClauses;
     }
 
-    // Add !includeDeleted filter arg BEFORE processing sorts
-    // This ensures args are in the correct order for the SQL placeholders
-    if (!query.includeDeleted) {
-      whereClauses.add('e.${LocalFirstEvent.kOperation} != ?');
-      args.add(SyncOperation.delete.index);
+    final whereClauses = whereClausesFor('d', 'e');
+
+    // One row per distinct value of a field: the row of its group that no
+    // other row of the same group comes before, in the order asked for. The
+    // grouping is decided here, in the statement, not by the app reading
+    // every row and keeping some.
+    final distinctField = query.distinctField;
+    if (distinctField != null) {
+      if (!schema.containsKey(distinctField)) {
+        throw ArgumentError.value(
+          distinctField,
+          'distinctOn',
+          'Must be a declared column of "${query.repositoryName}"',
+        );
+      }
+      final sort = query.sorts.isEmpty ? null : query.sorts.first;
+      if (sort != null && !schema.containsKey(sort.field)) {
+        throw ArgumentError.value(
+          sort.field,
+          'orderBy',
+          'A grouped question orders by a declared column of '
+              '"${query.repositoryName}"',
+        );
+      }
+      final inner = whereClausesFor('d2', 'e2');
+      inner.add('d2."$distinctField" = d."$distinctField"');
+      if (sort == null) {
+        inner.add('d2.id < d.id');
+      } else {
+        final ahead = sort.descending ? '>' : '<';
+        inner.add(
+          '(d2."${sort.field}" $ahead d."${sort.field}" '
+          'OR (d2."${sort.field}" = d."${sort.field}" AND d2.id < d.id))',
+        );
+      }
+      whereClauses.add(
+        'NOT EXISTS (SELECT 1 FROM $resolvedTable d2 '
+        'LEFT JOIN $eventTable e2 ON d2._lasteventId = e2.${LocalFirstEvent.kEventId} '
+        'WHERE ${inner.join(' AND ')})',
+      );
     }
 
     for (final sort in query.sorts) {
