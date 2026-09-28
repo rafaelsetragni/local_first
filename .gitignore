@@ -16,3 +16,4 @@ coverage/
 
 # Server logs
 server/*.log
+logs/
