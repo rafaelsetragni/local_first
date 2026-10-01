@@ -1,3 +1,10 @@
+## 0.3.0
+
+- Requires `local_first` `^0.10.0`, which added `getByIds` and the `pendingOnly`
+  filter of `getAllEvents` to the storage interface. No change to this
+  package's API or behaviour.
+- The README's installation snippet names the new versions.
+
 ## 0.2.2
 
 - Requires `local_first` `^0.9.0`, which added `deleteAllSynced` and

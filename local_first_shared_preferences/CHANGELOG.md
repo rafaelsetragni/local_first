@@ -1,3 +1,7 @@
+## 0.1.3
+
+- Requires `local_first` `^0.10.0`. No change to this package's API.
+
 ## 0.1.2
 
 - Requires `local_first` `^0.9.0`. This adapter implements

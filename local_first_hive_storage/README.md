@@ -43,8 +43,8 @@ Add the core package and Hive adapter to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  local_first: ^0.9.0
-  local_first_hive_storage: ^0.3.0
+  local_first: ^0.10.0
+  local_first_hive_storage: ^0.4.0
 ```
 
 Then install it with:

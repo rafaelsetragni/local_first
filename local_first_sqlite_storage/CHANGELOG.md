@@ -1,3 +1,41 @@
+## 0.6.0
+
+- Requires `local_first` `^0.10.0`, and implements what it added to the storage
+  interface:
+  - `getByIds(tableName, ids)` reads several records in one statement, with the
+    set in a `WHERE id IN (...)`, keyed by id. Rows the table does not hold, and
+    rows whose last event is a delete, are left out.
+  - `getAllEvents(pendingOnly: true)` carries the condition into the statement:
+    what is waiting to be sent is asked for by its status, and the event history
+    is never read back and sifted.
+  - `LocalFirstQuery.distinctOn(field)` is decided in the statement: a
+    `NOT EXISTS` sub-select keeps, for each value of `field`, the row that no
+    other row of its group comes before in the order asked for, ties broken by
+    id. `field` and the first sort field must be declared columns of the
+    repository's schema; anything else throws `ArgumentError`.
+- With `local_first` 0.10.0, a write of one record runs in one SQLite
+  transaction — the row and its event commit together — and watchers are told
+  once.
+- Added **`prepareNamespace(namespace)`**, which names the namespace to open
+  before `initialize`. The account's database is then the file that opens, and
+  its schema is verified there once — not on the shared default file first and
+  again after `useNamespace`. It throws `StateError` once the database is open;
+  `useNamespace` is still what changes the namespace afterwards.
+- Added **`getConfigValues<T>(keys)`**, which reads several config values in one
+  statement — every cursor of a sync round at once, not one read per domain.
+  Keys the database does not hold are left out of the answer.
+- The schema is verified once per database file. What was verified is
+  remembered per namespace and across `close`, so switching to another account
+  and back creates no table twice; `ensureSchema` still forces a new
+  verification on every file, and a file reopened without a table it was
+  remembered to hold — an in-memory database, a file removed — is verified
+  again. The metadata table is declared when its database opens, not on every
+  read of a config key.
+- `TestHelperSqliteLocalFirstStorage` exposes `tableVerifications`,
+  `metadataEnsured` and `metadataDeclarations`, so a test can count the
+  declarations that really reached the database.
+- The README's installation snippet names the new versions.
+
 ## 0.5.0
 
 - Implemented `LocalFirstStorage.deleteAllSynced`: drops every state row whose
