@@ -1,3 +1,56 @@
+## 0.10.0
+
+### A write of one record is one transaction, and notifies once
+
+- `LocalFirstRepository` writes a record and the event that wrote it — an
+  upsert, an update, a delete — inside `LocalFirstStorage.runInTransaction`.
+  On SQLite the row and its event commit together, and whoever watches the
+  repository hears of the write once instead of once per statement, so a
+  watched query is read again once per write. A write made while a batch is
+  already running — a sync applying a page of remote events — joins it.
+- `InMemoryLocalFirstStorage.runInTransaction` batches its notifications the
+  same way: what is written inside it is told once per repository, at the end,
+  and a nested call joins the batch that is running. A test over the in-memory
+  storage now counts the emissions the device gets.
+
+### Reading the local store by shape
+
+- **`LocalFirstStorage.getAllEvents` takes `pendingOnly`.** When true, only the
+  events still waiting to be sent are returned, and the condition belongs in
+  the query. `LocalFirstRepository.getPendingEvents()` asks with it: collecting
+  what to push no longer reads the whole event history to sift it in Dart.
+- **`LocalFirstRepository.delete`** reads the history of the record it removes,
+  not the event log of the whole repository.
+- **`LocalFirstStorage.getByIds(tableName, ids)` and
+  `LocalFirstRepository.getByIds(ids)`** read several records in one question
+  with the set in it, keyed by id — where a loop of `getById` asked once per
+  row. Ids the device does not hold, and records it holds as deleted, are
+  absent from the answer; an empty set asks nothing.
+- **`LocalFirstQuery.distinctOn(field)`** keeps one row per distinct value of
+  `field`: the first one in the query's order. The newest message of every
+  conversation is `orderBy('created_at', descending: true).distinctOn('page_id')`
+  — one question for the whole list, not one per conversation. `LocalFirstQuery`
+  gains the `distinctField` property and the `copyWith` parameter of the same
+  name, and `LocalFirstQuery.keepFirstPerGroup(rows, field)` is the helper for
+  storages that filter in Dart. Schema-aware storages require `field` and the
+  first sort field to be declared columns of the repository.
+- In the in-memory storage, two rows that sort the same are now ordered by
+  their id, so the row a grouped question keeps is the one the SQL storage
+  keeps.
+
+> **For custom `LocalFirstStorage` implementations:** `getByIds` is a new
+> required member, and an override of `getAllEvents` must declare the new named
+> parameter `bool pendingOnly = false` — a storage without them no longer
+> compiles. `getByIds` answers a map keyed by id that leaves out the ids not
+> held and the rows whose last event is a delete; `getAllEvents(pendingOnly:
+> true)` answers only the events whose sync status is not `ok`. A storage that
+> runs queries should honour `LocalFirstQuery.distinctField` as well
+> (`LocalFirstQuery.keepFirstPerGroup` does it over rows already sorted). The
+> built-in storages are updated: `local_first_sqlite_storage` 0.6.0 and
+> `local_first_hive_storage` 0.4.0 implement the new members, and their earlier
+> versions do not compile against this release. Every package of the family
+> now requires `local_first` `^0.10.0`.
+
 ## 0.9.0
 
 ### Dropping local data without telling the server

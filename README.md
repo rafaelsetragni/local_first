@@ -16,9 +16,9 @@ Examples:
 Add only what you need:
 ```yaml
 dependencies:
-  local_first: ^0.4.0
-  local_first_hive_storage: ^1.0.0  # optional
-  local_first_sqlite_storage: ^1.0.0 # optional
+  local_first: ^0.10.0
+  local_first_hive_storage: ^0.4.0  # optional
+  local_first_sqlite_storage: ^0.6.0 # optional
 ```
 
 ## Issues

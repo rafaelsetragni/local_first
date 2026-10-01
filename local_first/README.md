@@ -141,21 +141,21 @@ Add the core package and the adapters you need to your `pubspec.yaml`:
 ```yaml
 dependencies:
   # Core package (required)
-  local_first: ^0.9.0
+  local_first: ^0.10.0
 
   # Storage adapters (choose one or more)
-  local_first_hive_storage: ^0.3.0       # schema-less key/value storage
-  local_first_sqlite_storage: ^0.5.0     # structured tables with indexes
-  local_first_shared_preferences: ^0.1.2 # config-only key/value storage
+  local_first_hive_storage: ^0.4.0       # schema-less key/value storage
+  local_first_sqlite_storage: ^0.6.0     # structured tables with indexes
+  local_first_shared_preferences: ^0.1.3 # config-only key/value storage
 
   # Sync strategies (choose one or more)
-  local_first_periodic_strategy: ^0.2.2  # periodic REST sync
-  local_first_websocket: ^0.3.1          # real-time WebSocket sync
+  local_first_periodic_strategy: ^0.3.0  # periodic REST sync
+  local_first_websocket: ^0.3.2          # real-time WebSocket sync
 
   # Backup providers (choose one or more)
-  local_first_firebase_backup: ^0.1.1    # Firebase Storage (cross-platform)
-  local_first_gdrive_backup: ^0.1.1      # Google Drive (Android)
-  local_first_icloud_backup: ^0.1.1      # iCloud (iOS/macOS)
+  local_first_firebase_backup: ^0.1.2    # Firebase Storage (cross-platform)
+  local_first_gdrive_backup: ^0.1.2      # Google Drive (Android)
+  local_first_icloud_backup: ^0.1.2      # iCloud (iOS/macOS)
 ```
 
 Then install it with:
@@ -350,6 +350,30 @@ flutter run
 ```
 
 ## Migration guide
+
+### 0.9.x → 0.10.0
+
+No changes are needed if you use the built-in storage backends (Hive, SQLite,
+in-memory), but every package of the family moves together: the storage
+adapters, the sync strategies and the backup providers of this version require
+`local_first` `^0.10.0` (`local_first_sqlite_storage` `^0.6.0`,
+`local_first_hive_storage` `^0.4.0`). The earlier storage adapters do not
+compile against 0.10.0.
+
+**Only if you maintain a custom `LocalFirstStorage`**, the interface changed:
+
+- `Future<JsonMap<JsonMap>> getByIds(String tableName, Iterable<String> ids)`
+  is a new required member — read several items in one question with the set
+  in it, keyed by id, leaving out the ids not held and the items whose last
+  event is a delete.
+- `getAllEvents` gained `pendingOnly`:
+  `getAllEvents(String tableName, {String? dataId, bool pendingOnly = false})`.
+  When true, return only the events whose sync status is not `ok`, filtered by
+  the storage itself (a SQL `WHERE`) when it can.
+- If your storage runs queries, honour `LocalFirstQuery.distinctField`: keep
+  one row per distinct value of that field, the first in the query's order.
+  `LocalFirstQuery.keepFirstPerGroup(rows, field)` does it over rows already
+  sorted.
 
 ### 0.8.2 → 0.9.0
 
