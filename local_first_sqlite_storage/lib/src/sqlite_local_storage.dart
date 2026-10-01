@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:local_first/local_first.dart';
@@ -47,6 +48,24 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   /// Current namespace used to derive the database file name.
   String get namespace => _namespace;
 
+  /// Names the namespace to open, while nothing is open yet.
+  ///
+  /// Which database an account's data lives in is known before the first table
+  /// is created, so [initialize] opens that file and its schema is verified
+  /// there, once — never on a shared file first and again after the account is
+  /// known. Once the database is open, [useNamespace] is what changes it.
+  ///
+  /// Throws [StateError] when the database is already open.
+  void prepareNamespace(String namespace) {
+    if (_initialized) {
+      throw StateError(
+        'The database is already open: use useNamespace to change namespace.',
+      );
+    }
+    _validateIdentifier(namespace, 'namespace');
+    _namespace = namespace;
+  }
+
   Database? _db;
   bool _initialized = false;
 
@@ -75,6 +94,37 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return p.join(await getDatabasesPath(), _resolvedDatabaseName);
   }
 
+  /// Deletes every database file named [databaseName]: the default one and
+  /// the one of each namespace, with whatever journal files sit beside them.
+  /// Returns how many databases were removed.
+  ///
+  /// For an app whose data model moved on: the new model opens under a new
+  /// [databaseName], and the files written under the old one — which nothing
+  /// will open again — are removed from the device. Never call it with the
+  /// name of a database that is open.
+  ///
+  /// - [directory]: where to look; the platform's databases folder by default.
+  static Future<int> deleteDatabases(
+    String databaseName, {
+    String? directory,
+    DatabaseFactory? dbFactory,
+  }) async {
+    final factory = dbFactory ?? databaseFactory;
+    final folder = Directory(directory ?? await getDatabasesPath());
+    if (!await folder.exists()) return 0;
+
+    var removed = 0;
+    await for (final entry in folder.list(followLinks: false)) {
+      if (entry is! File) continue;
+      final name = p.basename(entry.path);
+      // `<name>` for the default namespace, `<namespace>__<name>` for the rest
+      if (name != databaseName && !name.endsWith('__$databaseName')) continue;
+      await factory.deleteDatabase(entry.path);
+      removed++;
+    }
+    return removed;
+  }
+
   Future<Database> get _database async {
     // Wait for any in-progress namespace switch to complete before accessing
     // the database. This prevents "database_closed" errors when queries run
@@ -97,16 +147,37 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   DatabaseExecutor? _txn;
 
   /// Repositories whose data + event tables (and schema columns) have been
-  /// verified on the currently open database. Verification runs once per
-  /// repository per open instead of on every CRUD/query call, and is reset by
-  /// [close] (a namespace switch opens a different file) and by [ensureSchema]
-  /// (a new schema may need columns migrated).
-  final Set<String> _ensuredRepositories = {};
+  /// verified, kept per namespace — one entry per database file. Verification
+  /// runs once per repository per file instead of on every CRUD/query call,
+  /// and it is remembered across a [close]: a namespace switch opens a
+  /// different file, and the tables of the file it left are still there when
+  /// it comes back. Only [ensureSchema] resets it — a re-declared schema may
+  /// need columns migrated, on every file that holds the table.
+  final Map<String, Set<String>> _ensuredRepositories = {};
 
-  /// Table verifications in flight, keyed by repository. Concurrent first
-  /// touches of the same repository share one run instead of racing each
-  /// other through the same `ALTER TABLE` (which fails with "duplicate column"
-  /// for whoever comes second and serialises everyone else behind the lock).
+  Set<String> get _ensuredHere =>
+      _ensuredRepositories[_namespace] ??= <String>{};
+
+  /// The namespaces whose metadata table has been verified. The table that
+  /// holds the config values — the cursors of the sync among them — is
+  /// declared when its database opens, not on every read of a key.
+  final Set<String> _metadataEnsured = {};
+
+  /// How many times each repository's tables were really verified — the
+  /// declaration run against the database, not a memo hit. A launch verifies
+  /// each repository once, on the file the account owns.
+  final Map<String, int> _tableVerifications = {};
+
+  /// How many times the metadata table was really declared. It holds the
+  /// config values — the cursors of the sync among them — and a read of one
+  /// must not declare it again.
+  int _metadataDeclarations = 0;
+
+  /// Table verifications in flight, keyed by namespace and repository.
+  /// Concurrent first touches of the same repository share one run instead of
+  /// racing each other through the same `ALTER TABLE` (which fails with
+  /// "duplicate column" for whoever comes second and serialises everyone else
+  /// behind the lock).
   final Map<String, Future<void>> _ensuring = {};
 
   /// While a batch is running, watcher notifications are collected here (one
@@ -207,7 +278,9 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     );
 
     _initialized = true;
+    await _forgetTablesTheFileNoLongerHolds();
     await _ensureMetadataTable(db: _db);
+    _metadataEnsured.add(_namespace);
 
     // Perf probe: confirm WAL is active in the session log.
     if (enableQueryProfiling) {
@@ -246,8 +319,10 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     await _db?.close();
     _db = null;
     _initialized = false;
-    // The next open may be a different file (namespace switch) — verify again.
-    _ensuredRepositories.clear();
+    // What was verified stays verified: it is remembered per namespace, so a
+    // switch to another file — and back — creates no table twice. Only the
+    // verifications still in flight are dropped: they belong to the
+    // connection that is closing.
     _ensuring.clear();
   }
 
@@ -333,8 +408,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     required String idFieldName,
   }) async {
     _schemas[tableName] = Map.unmodifiable(schema);
-    // A (re)declared schema may add columns: force the next verification.
-    _ensuredRepositories.remove(tableName);
+    // A (re)declared schema may add columns: force the next verification, on
+    // every file that holds the table.
+    for (final ensured in _ensuredRepositories.values) {
+      ensured.remove(tableName);
+    }
     await _ensureTables(tableName);
   }
 
@@ -376,15 +454,27 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   Future<List<JsonMap>> getAllEvents(
     String tableName, {
     String? dataId,
+    bool pendingOnly = false,
   }) => _withDb(() async {
     final db = await _exec();
     await _ensureTables(tableName);
     final eventTable = _tableName(tableName, isEvent: true);
     final dataTable = _tableName(tableName);
 
-    final where = dataId != null
-        ? 'WHERE e.${LocalFirstEvent.kDataId} = ?'
-        : '';
+    // Both conditions travel with the question. A pending read above all:
+    // what is waiting to be sent is asked for by its status, never the whole
+    // history read back and sifted afterwards.
+    final conditions = <String>[];
+    final args = <Object?>[];
+    if (dataId != null) {
+      conditions.add('e.${LocalFirstEvent.kDataId} = ?');
+      args.add(dataId);
+    }
+    if (pendingOnly) {
+      conditions.add('e.${LocalFirstEvent.kSyncStatus} != ?');
+      args.add(SyncStatus.ok.index);
+    }
+    final where = conditions.isEmpty ? '' : 'WHERE ${conditions.join(' AND ')}';
 
     final rows = await db.rawQuery(
       'SELECT d.data, d._lasteventId, '
@@ -393,7 +483,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       'FROM $eventTable e '
       'LEFT JOIN $dataTable d ON e.${LocalFirstEvent.kDataId} = d.id '
       '$where',
-      dataId != null ? [dataId] : null,
+      args.isEmpty ? null : args,
     );
 
     return rows.map(_decodeJoinedRow).toList();
@@ -425,6 +515,42 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     if (rows.isEmpty || rows.first['data'] == null) return null;
     return _decodeJoinedRow(rows.first);
+  });
+
+  /// Fetches the records of [ids] in one statement, keyed by id: a read of
+  /// many is one read, with the set in the question. Rows the table does not
+  /// hold, and rows it holds as deleted, are absent from the answer.
+  @override
+  Future<JsonMap<JsonMap>> getByIds(
+    String tableName,
+    Iterable<String> ids,
+  ) => _withDb(() async {
+    final wanted = ids.toSet().toList();
+    if (wanted.isEmpty) return <String, JsonMap>{};
+    final db = await _exec();
+    await _ensureTables(tableName);
+    final dataTable = _tableName(tableName);
+    final eventTable = _tableName(tableName, isEvent: true);
+    final placeholders = List.filled(wanted.length, '?').join(', ');
+
+    final rows = await db.rawQuery(
+      'SELECT d.id, d.data, d._lasteventId, '
+      'e.${LocalFirstEvent.kEventId}, e.${LocalFirstEvent.kSyncStatus}, e.${LocalFirstEvent.kOperation}, e.${LocalFirstEvent.kSyncCreatedAt} '
+      'FROM $dataTable d '
+      'LEFT JOIN $eventTable e ON d._lasteventId = e.${LocalFirstEvent.kEventId} '
+      'WHERE d.id IN ($placeholders) '
+      'AND (e.${LocalFirstEvent.kOperation} IS NULL OR e.${LocalFirstEvent.kOperation} != ?)',
+      [...wanted, SyncOperation.delete.index],
+    );
+
+    final held = <String, JsonMap>{};
+    for (final row in rows) {
+      if (row['data'] == null) continue;
+      final id = row['id'];
+      if (id is! String) continue;
+      held[id] = _decodeJoinedRow(row);
+    }
+    return held;
   });
 
   /// Fetches a specific event by id joined with its data payload (if present).
@@ -628,7 +754,13 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     final resolvedTable = _tableName(repositoryName, isEvent: true);
     await _ensureEventTable(repositoryName);
 
-    await db.delete(resolvedTable, where: 'id = ?', whereArgs: [id]);
+    // an event is identified by its event id: the event table has no `id`
+    // column, and asking by one failed on every database but a legacy one
+    await db.delete(
+      resolvedTable,
+      where: '${LocalFirstEvent.kEventId} = ?',
+      whereArgs: [id],
+    );
     await _notifyWatchers(repositoryName);
   }
 
@@ -645,6 +777,106 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     await db.delete(resolvedTable);
     await _notifyWatchers(tableName);
+  }
+
+  /// Drops every state row whose events are all synced, with those events,
+  /// then notifies watchers.
+  ///
+  /// - [tableName]: Repository name.
+  ///
+  /// Returns the number of state rows removed. A row with an event still
+  /// waiting to be sent stays, with its events. Both deletes run in one
+  /// transaction, joining the one in progress when there is one.
+  ///
+  /// Throws [StateError] if called before [initialize].
+  @override
+  Future<int> deleteAllSynced(String tableName) async {
+    await _exec();
+    await _ensureTables(tableName);
+    final dataTable = _tableName(tableName);
+    final eventTable = _tableName(tableName, isEvent: true);
+    final waiting =
+        'SELECT ${LocalFirstEvent.kDataId} FROM $eventTable '
+        'WHERE ${LocalFirstEvent.kSyncStatus} IS NOT ?';
+    final synced = [SyncStatus.ok.index];
+
+    var removed = 0;
+    await runInTransaction(() async {
+      final db = await _exec();
+      removed = await db.rawDelete(
+        'DELETE FROM $dataTable WHERE id NOT IN ($waiting)',
+        synced,
+      );
+      await db.rawDelete(
+        'DELETE FROM $eventTable '
+        'WHERE ${LocalFirstEvent.kDataId} NOT IN ($waiting)',
+        synced,
+      );
+    });
+
+    if (removed > 0) await _notifyWatchers(tableName);
+    return removed;
+  }
+
+  /// Drops every state row whose [field] equals [value], and the events
+  /// logged for those rows, then notifies watchers.
+  ///
+  /// - [tableName]: Repository name.
+  /// - [field]: Field to match. One declared in the repository's schema is
+  ///   matched on its own indexed column; any other is read from the stored
+  ///   payload, which scans the table — declare the fields you drop by.
+  /// - [value]: Value the field must hold; `null` matches rows without it.
+  ///
+  /// Returns the number of state rows removed. Both deletes run in one
+  /// transaction, joining the one in progress when there is one.
+  ///
+  /// Throws [StateError] if called before [initialize].
+  @override
+  Future<int> deleteWhere(
+    String tableName, {
+    required String field,
+    required Object? value,
+  }) async {
+    await _exec();
+    await _ensureTables(tableName);
+    final dataTable = _tableName(tableName);
+    final eventTable = _tableName(tableName, isEvent: true);
+    final schema = _schemaFor(tableName);
+
+    final args = <Object?>[];
+    final String column;
+    if (schema.containsKey(field)) {
+      column = '"$field"';
+    } else {
+      column = 'json_extract(data, ?)';
+      args.add('\$.$field');
+    }
+    final String condition;
+    if (value == null) {
+      condition = '$column IS NULL';
+    } else {
+      condition = '$column = ?';
+      args.add(_encodeValue(schema[field], value));
+    }
+
+    var removed = 0;
+    await runInTransaction(() async {
+      final db = await _exec();
+      // The events first: once the rows are gone there is nothing left to
+      // find them by.
+      await db.rawDelete(
+        'DELETE FROM $eventTable WHERE ${LocalFirstEvent.kDataId} IN '
+        '(SELECT id FROM $dataTable WHERE $condition)',
+        args,
+      );
+      removed = await db.rawDelete(
+        'DELETE FROM $dataTable WHERE $condition',
+        args,
+      );
+    });
+
+    if (removed > 0) await _notifyWatchers(tableName);
+    return removed;
   }
 
   /// Deletes all event rows for the table and notifies watchers.
@@ -797,6 +1029,39 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return _decodeConfigValue<T>(value);
   }
 
+  /// Reads several config values in **one** statement.
+  ///
+  /// What a sync round asks of the store: the cursor of every domain at once,
+  /// never one read per domain. Keys the database does not hold are left out
+  /// of the answer.
+  ///
+  /// - [keys]: the config keys to read.
+  ///
+  /// Throws [StateError] if called before [initialize].
+  Future<Map<String, T?>> getConfigValues<T>(Iterable<String> keys) =>
+      _withDb(() async {
+        final wanted = keys.toList();
+        if (wanted.isEmpty) return <String, T?>{};
+        final db = await _exec();
+        await _ensureMetadataTable();
+
+        final placeholders = List.filled(wanted.length, '?').join(', ');
+        final rows = await db.query(
+          _metadataTable,
+          where: 'key IN ($placeholders)',
+          whereArgs: wanted,
+        );
+
+        final values = <String, T?>{};
+        for (final row in rows) {
+          final key = row['key'];
+          final value = row['value'];
+          if (key is! String || value is! String) continue;
+          values[key] = _decodeConfigValue<T>(value);
+        }
+        return values;
+      });
+
   /// Removes a config entry from the metadata table.
   ///
   /// - [key]: Config key to remove.
@@ -847,19 +1112,37 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
     final controller = StreamController<List<LocalFirstEvent<T>>>.broadcast();
 
+    // One read at a time per watcher. Two writes side by side notify twice,
+    // and two reads side by side may end in either order — the watcher would
+    // be left on the older one. A notification that arrives while a read is
+    // running asks for exactly one more, so the last emission is the newest.
+    var reading = false;
+    var askedAgain = false;
     final observer = _SqliteQueryObserver<T>(
       query: query,
       controller: controller,
       emit: () async {
+        if (reading) {
+          askedAgain = true;
+          return;
+        }
+        reading = true;
         try {
-          final results = await this.query<T>(query);
-          if (!controller.isClosed) {
-            controller.add(results);
-          }
-        } catch (e, st) {
-          if (!controller.isClosed) {
-            controller.addError(e, st);
-          }
+          do {
+            askedAgain = false;
+            try {
+              final results = await this.query<T>(query);
+              if (!controller.isClosed) {
+                controller.add(results);
+              }
+            } catch (e, st) {
+              if (!controller.isClosed) {
+                controller.addError(e, st);
+              }
+            }
+          } while (askedAgain && !controller.isClosed);
+        } finally {
+          reading = false;
         }
       },
     );
@@ -918,11 +1201,43 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return controller.stream;
   }
 
+  /// What a namespace was remembered to hold, against what the file it just
+  /// opened really holds. A database can be gone since it was last open — an
+  /// in-memory one is a new database on every open — and a table remembered
+  /// as verified that is not there would never be created.
+  Future<void> _forgetTablesTheFileNoLongerHolds() async {
+    final remembered = _ensuredRepositories[_namespace];
+    final metadataRemembered = _metadataEnsured.contains(_namespace);
+    if ((remembered == null || remembered.isEmpty) && !metadataRemembered) {
+      return;
+    }
+
+    final rows = await _db!.rawQuery(
+      "SELECT name FROM sqlite_master WHERE type = 'table'",
+    );
+    final held = {
+      for (final row in rows)
+        if (row['name'] is String) row['name'] as String,
+    };
+
+    if (!held.contains(_metadataTable)) _metadataEnsured.remove(_namespace);
+    remembered?.removeWhere(
+      (repository) =>
+          !held.contains(_tableName(repository)) ||
+          !held.contains(_tableName(repository, isEvent: true)),
+    );
+  }
+
   Future<void> _ensureMetadataTable({DatabaseExecutor? db}) async {
+    if (_metadataEnsured.contains(_namespace)) return;
     db ??= await _exec();
     await db.execute(
       'CREATE TABLE IF NOT EXISTS $_metadataTable (key TEXT PRIMARY KEY, value TEXT)',
     );
+    _metadataDeclarations++;
+    // Inside a transaction the declaration can still be rolled back, so it is
+    // only remembered once it stands on the connection itself.
+    if (_txn == null) _metadataEnsured.add(_namespace);
   }
 
   JsonMap<LocalFieldType> _schemaFor(String repositoryName) {
@@ -933,7 +1248,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     String repositoryName, [
     DatabaseExecutor? executor,
   ]) async {
-    if (_ensuredRepositories.contains(repositoryName)) return;
+    if (_ensuredHere.contains(repositoryName)) return;
 
     if (executor != null || _txn != null) {
       // Inside a transaction (a caller-supplied executor or a running batch):
@@ -943,22 +1258,34 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       // is deliberately NOT memoised: a rollback would undo the DDL.
       await _ensureDataTable(repositoryName, executor);
       await _ensureEventTable(repositoryName, executor);
+      _tableVerifications.update(
+        repositoryName,
+        (count) => count + 1,
+        ifAbsent: () => 1,
+      );
       return;
     }
 
-    final inFlight = _ensuring[repositoryName];
+    final namespace = _namespace;
+    final inFlightKey = '$namespace/$repositoryName';
+    final inFlight = _ensuring[inFlightKey];
     if (inFlight != null) return inFlight;
 
     final run = () async {
       await _ensureDataTable(repositoryName);
       await _ensureEventTable(repositoryName);
-      _ensuredRepositories.add(repositoryName);
+      (_ensuredRepositories[namespace] ??= <String>{}).add(repositoryName);
+      _tableVerifications.update(
+        repositoryName,
+        (count) => count + 1,
+        ifAbsent: () => 1,
+      );
     }();
-    _ensuring[repositoryName] = run;
+    _ensuring[inFlightKey] = run;
     try {
       await run;
     } finally {
-      _ensuring.remove(repositoryName);
+      _ensuring.remove(inFlightKey);
     }
   }
 
@@ -1293,90 +1620,140 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       }
     }
 
-    final whereClauses = <String>[];
     final orderClauses = <String>[];
     final args = <Object?>[];
 
-    String columnExpr(String field) {
+    String columnExpr(String field, [String alias = 'd']) {
       if (schema.containsKey(field)) {
-        return 'd."$field"';
+        return '$alias."$field"';
       }
       args.add('\$.$field');
-      return 'json_extract(d.data, ?)';
+      return 'json_extract($alias.data, ?)';
     }
 
     Object? encode(String field, dynamic value) {
       return _encodeValue(schema[field], value);
     }
 
-    for (final filter in query.filters) {
-      final column = columnExpr(filter.field);
+    // The conditions of the question, built for a given pair of aliases so the
+    // same rules can be repeated inside a grouped question's sub-select. Args
+    // are appended in the order the SQL text places them.
+    List<String> whereClausesFor(String dataAlias, String eventAlias) {
+      final whereClauses = <String>[];
+      for (final filter in query.filters) {
+        final column = columnExpr(filter.field, dataAlias);
 
-      if (filter.isNull != null) {
-        whereClauses.add('$column IS ${filter.isNull! ? '' : 'NOT '}NULL');
-        continue;
+        if (filter.isNull != null) {
+          whereClauses.add('$column IS ${filter.isNull! ? '' : 'NOT '}NULL');
+          continue;
+        }
+
+        if (filter.isEqualTo != null) {
+          whereClauses.add('$column = ?');
+          args.add(encode(filter.field, filter.isEqualTo));
+        }
+
+        if (filter.isNotEqualTo != null) {
+          whereClauses.add('$column != ?');
+          args.add(encode(filter.field, filter.isNotEqualTo));
+        }
+
+        if (filter.isLessThan != null) {
+          whereClauses.add('$column < ?');
+          args.add(encode(filter.field, filter.isLessThan));
+        }
+
+        if (filter.isLessThanOrEqualTo != null) {
+          whereClauses.add('$column <= ?');
+          args.add(encode(filter.field, filter.isLessThanOrEqualTo));
+        }
+
+        if (filter.isGreaterThan != null) {
+          whereClauses.add('$column > ?');
+          args.add(encode(filter.field, filter.isGreaterThan));
+        }
+
+        if (filter.isGreaterThanOrEqualTo != null) {
+          whereClauses.add('$column >= ?');
+          args.add(encode(filter.field, filter.isGreaterThanOrEqualTo));
+        }
+
+        if (filter.whereIn != null) {
+          final placeholders = List.filled(
+            filter.whereIn!.length,
+            '?',
+          ).join(', ');
+          whereClauses.add('$column IN ($placeholders)');
+          args.addAll(
+            filter.whereIn!.map<Object?>(
+              (value) => encode(filter.field, value),
+            ),
+          );
+        }
+
+        if (filter.whereNotIn != null && filter.whereNotIn!.isNotEmpty) {
+          final placeholders = List.filled(
+            filter.whereNotIn!.length,
+            '?',
+          ).join(', ');
+          whereClauses.add('$column NOT IN ($placeholders)');
+          args.addAll(
+            filter.whereNotIn!.map<Object?>(
+              (value) => encode(filter.field, value),
+            ),
+          );
+        }
       }
 
-      if (filter.isEqualTo != null) {
-        whereClauses.add('$column = ?');
-        args.add(encode(filter.field, filter.isEqualTo));
+      // Added BEFORE the sorts are processed, so the args stay in the order
+      // of the SQL placeholders.
+      if (!query.includeDeleted) {
+        whereClauses.add('$eventAlias.${LocalFirstEvent.kOperation} != ?');
+        args.add(SyncOperation.delete.index);
       }
-
-      if (filter.isNotEqualTo != null) {
-        whereClauses.add('$column != ?');
-        args.add(encode(filter.field, filter.isNotEqualTo));
-      }
-
-      if (filter.isLessThan != null) {
-        whereClauses.add('$column < ?');
-        args.add(encode(filter.field, filter.isLessThan));
-      }
-
-      if (filter.isLessThanOrEqualTo != null) {
-        whereClauses.add('$column <= ?');
-        args.add(encode(filter.field, filter.isLessThanOrEqualTo));
-      }
-
-      if (filter.isGreaterThan != null) {
-        whereClauses.add('$column > ?');
-        args.add(encode(filter.field, filter.isGreaterThan));
-      }
-
-      if (filter.isGreaterThanOrEqualTo != null) {
-        whereClauses.add('$column >= ?');
-        args.add(encode(filter.field, filter.isGreaterThanOrEqualTo));
-      }
-
-      if (filter.whereIn != null) {
-        final placeholders = List.filled(
-          filter.whereIn!.length,
-          '?',
-        ).join(', ');
-        whereClauses.add('$column IN ($placeholders)');
-        args.addAll(
-          filter.whereIn!.map<Object?>((value) => encode(filter.field, value)),
-        );
-      }
-
-      if (filter.whereNotIn != null && filter.whereNotIn!.isNotEmpty) {
-        final placeholders = List.filled(
-          filter.whereNotIn!.length,
-          '?',
-        ).join(', ');
-        whereClauses.add('$column NOT IN ($placeholders)');
-        args.addAll(
-          filter.whereNotIn!.map<Object?>(
-            (value) => encode(filter.field, value),
-          ),
-        );
-      }
+      return whereClauses;
     }
 
-    // Add !includeDeleted filter arg BEFORE processing sorts
-    // This ensures args are in the correct order for the SQL placeholders
-    if (!query.includeDeleted) {
-      whereClauses.add('e.${LocalFirstEvent.kOperation} != ?');
-      args.add(SyncOperation.delete.index);
+    final whereClauses = whereClausesFor('d', 'e');
+
+    // One row per distinct value of a field: the row of its group that no
+    // other row of the same group comes before, in the order asked for. The
+    // grouping is decided here, in the statement, not by the app reading
+    // every row and keeping some.
+    final distinctField = query.distinctField;
+    if (distinctField != null) {
+      if (!schema.containsKey(distinctField)) {
+        throw ArgumentError.value(
+          distinctField,
+          'distinctOn',
+          'Must be a declared column of "${query.repositoryName}"',
+        );
+      }
+      final sort = query.sorts.isEmpty ? null : query.sorts.first;
+      if (sort != null && !schema.containsKey(sort.field)) {
+        throw ArgumentError.value(
+          sort.field,
+          'orderBy',
+          'A grouped question orders by a declared column of '
+              '"${query.repositoryName}"',
+        );
+      }
+      final inner = whereClausesFor('d2', 'e2');
+      inner.add('d2."$distinctField" = d."$distinctField"');
+      if (sort == null) {
+        inner.add('d2.id < d.id');
+      } else {
+        final ahead = sort.descending ? '>' : '<';
+        inner.add(
+          '(d2."${sort.field}" $ahead d."${sort.field}" '
+          'OR (d2."${sort.field}" = d."${sort.field}" AND d2.id < d.id))',
+        );
+      }
+      whereClauses.add(
+        'NOT EXISTS (SELECT 1 FROM $resolvedTable d2 '
+        'LEFT JOIN $eventTable e2 ON d2._lasteventId = e2.${LocalFirstEvent.kEventId} '
+        'WHERE ${inner.join(' AND ')})',
+      );
     }
 
     for (final sort in query.sorts) {
@@ -1494,8 +1871,21 @@ class TestHelperSqliteLocalFirstStorage {
       storage._notifyWatchers(repositoryName);
   Future<void> ensureTables(String repositoryName) =>
       storage._ensureTables(repositoryName);
-  void invalidateEnsured(String repositoryName) =>
-      storage._ensuredRepositories.remove(repositoryName);
+  void invalidateEnsured(String repositoryName) {
+    for (final ensured in storage._ensuredRepositories.values) {
+      ensured.remove(repositoryName);
+    }
+  }
+
+  /// How many times a table has been verified on the open database, by name.
+  Map<String, int> get tableVerifications => storage._tableVerifications;
+
+  /// Whether the metadata table stands verified for the open namespace.
+  bool get metadataEnsured =>
+      storage._metadataEnsured.contains(storage.namespace);
+
+  /// How many times the metadata table was really declared.
+  int get metadataDeclarations => storage._metadataDeclarations;
   Future<void> ensureDataTable(String repositoryName) =>
       storage._ensureDataTable(repositoryName);
   Future<void> ensureEventTable(String repositoryName) =>

@@ -35,6 +35,8 @@ A powerful, schema-based storage adapter for the [local_first](https://pub.dev/p
 - ✅ **Metadata Storage**: Store app configuration and sync state
 - ✅ **Namespaces**: Isolate data per user or tenant
 - ✅ **Full CRUD**: Complete create, read, update, delete operations
+- ✅ **Local Drops**: Remove rows without queueing a delete to sync, and remove
+  the database files of every namespace
 - ✅ **JSON Storage**: Full object stored in `data` column + schema columns
 - ✅ **Encryption**: Optional AES-256 at-rest encryption via SQLCipher
 
@@ -44,8 +46,8 @@ Add the core package and SQLite adapter to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  local_first: ^0.6.0
-  local_first_sqlite_storage: ^0.2.0
+  local_first: ^0.10.0
+  local_first_sqlite_storage: ^0.6.0
 ```
 
 Then install it with:
@@ -401,6 +403,17 @@ StreamBuilder<List<LocalFirstEvent<Todo>>>(
 )
 ```
 
+**What a watcher promises:** the newest state, not every state.
+
+- One read at a time. Writes that land while a read is in progress collapse into
+  a single further read, so the last value emitted is the current one — two
+  writes side by side can no longer leave the stream on the older result.
+- A row deleted while the watcher is reading does not break the read.
+- Watchers belong to the storage, not to a namespace: one registered before
+  `useNamespace` keeps following whichever namespace is current and is
+  re-emitted right after the switch. `InMemoryLocalFirstStorage` behaves the
+  same way, so a test written over it proves what this adapter will do.
+
 ## Comparison with Hive Storage
 
 | Feature | SqliteLocalFirstStorage | HiveLocalFirstStorage |
@@ -415,6 +428,8 @@ StreamBuilder<List<LocalFirstEvent<Todo>>>(
 | **Platform Support** | All platforms | All platforms |
 | **Memory Usage** | Very low | Low (with lazy) |
 | **Encryption** | SQLCipher (AES-256) | HiveAesCipher (AES-256) |
+| **`deleteWhere`** | Indexed column, or `json_extract` scan | Reads the box through |
+| **Watchers across `useNamespace`** | Kept and re-emitted | Dropped (boxes re-open) |
 
 **Choose SQLite when:**
 - ✅ You need complex SQL queries
@@ -504,6 +519,50 @@ final events = await todoRepository.query(
   limit: 20,
 );
 ```
+
+### Drop Rows Without Syncing
+
+`todoRepository.delete(id, needSync: true)` is a write: it is logged and sent.
+These two are the opposite — the row leaves the device and the server is never
+told, because it already knows. Both run their deletes in one transaction
+(joining the one in progress when there is one), notify `watchQuery` listeners
+only when something was removed, and return how many state rows went:
+
+```dart
+final storage = client.localStorage;
+
+// A full re-sync of one repository: forget what came from the server, keep
+// what this device wrote and has not sent yet.
+final dropped = await storage.deleteAllSynced('todo');
+
+// Data that stopped being ours to hold: the todos of a list the account left.
+// 'list_id' is declared in the schema, so it is matched on its own column.
+await storage.deleteWhere('todo', field: 'list_id', value: listId);
+
+// null matches the rows that do not have the field at all.
+await storage.deleteWhere('todo', field: 'list_id', value: null);
+```
+
+A row with an event still waiting to be sent survives `deleteAllSynced`, with
+its events, so an offline write is never lost to a re-sync.
+
+`deleteWhere` matches a field of the repository's schema on its own indexed
+column. A field that is not in the schema is read out of the `data` column with
+`json_extract`, which scans the table — declare the fields you drop by.
+
+### Delete the Database Files
+
+```dart
+// The app's data model moved on: open the new model under a new database name
+// and take the old files off the device.
+final removed = await SqliteLocalFirstStorage.deleteDatabases('app_v1.db');
+```
+
+A static call: it removes `app_v1.db` (the default namespace) and
+`<namespace>__app_v1.db` for every namespace that ever existed, with the journal
+files beside them, and returns how many databases were removed. Never call it
+with the name of a database that is open. Takes an optional `directory` (the
+platform's databases folder by default).
 
 ## Best Practices
 

@@ -385,6 +385,66 @@ void main() {
       expect(events.where((e) => e[LocalFirstEvent.kEventId] == 'evt-del'), isEmpty);
     });
 
+    test(
+      'deleteWhere drops the records that match, and their events',
+      () async {
+        await storage.insert('users', {'id': '1', 'team': 'red'}, 'id');
+        await storage.insert('users', {'id': '2', 'team': 'red'}, 'id');
+        await storage.insert('users', {'id': '3', 'team': 'blue'}, 'id');
+        for (final id in ['1', '2', '3']) {
+          await storage.insertEvent('users', {
+            LocalFirstEvent.kEventId: 'evt-$id',
+            LocalFirstEvent.kDataId: id,
+            LocalFirstEvent.kSyncStatus: SyncStatus.pending.index,
+            LocalFirstEvent.kOperation: SyncOperation.insert.index,
+            LocalFirstEvent.kSyncCreatedAt: 1,
+          }, LocalFirstEvent.kEventId);
+        }
+
+        expect(
+          await storage.deleteWhere('users', field: 'team', value: 'red'),
+          2,
+        );
+
+        expect((await storage.getAll('users')).map((row) => row['id']), ['3']);
+        expect(
+          (await storage.getAllEvents(
+            'users',
+          )).map((event) => event[LocalFirstEvent.kDataId]),
+          ['3'],
+        );
+        expect(
+          await storage.deleteWhere('users', field: 'team', value: 'red'),
+          0,
+        );
+      },
+    );
+
+    test('deleteAllSynced drops what is synced and keeps what still waits', () async {
+      await storage.insert('users', {'id': '1', 'team': 'red'}, 'id');
+      await storage.insert('users', {'id': '2', 'team': 'red'}, 'id');
+      for (final (id, status) in [('1', SyncStatus.ok), ('2', SyncStatus.pending)]) {
+        await storage.insertEvent('users', {
+          LocalFirstEvent.kEventId: 'evt-$id',
+          LocalFirstEvent.kDataId: id,
+          LocalFirstEvent.kSyncStatus: status.index,
+          LocalFirstEvent.kOperation: SyncOperation.insert.index,
+          LocalFirstEvent.kSyncCreatedAt: 1,
+        }, LocalFirstEvent.kEventId);
+      }
+
+      expect(await storage.deleteAllSynced('users'), 1);
+
+      expect((await storage.getAll('users')).map((row) => row['id']), ['2']);
+      expect(
+        (await storage.getAllEvents(
+          'users',
+        )).map((event) => event[LocalFirstEvent.kDataId]),
+        ['2'],
+      );
+      expect(await storage.deleteAllSynced('users'), 0);
+    });
+
     test('deleteAllEvents clears event boxes', () async {
       await storage.insertEvent('users', {
         LocalFirstEvent.kEventId: 'evt-1',

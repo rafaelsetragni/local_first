@@ -41,6 +41,16 @@ class _SpyStorage implements LocalFirstStorage {
   Future<void> deleteAllEvents(String tableName) async {}
 
   @override
+  Future<int> deleteAllSynced(String tableName) async => 0;
+
+  @override
+  Future<int> deleteWhere(
+    String tableName, {
+    required String field,
+    required Object? value,
+  }) async => 0;
+
+  @override
   Future<void> deleteEvent(String repositoryName, String id) async {}
 
   @override
@@ -54,7 +64,17 @@ class _SpyStorage implements LocalFirstStorage {
   Future<List<Map<String, dynamic>>> getAll(String tableName) async => [];
 
   @override
-  Future<List<Map<String, dynamic>>> getAllEvents(String tableName, {String? dataId}) async => [];
+  Future<List<Map<String, dynamic>>> getAllEvents(
+    String tableName, {
+    String? dataId,
+    bool pendingOnly = false,
+  }) async => [];
+
+  @override
+  Future<Map<String, Map<String, dynamic>>> getByIds(
+    String tableName,
+    Iterable<String> ids,
+  ) async => const {};
 
   @override
   Future<Map<String, dynamic>?> getById(String tableName, String id) async =>

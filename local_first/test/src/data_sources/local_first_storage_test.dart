@@ -58,7 +58,17 @@ class _FakeStorage extends LocalFirstStorage {
   Future<List<JsonMap>> getAll(String tableName) async => events;
 
   @override
-  Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId}) async => events;
+  Future<List<JsonMap>> getAllEvents(
+    String tableName, {
+    String? dataId,
+    bool pendingOnly = false,
+  }) async => events;
+
+  @override
+  Future<JsonMap<JsonMap>> getByIds(
+    String tableName,
+    Iterable<String> ids,
+  ) async => const {};
 
   @override
   Future<JsonMap?> getById(String tableName, String id) async => events
@@ -119,6 +129,16 @@ class _FakeStorage extends LocalFirstStorage {
   Future<void> deleteAllEvents(String tableName) async {
     events.clear();
   }
+
+  @override
+  Future<int> deleteAllSynced(String tableName) async => 0;
+
+  @override
+  Future<int> deleteWhere(
+    String tableName, {
+    required String field,
+    required Object? value,
+  }) async => 0;
 
   @override
   Future<bool> setConfigValue<T>(String key, T value) async {

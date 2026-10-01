@@ -38,8 +38,8 @@ Add the dependency to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  local_first: ^0.6.0
-  local_first_shared_preferences: ^0.2.0
+  local_first: ^0.10.0
+  local_first_shared_preferences: ^0.1.3
 ```
 
 Then install it with:

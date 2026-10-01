@@ -1,3 +1,12 @@
+## 0.3.2
+
+- Requires `local_first` `^0.10.0`. No change to this package's API.
+
+## 0.3.1
+
+- Requires `local_first` `^0.9.0`. No change to this package's API.
+- The README's installation snippet now names the real package versions.
+
 ## 0.3.0
 
 - Added configurable logger system via `LocalFirstLogger` with adjustable log levels.

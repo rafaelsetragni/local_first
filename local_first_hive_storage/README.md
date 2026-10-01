@@ -35,6 +35,7 @@ A fast, schema-less storage adapter for the [local_first](https://pub.dev/packag
 - ✅ **Lazy Collections**: Reduce memory usage for large datasets
 - ✅ **CRUD Operations**: Full support for create, read, update, delete
 - ✅ **Query Filtering**: In-memory filtering after load
+- ✅ **Local Drops**: Remove records without queueing a delete to sync
 
 ## Installation
 
@@ -42,8 +43,8 @@ Add the core package and Hive adapter to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  local_first: ^0.6.0
-  local_first_hive_storage: ^0.2.0
+  local_first: ^0.10.0
+  local_first_hive_storage: ^0.4.0
 ```
 
 Then install it with:
@@ -306,6 +307,8 @@ StreamBuilder<List<LocalFirstEvent<Todo>>>(
 | **Best For** | Simple models, speed | Complex queries, filtering |
 | **Platform Support** | All platforms | All platforms |
 | **Memory Usage** | Low (with lazy) | Very low |
+| **`deleteWhere`** | Reads the box through | Indexed column, or `json_extract` scan |
+| **Watchers across `useNamespace`** | Dropped (boxes re-open) | Kept and re-emitted |
 
 **Choose Hive when:**
 - ✅ You want the fastest performance
@@ -362,6 +365,30 @@ final incompleteTodos = events
     .where((todo) => !todo.completed)
     .toList();
 ```
+
+### Drop Records Without Syncing
+
+`todoRepository.delete(id, needSync: true)` is a write: it is logged and sent.
+These two are the opposite — the record leaves the device and the server is
+never told, because it already knows. Both return how many records went:
+
+```dart
+final storage = client.localStorage;
+
+// A full re-sync of one repository: forget what came from the server, keep
+// what this device wrote and has not sent yet.
+final dropped = await storage.deleteAllSynced('todo');
+
+// Data that stopped being ours to hold: the todos of a list the account left.
+await storage.deleteWhere('todo', field: 'list_id', value: listId);
+```
+
+A record with an event still waiting to be sent survives `deleteAllSynced`,
+with its events, so an offline write is never lost to a re-sync.
+
+Hive has no index to ask, so `deleteWhere` reads the box through once and
+`deleteAllSynced` reads the event box through: on a large box, prefer them at a
+moment the user is not waiting.
 
 ## Best Practices
 

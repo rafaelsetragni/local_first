@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_first/local_first.dart';
@@ -93,6 +94,7 @@ void main() {
       int? limit,
       int? offset,
       bool includeDeleted = false,
+      String? distinctField,
     }) {
       return LocalFirstQuery<DummyModel>(
         repositoryName: 'users',
@@ -109,6 +111,7 @@ void main() {
         limit: limit,
         offset: offset,
         includeDeleted: includeDeleted,
+        distinctField: distinctField,
       );
     }
 
@@ -173,6 +176,121 @@ void main() {
       },
     );
 
+    test('a pending read asks the events for what is pending', () async {
+      await insertRow({'id': 'sent', 'username': 'a', 'age': 1});
+      await insertEvent(
+        dataId: 'sent',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+      );
+      await insertRow({'id': 'waiting', 'username': 'b', 'age': 2});
+      await insertEvent(
+        dataId: 'waiting',
+        op: SyncOperation.insert,
+        status: SyncStatus.pending,
+      );
+
+      final pending = await storage.getAllEvents('users', pendingOnly: true);
+
+      expect(pending.map((event) => event[LocalFirstEvent.kDataId]), [
+        'waiting',
+      ]);
+    });
+
+    test('a read of many is one statement with the set in it', () async {
+      await insertRow({'id': 'one', 'username': 'a', 'age': 1});
+      await insertEvent(
+        dataId: 'one',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+      );
+      await insertRow({'id': 'two', 'username': 'b', 'age': 2});
+      await insertEvent(
+        dataId: 'two',
+        op: SyncOperation.insert,
+        status: SyncStatus.ok,
+      );
+      await insertRow({'id': 'gone', 'username': 'c', 'age': 3});
+      await insertEvent(
+        dataId: 'gone',
+        op: SyncOperation.delete,
+        status: SyncStatus.ok,
+      );
+
+      final held = await storage.getByIds('users', [
+        'one',
+        'two',
+        'gone',
+        'never',
+      ]);
+
+      expect(held.keys.toSet(), {'one', 'two'});
+      expect(held['one']!['username'], 'a');
+    });
+
+    test('one row per group is the newest of each group', () async {
+      Future<void> said(String id, String user, int age) async {
+        await insertRow({'id': id, 'username': user, 'age': age});
+        await insertEvent(
+          dataId: id,
+          op: SyncOperation.insert,
+          status: SyncStatus.ok,
+        );
+      }
+
+      await said('a1', 'ana', 1);
+      await said('a2', 'ana', 5);
+      await said('b1', 'bea', 3);
+      await said('b2', 'bea', 2);
+
+      final newest = await storage.query(
+        buildQuery(
+          sorts: const [QuerySort(field: 'age', descending: true)],
+          distinctField: 'username',
+        ),
+      );
+
+      expect(newest.length, 2);
+      expect(
+        {for (final event in newest) event.data!.username: event.data!.age},
+        {'ana': 5, 'bea': 3},
+      );
+    });
+
+    test('one row per group answers a filtered set in one question', () async {
+      Future<void> said(String id, String user, int age) async {
+        await insertRow({'id': id, 'username': user, 'age': age});
+        await insertEvent(
+          dataId: id,
+          op: SyncOperation.insert,
+          status: SyncStatus.ok,
+        );
+      }
+
+      await said('a1', 'ana', 1);
+      await said('a2', 'ana', 5);
+      await said('c1', 'cid', 9);
+
+      final oldest = await storage.query(
+        buildQuery(
+          filters: const [
+            QueryFilter(field: 'username', whereIn: ['ana']),
+          ],
+          sorts: const [QuerySort(field: 'age')],
+          distinctField: 'username',
+        ),
+      );
+
+      expect(oldest.map((event) => event.data!.id), ['a1']);
+    });
+
+    test('a group asked on a field that is not a column is refused', () async {
+      await expectLater(
+        storage.query(buildQuery(distinctField: 'not_a_column')),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
     test('close shuts down active watchers', () async {
       final sub = storage.watchQuery(buildQuery()).listen((_) {});
       await storage.close();
@@ -211,10 +329,21 @@ void main() {
         status: SyncStatus.ok,
         eventId: 'evt-del',
       );
-      expect(await storage.getAllEvents('users'), isNotEmpty);
-      await expectLater(
-        storage.deleteEvent('users', 'evt-del'),
-        throwsA(isA<DatabaseException>()),
+      await insertEvent(
+        dataId: 'kept',
+        op: SyncOperation.insert,
+        status: SyncStatus.pending,
+        eventId: 'evt-kept',
+      );
+
+      await storage.deleteEvent('users', 'evt-del');
+
+      // the one event asked for, by its event id, and no other
+      expect(
+        (await storage.getAllEvents(
+          'users',
+        )).map((event) => event[LocalFirstEvent.kEventId]),
+        ['evt-kept'],
       );
     });
 
@@ -231,6 +360,8 @@ void main() {
         LocalFirstEvent.kSyncCreatedAt: 1,
       });
       await storage.deleteEvent('users', 'evt-legacy');
+
+      expect(await storage.getAllEvents('users', dataId: 'legacy'), isEmpty);
     });
 
     test('watchQuery throws when not initialized', () {
@@ -453,6 +584,139 @@ void main() {
         throwsA(isA<ArgumentError>()),
       );
     });
+
+    test(
+      'deleteWhere drops the rows that match a schema column, and their events',
+      () async {
+        await insertRow({'id': '1', 'username': 'alice', 'age': 30});
+        await insertRow({'id': '2', 'username': 'bob', 'age': 30});
+        await insertRow({'id': '3', 'username': 'carol', 'age': 41});
+        for (final id in ['1', '2', '3']) {
+          await insertEvent(
+            dataId: id,
+            op: SyncOperation.insert,
+            status: SyncStatus.pending,
+          );
+        }
+
+        final removed = await storage.deleteWhere(
+          'users',
+          field: 'age',
+          value: 30,
+        );
+
+        expect(removed, 2);
+        expect((await storage.getAll('users')).map((row) => row['id']), ['3']);
+        // what was logged for the dropped rows goes with them: nothing of
+        // theirs is left to be pushed
+        expect(
+          (await storage.getAllEvents(
+            'users',
+          )).map((event) => event[LocalFirstEvent.kDataId]),
+          ['3'],
+        );
+      },
+    );
+
+    test(
+      'deleteWhere matches a field that is only in the payload, and null',
+      () async {
+        await insertRow({'id': '1', 'username': 'alice', 'page_id': 'p-1'});
+        await insertRow({'id': '2', 'username': 'bob', 'page_id': 'p-2'});
+        await insertRow({'id': '3', 'username': 'carol'});
+
+        expect(
+          await storage.deleteWhere('users', field: 'page_id', value: 'p-1'),
+          1,
+        );
+        expect(
+          await storage.deleteWhere('users', field: 'page_id', value: null),
+          1,
+        );
+        expect((await storage.getAll('users')).map((row) => row['id']), ['2']);
+      },
+    );
+
+    test(
+      'deleteAllSynced drops what is synced and keeps what still waits to be sent',
+      () async {
+        await insertRow({'id': 'synced', 'username': 'a'});
+        await insertRow({'id': 'waiting', 'username': 'b'});
+        await insertRow({'id': 'failed', 'username': 'c'});
+        await insertRow({'id': 'edited', 'username': 'd'});
+        await insertEvent(
+          dataId: 'synced',
+          op: SyncOperation.insert,
+          status: SyncStatus.ok,
+        );
+        await insertEvent(
+          dataId: 'waiting',
+          op: SyncOperation.insert,
+          status: SyncStatus.pending,
+        );
+        // a write that failed is still a write the device has to say
+        await insertEvent(
+          dataId: 'failed',
+          op: SyncOperation.insert,
+          status: SyncStatus.failed,
+        );
+        // created long ago and synced, edited since and not sent yet
+        await insertEvent(
+          dataId: 'edited',
+          op: SyncOperation.insert,
+          status: SyncStatus.ok,
+          eventId: 'evt-edited-1',
+        );
+        await insertEvent(
+          dataId: 'edited',
+          op: SyncOperation.update,
+          status: SyncStatus.pending,
+          eventId: 'evt-edited-2',
+        );
+
+        expect(await storage.deleteAllSynced('users'), 1);
+
+        expect(
+          (await storage.getAll('users')).map((row) => row['id']).toSet(),
+          {'waiting', 'failed', 'edited'},
+        );
+        expect(
+          (await storage.getAllEvents(
+            'users',
+          )).map((event) => event[LocalFirstEvent.kEventId]).toSet(),
+          {'evt-waiting', 'evt-failed', 'evt-edited-1', 'evt-edited-2'},
+        );
+        // nothing left that is synced: the second time removes nothing
+        expect(await storage.deleteAllSynced('users'), 0);
+      },
+    );
+
+    test('deleteWhere that matches nothing removes nothing', () async {
+      await insertRow({'id': '1', 'username': 'alice', 'age': 30});
+
+      expect(await storage.deleteWhere('users', field: 'age', value: 99), 0);
+      expect(await storage.getAll('users'), hasLength(1));
+    });
+
+    test(
+      'deleteWhere joins a transaction in progress and rolls back with it',
+      () async {
+        await insertRow({'id': '1', 'username': 'alice', 'age': 30});
+
+        await expectLater(
+          storage.runInTransaction(() async {
+            expect(
+              await storage.deleteWhere('users', field: 'age', value: 30),
+              1,
+            );
+            throw StateError('the batch failed after the drop');
+          }),
+          throwsA(isA<StateError>()),
+        );
+
+        expect(await storage.getAll('users'), hasLength(1));
+      },
+    );
 
     test('delete/deleteAll/deleteEvent/deleteAllEvents remove rows', () async {
       await insertRow({'id': '1', 'username': 'alice', 'age': 1});
@@ -2153,6 +2417,57 @@ void main() {
     });
   });
 
+  group('SqliteLocalFirstStorage.deleteDatabases', () {
+    late Directory folder;
+
+    setUp(() async {
+      folder = await Directory.systemTemp.createTemp('local_first_delete_');
+    });
+
+    tearDown(() async {
+      if (await folder.exists()) await folder.delete(recursive: true);
+    });
+
+    Future<void> touch(String name) =>
+        File('${folder.path}/$name').writeAsString('not a real database');
+
+    Future<List<String>> left() async =>
+        [await for (final entry in folder.list()) entry.uri.pathSegments.last]
+          ..sort();
+
+    test(
+      'removes the database of every namespace under that name, and nothing else',
+      () async {
+        await touch('old.db');
+        await touch('user_a__old.db');
+        await touch('user_b__old.db');
+        await touch('new.db');
+        await touch('user_a__new.db');
+        // a name that merely ends the same way is somebody else's file
+        await touch('very_old.db');
+
+        final removed = await SqliteLocalFirstStorage.deleteDatabases(
+          'old.db',
+          directory: folder.path,
+          dbFactory: databaseFactoryFfi,
+        );
+
+        expect(removed, 3);
+        expect(await left(), ['new.db', 'user_a__new.db', 'very_old.db']);
+      },
+    );
+
+    test('a folder that does not exist has nothing to remove', () async {
+      final removed = await SqliteLocalFirstStorage.deleteDatabases(
+        'old.db',
+        directory: '${folder.path}/missing',
+        dbFactory: databaseFactoryFfi,
+      );
+
+      expect(removed, 0);
+    });
+  });
+
   group('SqliteLocalFirstStorage (encrypted)', () {
     late SqliteLocalFirstStorage storage;
 
@@ -2422,5 +2737,113 @@ void main() {
 
       await storage.close();
     });
+  });
+
+  group('the store is built once, and read in one question', () {
+    late Directory folder;
+    late SqliteLocalFirstStorage storage;
+
+    const schema = {'username': LocalFieldType.text};
+
+    setUp(() async {
+      folder = await Directory.systemTemp.createTemp('local_first_boot');
+      storage = SqliteLocalFirstStorage(
+        databaseName: 'boot.db',
+        databasePath: '${folder.path}/account__boot.db',
+        dbFactory: databaseFactoryFfi,
+        namespace: 'account',
+      );
+      await storage.initialize();
+      await storage.ensureSchema('users', schema, idFieldName: 'id');
+    });
+
+    tearDown(() async {
+      await storage.close();
+      await folder.delete(recursive: true);
+    });
+
+    test(
+      'the metadata table is declared once, however many cursors are read',
+      () async {
+        final helper = TestHelperSqliteLocalFirstStorage(storage);
+        final declaredAfterOpen = helper.metadataDeclarations;
+
+        for (final domain in ['pages', 'members', 'memories', 'likes']) {
+          await storage.setConfigValue<String>('sync_cursor_$domain', 'c1');
+        }
+        for (var i = 0; i < 20; i++) {
+          await storage.getConfigValue<String>('sync_cursor_pages');
+        }
+
+        expect(declaredAfterOpen, 1);
+        expect(helper.metadataDeclarations, declaredAfterOpen);
+      },
+    );
+
+    test(
+      'the account database is named before the first table is created',
+      () async {
+        final fresh = SqliteLocalFirstStorage(
+          databaseName: 'boot.db',
+          databasePath: '${folder.path}/named__boot.db',
+          dbFactory: databaseFactoryFfi,
+        );
+        fresh.prepareNamespace('account');
+        expect(fresh.namespace, 'account');
+
+        await fresh.initialize();
+        await fresh.ensureSchema('users', schema, idFieldName: 'id');
+        final helper = TestHelperSqliteLocalFirstStorage(fresh);
+
+        // opened on the account's own file: one verification, and no switch
+        expect(helper.tableVerifications['users'], 1);
+        expect(
+          () => fresh.prepareNamespace('other'),
+          throwsA(isA<StateError>()),
+        );
+        await fresh.close();
+      },
+    );
+
+    test('every cursor of a round is read in one question', () async {
+      await storage.setConfigValue<String>('sync_cursor_pages', 'p1');
+      await storage.setConfigValue<String>('sync_cursor_members', 'm1');
+
+      final read = await storage.getConfigValues<String>([
+        'sync_cursor_pages',
+        'sync_cursor_members',
+        'sync_cursor_memories',
+      ]);
+
+      expect(read, {'sync_cursor_pages': 'p1', 'sync_cursor_members': 'm1'});
+      expect(await storage.getConfigValues<String>(const []), isEmpty);
+    });
+
+    test(
+      'a repository is verified once while its database stays open, and a '
+      'namespace returned to declares nothing again',
+      () async {
+        final helper = TestHelperSqliteLocalFirstStorage(storage);
+        await storage.insert('users', {
+          'id': 'u1',
+          'username': 'alice',
+          '_lasteventId': 'evt-u1',
+        }, 'id');
+        final afterFirstOpen = helper.tableVerifications['users'];
+
+        await storage.useNamespace('other');
+        await storage.getAll('users');
+        final afterOther = helper.tableVerifications['users'];
+
+        await storage.useNamespace('account');
+        await storage.getAll('users');
+
+        // one verification per namespace, and none again for the namespace it
+        // left and came back to
+        expect(afterFirstOpen, 1);
+        expect(afterOther, 2);
+        expect(helper.tableVerifications['users'], 2);
+      },
+    );
   });
 }

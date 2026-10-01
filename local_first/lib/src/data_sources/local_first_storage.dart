@@ -48,7 +48,15 @@ abstract class LocalFirstStorage implements ConfigKeyValueStorage {
   /// implementations should push this filter down to the storage layer (e.g.
   /// a SQL `WHERE`) so callers that only need one record's history don't read
   /// the entire event log (which makes a large sync O(n²)).
-  Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId});
+  ///
+  /// When [pendingOnly] is true, only the events still waiting to be sent are
+  /// returned. This filter belongs in the query as well: what is waiting is
+  /// asked for by its condition, never the whole history read and then sifted.
+  Future<List<JsonMap>> getAllEvents(
+    String tableName, {
+    String? dataId,
+    bool pendingOnly = false,
+  });
 
   /// Runs [action] inside a single storage transaction/batch.
   ///
@@ -64,6 +72,11 @@ abstract class LocalFirstStorage implements ConfigKeyValueStorage {
   ///
   /// Returns null if the item doesn't exist.
   Future<JsonMap?> getById(String tableName, String id);
+
+  /// Gets several items by their ids, keyed by id — **one question with the
+  /// set in it**, never one question per id. Ids the table does not hold are
+  /// absent from the answer, and so are the rows marked as deleted.
+  Future<JsonMap<JsonMap>> getByIds(String tableName, Iterable<String> ids);
 
   /// Checks if a single item exists by its ID.
   ///
@@ -96,6 +109,33 @@ abstract class LocalFirstStorage implements ConfigKeyValueStorage {
 
   /// Deletes all items from the event table/collection.
   Future<void> deleteAllEvents(String tableName);
+
+  /// Deletes every item of the state table whose events are all synced, with
+  /// those events, and returns how many items were removed. An item with a
+  /// write still waiting to be sent stays, with its events, so nothing the
+  /// device has yet to say is lost.
+  ///
+  /// For a full re-sync of one repository: what the device holds is replaced by
+  /// what the server sends, and what the device wrote and has not sent is
+  /// sent afterwards.
+  Future<int> deleteAllSynced(String tableName);
+
+  /// Deletes every item of the state table whose [field] equals [value],
+  /// together with the events logged for those items, and returns how many
+  /// items were removed.
+  ///
+  /// This is a local drop, not a delete to be synced: nothing is queued for
+  /// the remote. It exists for data that stopped being the device's to hold —
+  /// the rows of a conversation the account left, of a page it unfollowed —
+  /// where the server already knows and only the local copy has to go.
+  ///
+  /// A [field] declared in the repository's schema is matched on its own
+  /// column; any other field is matched inside the stored payload.
+  Future<int> deleteWhere(
+    String tableName, {
+    required String field,
+    required Object? value,
+  });
 
   /// Stores arbitrary key/value metadata for config purposes.
   @override

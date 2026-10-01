@@ -141,21 +141,21 @@ Add the core package and the adapters you need to your `pubspec.yaml`:
 ```yaml
 dependencies:
   # Core package (required)
-  local_first: ^0.8.1
+  local_first: ^0.10.0
 
   # Storage adapters (choose one or more)
-  local_first_hive_storage: ^0.2.2       # schema-less key/value storage
-  local_first_sqlite_storage: ^0.4.0     # structured tables with indexes
-  local_first_shared_preferences: ^0.1.1 # config-only key/value storage
+  local_first_hive_storage: ^0.4.0       # schema-less key/value storage
+  local_first_sqlite_storage: ^0.6.0     # structured tables with indexes
+  local_first_shared_preferences: ^0.1.3 # config-only key/value storage
 
   # Sync strategies (choose one or more)
-  local_first_periodic_strategy: ^0.2.1  # periodic REST sync
-  local_first_websocket: ^0.3.0          # real-time WebSocket sync
+  local_first_periodic_strategy: ^0.3.0  # periodic REST sync
+  local_first_websocket: ^0.3.2          # real-time WebSocket sync
 
   # Backup providers (choose one or more)
-  local_first_firebase_backup: ^0.1.0    # Firebase Storage (cross-platform)
-  local_first_gdrive_backup: ^0.1.0      # Google Drive (Android)
-  local_first_icloud_backup: ^0.1.0      # iCloud (iOS/macOS)
+  local_first_firebase_backup: ^0.1.2    # Firebase Storage (cross-platform)
+  local_first_gdrive_backup: ^0.1.2      # Google Drive (Android)
+  local_first_icloud_backup: ^0.1.2      # iCloud (iOS/macOS)
 ```
 
 Then install it with:
@@ -273,6 +273,58 @@ final client = LocalFirstClient(
 );
 ```
 
+## Dropping local data
+
+`delete` is a write: it is logged as an event and sent to the server. Sometimes
+the device only has to let go of data the server already knows about, with
+nothing to send. Two storage operations cover that, and mean the same on every
+backend:
+
+```dart
+final storage = client.localStorage;
+
+// A full re-sync of one repository: forget what came from the server, keep
+// what this device wrote and has not sent yet, then pull again.
+final dropped = await storage.deleteAllSynced('message');
+// The writes that were still pending stay pending: the next sync cycle
+// sends them, and the server refills everything else.
+
+// Data that stopped being ours to hold — a conversation the account left.
+// Nothing is queued for the remote: the server already knows.
+await storage.deleteWhere('message', field: 'chat_id', value: chatId);
+```
+
+Both return how many items were removed, and both notify the watchers of the
+repository. `deleteAllSynced` keeps every item that still has an event waiting
+to be sent, together with its events, so an offline write is never lost to a
+re-sync. `deleteWhere` matches a field declared in the repository's schema on
+its own column; any other field is matched inside the stored payload, which
+costs a scan — declare the fields you drop by.
+
+To remove whole database files, and not rows, see
+`SqliteLocalFirstStorage.deleteDatabases`.
+
+## Watching
+
+`watch()` and `watchChanges()` are there to leave the caller on the newest
+state, not to replay every state. In `SqliteLocalFirstStorage` and
+`InMemoryLocalFirstStorage`:
+
+- A watcher runs **one read at a time**. Writes that land while a read is in
+  progress collapse into a single further read, so the last value a watcher
+  emits is the current one.
+- A row deleted while a watcher is reading does not break the read — which is
+  what `deleteWhere` does to a watcher of the rows it removes.
+- Watchers belong to the **storage, not to a namespace**: one registered before
+  `useNamespace` keeps following whichever namespace is current and is
+  re-emitted right after the switch, so a screen opened before a user change
+  shows the new user's data without being rebuilt. The two storages behave alike
+  here, so a test written over the in-memory one proves what the device will do.
+
+`HiveLocalFirstStorage` re-reads on every box event and re-opens its boxes on a
+namespace switch, so it keeps neither guarantee: a watcher registered before the
+switch stops.
+
 ## Example apps
 
 Two complete Flutter apps demonstrate the local-first architecture:
@@ -298,6 +350,51 @@ flutter run
 ```
 
 ## Migration guide
+
+### 0.9.x → 0.10.0
+
+No changes are needed if you use the built-in storage backends (Hive, SQLite,
+in-memory), but every package of the family moves together: the storage
+adapters, the sync strategies and the backup providers of this version require
+`local_first` `^0.10.0` (`local_first_sqlite_storage` `^0.6.0`,
+`local_first_hive_storage` `^0.4.0`). The earlier storage adapters do not
+compile against 0.10.0.
+
+**Only if you maintain a custom `LocalFirstStorage`**, the interface changed:
+
+- `Future<JsonMap<JsonMap>> getByIds(String tableName, Iterable<String> ids)`
+  is a new required member — read several items in one question with the set
+  in it, keyed by id, leaving out the ids not held and the items whose last
+  event is a delete.
+- `getAllEvents` gained `pendingOnly`:
+  `getAllEvents(String tableName, {String? dataId, bool pendingOnly = false})`.
+  When true, return only the events whose sync status is not `ok`, filtered by
+  the storage itself (a SQL `WHERE`) when it can.
+- If your storage runs queries, honour `LocalFirstQuery.distinctField`: keep
+  one row per distinct value of that field, the first in the query's order.
+  `LocalFirstQuery.keepFirstPerGroup(rows, field)` does it over rows already
+  sorted.
+
+### 0.8.2 → 0.9.0
+
+No changes are needed if you use the built-in storage backends (Hive, SQLite,
+in-memory), and the storage adapters of this version require `local_first`
+`^0.9.0` — upgrade them together.
+
+**Only if you maintain a custom `LocalFirstStorage`**, two required members were
+added to the interface:
+
+- `Future<int> deleteAllSynced(String tableName)` — delete every item whose
+  events are all synced, with those events, keep the items that still have an
+  event waiting to be sent, and return how many items were deleted.
+- `Future<int> deleteWhere(String tableName, {required String field, required Object? value})`
+  — delete every item whose `field` equals `value`, with their events, and
+  return how many. Match a field of the repository's schema on its own
+  column/index when your backend has one.
+
+Both notify the repository's watchers when they removed something. A backend
+that cannot tell a synced item from a pending one may return `0` and do nothing,
+as long as you never offer a re-sync over it.
 
 ### 0.8.1 → 0.8.2
 

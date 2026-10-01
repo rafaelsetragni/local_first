@@ -1,3 +1,12 @@
+## 0.1.2
+
+- Requires `local_first` `^0.10.0`. No change to this package's API.
+
+## 0.1.1
+
+- Requires `local_first` `^0.9.0`. No change to this package's API.
+- The README's installation snippet now names the real package versions.
+
 ## 0.1.0
 
 * Initial release

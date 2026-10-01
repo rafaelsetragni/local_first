@@ -75,6 +75,16 @@ class _NoopStorage implements LocalFirstStorage {
   Future<void> deleteAllEvents(String tableName) async {}
 
   @override
+  Future<int> deleteAllSynced(String tableName) async => 0;
+
+  @override
+  Future<int> deleteWhere(
+    String tableName, {
+    required String field,
+    required Object? value,
+  }) async => 0;
+
+  @override
   Future<void> deleteEvent(String repositoryName, String id) async {}
 
   @override
@@ -88,8 +98,17 @@ class _NoopStorage implements LocalFirstStorage {
   Future<List<JsonMap>> getAll(String tableName) async => [];
 
   @override
-  Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId}) async =>
-      [];
+  Future<List<JsonMap>> getAllEvents(
+    String tableName, {
+    String? dataId,
+    bool pendingOnly = false,
+  }) async => [];
+
+  @override
+  Future<JsonMap<JsonMap>> getByIds(
+    String tableName,
+    Iterable<String> ids,
+  ) async => const {};
 
   @override
   Future<void> runInTransaction(Future<void> Function() action) => action();

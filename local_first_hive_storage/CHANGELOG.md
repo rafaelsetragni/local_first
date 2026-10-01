@@ -1,3 +1,33 @@
+## 0.4.0
+
+- Requires `local_first` `^0.10.0`, and implements what it added to the storage
+  interface:
+  - `getByIds(tableName, ids)` answers the records of a set of ids, keyed by id;
+    the ids the box does not hold, and the records held as deleted, are left
+    out. Hive has no query to send the set in, so it is one pass over the ids
+    asked for.
+  - `getAllEvents(pendingOnly: true)` answers only the events still waiting to
+    be sent. The event box is still read through; what the filter saves is the
+    merge of every synced event with its data.
+  - `LocalFirstQuery.distinctOn(field)` keeps the first row of each group once
+    the rows are sorted. Two rows that sort the same are now ordered by their
+    id, as the SQLite storage orders them, so both keep the same row.
+- `runInTransaction` still runs the action directly: Hive has no transaction,
+  so the notifications of a write of one record are not batched here.
+- The README's installation snippet names the new versions.
+
+## 0.3.0
+
+- Implemented `LocalFirstStorage.deleteAllSynced`: drops every record whose
+  events are all synced, with those events, and returns how many records went. A
+  record with an event still waiting to be sent stays, with its events.
+- Implemented `LocalFirstStorage.deleteWhere`: drops every record whose `field`
+  equals `value`, and their events, and returns how many records went. Hive has
+  no index to ask, so the box is read through once — a large box pays for it.
+- Requires `local_first` `^0.9.0`.
+- The README documents the new operations, and its installation snippet now
+  names the real package versions.
+
 ## 0.2.3
 
 - `getAllEvents` now accepts an optional `dataId` filter, matching the updated

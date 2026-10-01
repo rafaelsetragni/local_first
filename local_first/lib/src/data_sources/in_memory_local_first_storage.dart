@@ -9,11 +9,15 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
   final Map<String, JsonMap<Map<String, JsonMap>>> _dataByNamespace = {};
   final Map<String, JsonMap<Map<String, JsonMap>>> _eventsByNamespace = {};
   final Map<String, Map<String, Object>> _metadataByNamespace = {};
-  final Map<String, JsonMap<Set<_InMemoryQueryObserver>>>
-  _observersByNamespace = {};
-  final Map<String, JsonMap<Set<StreamController<void>>>>
-  _changeObserversByNamespace = {};
   final Map<String, JsonMap<JsonMap<LocalFieldType>>> _schemasByNamespace = {};
+
+  // Watchers belong to the storage, not to a namespace: a watcher registered
+  // before a switch keeps following the data of whichever namespace is
+  // current, and is re-emitted on every switch — the same contract the
+  // SQLite storage keeps, so a test over this storage proves the device's
+  // behaviour.
+  final JsonMap<Set<_InMemoryQueryObserver>> _observers = {};
+  final JsonMap<Set<StreamController<void>>> _changeObservers = {};
 
   JsonMap<Map<String, JsonMap>> get _data =>
       _dataByNamespace.putIfAbsent(_namespace, () => {});
@@ -21,10 +25,6 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
       _eventsByNamespace.putIfAbsent(_namespace, () => {});
   Map<String, Object> get _metadata =>
       _metadataByNamespace.putIfAbsent(_namespace, () => {});
-  JsonMap<Set<_InMemoryQueryObserver>> get _observers =>
-      _observersByNamespace.putIfAbsent(_namespace, () => {});
-  JsonMap<Set<StreamController<void>>> get _changeObservers =>
-      _changeObserversByNamespace.putIfAbsent(_namespace, () => {});
   JsonMap<JsonMap<LocalFieldType>> get _schemas =>
       _schemasByNamespace.putIfAbsent(_namespace, () => {});
 
@@ -50,18 +50,15 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
   Future<void> close({bool preserveObservers = false}) async {
     if (!_initialized) return;
     if (!preserveObservers) {
-      for (final observerSet in _observersByNamespace.values) {
-        for (final observer in observerSet.values.expand((o) => o).toList()) {
-          await observer.controller.close();
-        }
-        observerSet.clear();
+      for (final observer in _observers.values.expand((o) => o).toList()) {
+        await observer.controller.close();
       }
-      for (final observerSet in _changeObserversByNamespace.values) {
-        for (final controller in observerSet.values.expand((o) => o).toList()) {
-          await controller.close();
-        }
-        observerSet.clear();
+      _observers.clear();
+      for (final controller
+          in _changeObservers.values.expand((o) => o).toList()) {
+        await controller.close();
       }
+      _changeObservers.clear();
     }
     _initialized = false;
   }
@@ -186,16 +183,38 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     return items;
   }
 
-  /// Returns all events for a repository merged with their latest state.
-  ///
-  /// - [tableName]: Repository name to query.
-  ///
-  /// Throws [StateError] if called before [initialize].
+  /// Runs [action] as one write. There is no database to commit, but the
+  /// notifications it produces are collected and told **once** per repository
+  /// at the end — a write of one record notifies once, as it does over SQLite.
+  /// A nested call joins the batch that is running.
   @override
-  Future<void> runInTransaction(Future<void> Function() action) => action();
+  Future<void> runInTransaction(Future<void> Function() action) async {
+    if (_batchedNotify != null) {
+      await action();
+      return;
+    }
+    final batched = <String>{};
+    _batchedNotify = batched;
+    try {
+      await action();
+    } finally {
+      _batchedNotify = null;
+      for (final repositoryName in batched) {
+        await _notifyWatchers(repositoryName);
+      }
+    }
+  }
+
+  /// While a batch is running, the repositories written to are collected here
+  /// and told once after it, instead of once per statement.
+  Set<String>? _batchedNotify;
 
   @override
-  Future<List<JsonMap>> getAllEvents(String tableName, {String? dataId}) async {
+  Future<List<JsonMap>> getAllEvents(
+    String tableName, {
+    String? dataId,
+    bool pendingOnly = false,
+  }) async {
     _ensureInitialized();
     final events = _events[tableName];
     if (events == null) return const [];
@@ -206,6 +225,10 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
       final normalized = _normalizeLegacyMap(JsonMap.from(event));
       final eventDataId = normalized[LocalFirstEvent.kDataId] as String?;
       if (dataId != null && eventDataId != dataId) continue;
+      if (pendingOnly &&
+          normalized[LocalFirstEvent.kSyncStatus] == SyncStatus.ok.index) {
+        continue;
+      }
       final data = eventDataId != null ? dataTable[eventDataId] : null;
       items.add(
         _mergeEventWithData(
@@ -237,6 +260,31 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
       return null;
     }
     return merged;
+  }
+
+  /// Returns the records of [ids] that the table holds and does not hold as
+  /// deleted, keyed by id — one pass over the set asked for, never one read
+  /// per id.
+  @override
+  Future<JsonMap<JsonMap>> getByIds(
+    String tableName,
+    Iterable<String> ids,
+  ) async {
+    _ensureInitialized();
+    final table = _data[tableName];
+    if (table == null) return <String, JsonMap>{};
+
+    final held = <String, JsonMap>{};
+    for (final id in ids.toSet()) {
+      final raw = table[id];
+      if (raw == null) continue;
+      final merged = await _attachEventMetadata(tableName, JsonMap.from(raw));
+      if (merged[LocalFirstEvent.kOperation] == SyncOperation.delete.index) {
+        continue;
+      }
+      held[id] = merged;
+    }
+    return held;
   }
 
   /// Returns whether a record id exists in the state table.
@@ -424,6 +472,76 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     await _notifyWatchers(tableName);
   }
 
+  /// Drops every record whose events are all synced, and those events.
+  ///
+  /// - [tableName]: Repository name.
+  ///
+  /// Returns the number of records removed. A record with an event still
+  /// waiting to be sent stays, with its events.
+  ///
+  /// Throws [StateError] if called before [initialize].
+  @override
+  Future<int> deleteAllSynced(String tableName) async {
+    _ensureInitialized();
+    final rows = _data[tableName];
+    if (rows == null) return 0;
+
+    final events = _events[tableName] ?? const <String, JsonMap>{};
+    final waiting = <Object?>{
+      for (final event in events.values)
+        if (event[LocalFirstEvent.kSyncStatus] != SyncStatus.ok.index)
+          event[LocalFirstEvent.kDataId],
+    };
+    final ids = rows.keys.where((id) => !waiting.contains(id)).toSet();
+    if (ids.isEmpty &&
+        events.values.every(
+          (event) => waiting.contains(event[LocalFirstEvent.kDataId]),
+        )) {
+      return 0;
+    }
+
+    rows.removeWhere((id, _) => ids.contains(id));
+    _events[tableName]?.removeWhere(
+      (_, event) => !waiting.contains(event[LocalFirstEvent.kDataId]),
+    );
+    await _notifyWatchers(tableName);
+    return ids.length;
+  }
+
+  /// Drops every record whose [field] equals [value], and their events.
+  ///
+  /// - [tableName]: Repository name.
+  /// - [field]: Payload field to match.
+  /// - [value]: Value the field must hold.
+  ///
+  /// Returns the number of records removed. Watchers are notified only when
+  /// something was removed.
+  ///
+  /// Throws [StateError] if called before [initialize].
+  @override
+  Future<int> deleteWhere(
+    String tableName, {
+    required String field,
+    required Object? value,
+  }) async {
+    _ensureInitialized();
+    final rows = _data[tableName];
+    if (rows == null) return 0;
+
+    final ids = <String>{
+      for (final entry in rows.entries)
+        if (entry.value[field] == value) entry.key,
+    };
+    if (ids.isEmpty) return 0;
+
+    rows.removeWhere((id, _) => ids.contains(id));
+    _events[tableName]?.removeWhere(
+      (_, event) => ids.contains(event[LocalFirstEvent.kDataId]),
+    );
+    await _notifyWatchers(tableName);
+    return ids.length;
+  }
+
   bool _isSupportedConfigValue(Object value) {
     if (value is bool || value is int || value is double || value is String) {
       return true;
@@ -529,7 +647,10 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     }
 
     final results = <JsonMap>[];
-    for (final raw in dataTable.values) {
+    // A snapshot: the loop awaits, and a write that lands meanwhile — a
+    // watcher is notified while the row it watches is being deleted — would
+    // otherwise change the map under the iteration.
+    for (final raw in List.of(dataTable.values)) {
       final normalized = _normalizeLegacyMap(JsonMap.from(raw));
       final merged = await _attachEventMetadata(
         query.repositoryName,
@@ -565,6 +686,7 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
       }
     }
 
+    final idField = repo.idFieldName;
     if (query.sorts.isNotEmpty) {
       results.sort((a, b) {
         for (final sort in query.sorts) {
@@ -580,8 +702,23 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
             return sort.descending ? -comparison : comparison;
           }
         }
+        // two rows that sort the same are ordered by their id, so the row a
+        // grouped question keeps is the one the SQL backends keep
+        final aId = a[idField];
+        final bId = b[idField];
+        if (aId is Comparable && bId is Comparable) return aId.compareTo(bId);
         return 0;
       });
+    }
+
+    if (query.distinctField != null) {
+      final grouped = LocalFirstQuery.keepFirstPerGroup(
+        results,
+        query.distinctField!,
+      );
+      results
+        ..clear()
+        ..addAll(grouped);
     }
 
     final start = query.offset ?? 0;
@@ -617,13 +754,31 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
   Stream<List<LocalFirstEvent<T>>> watchQuery<T>(LocalFirstQuery<T> query) {
     _ensureInitialized();
     final controller = StreamController<List<LocalFirstEvent<T>>>.broadcast();
+    // One read at a time per watcher. Two writes side by side notify twice,
+    // and two reads side by side may end in either order — the watcher would
+    // be left on the older one. A notification that arrives while a read is
+    // running asks for exactly one more, so the last emission is the newest.
+    var reading = false;
+    var askedAgain = false;
     final observer = _InMemoryQueryObserver<T>(
       emit: () async {
+        if (reading) {
+          askedAgain = true;
+          return;
+        }
+        reading = true;
         try {
-          final results = await this.query<T>(query);
-          if (!controller.isClosed) controller.add(results);
-        } catch (e, st) {
-          if (!controller.isClosed) controller.addError(e, st);
+          do {
+            askedAgain = false;
+            try {
+              final results = await this.query<T>(query);
+              if (!controller.isClosed) controller.add(results);
+            } catch (e, st) {
+              if (!controller.isClosed) controller.addError(e, st);
+            }
+          } while (askedAgain && !controller.isClosed);
+        } finally {
+          reading = false;
         }
       },
       controller: controller,
@@ -670,6 +825,12 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
   }
 
   Future<void> _notifyWatchers(String repositoryName) async {
+    final batched = _batchedNotify;
+    if (batched != null) {
+      batched.add(repositoryName);
+      return;
+    }
+
     final changeObservers = _changeObservers[repositoryName];
     if (changeObservers != null && changeObservers.isNotEmpty) {
       for (final controller in List.of(changeObservers)) {
@@ -735,7 +896,7 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
     JsonMap? data, {
     Object? lastEventId,
   }) {
-    final merged = <String, dynamic>{if (data != null) ...data, ...meta};
+    final merged = <String, dynamic>{...?data, ...meta};
     final dataId = meta[LocalFirstEvent.kDataId];
     if (dataId is String) {
       merged.putIfAbsent('id', () => dataId);
