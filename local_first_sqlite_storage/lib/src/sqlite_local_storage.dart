@@ -91,7 +91,9 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
   Future<String> _databasePath() async {
     if (databasePath != null) return databasePath!;
-    return p.join(await getDatabasesPath(), _resolvedDatabaseName);
+    // the folder of the factory that opens the file: with the default factory
+    // it is the platform's, and a test names its own
+    return p.join(await _factory.getDatabasesPath(), _resolvedDatabaseName);
   }
 
   /// Deletes every database file named [databaseName]: the default one and
@@ -1147,12 +1149,14 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       },
     );
 
-    _observers
-        .putIfAbsent(query.repositoryName, () => <_SqliteQueryObserver>{})
-        .add(observer);
-
+    // A watcher is one for as long as somebody listens: it is told of a
+    // write from its first listener on, and again from the next one after
+    // everybody left. One nobody listens to is asked nothing.
     observer.controller
       ..onListen = () async {
+        _observers
+            .putIfAbsent(query.repositoryName, () => <_SqliteQueryObserver>{})
+            .add(observer);
         await observer.emit();
       }
       ..onCancel = () {
@@ -1182,13 +1186,16 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     }
 
     final controller = StreamController<void>.broadcast();
-    _changeObservers
-        .putIfAbsent(repositoryName, () => <StreamController<void>>{})
-        .add(controller);
 
     controller
       ..onListen = () {
-        if (!controller.isClosed) controller.add(null);
+        if (controller.isClosed) return;
+        // told from its first listener on, and again from the next one after
+        // everybody left
+        _changeObservers
+            .putIfAbsent(repositoryName, () => <StreamController<void>>{})
+            .add(controller);
+        controller.add(null);
       }
       ..onCancel = () {
         final controllers = _changeObservers[repositoryName];

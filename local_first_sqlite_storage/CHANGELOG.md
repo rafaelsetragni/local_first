@@ -1,3 +1,17 @@
+## Unreleased
+
+- **A watcher is one for as long as somebody listens.** `watchQuery` and
+  `watchChanges` registered their watcher when the stream was created and
+  dropped it when the last listener left — for good: a stream listened to
+  again after everybody left answered once and was never told of a write
+  again. A watcher is now registered when its first listener arrives, every
+  time, and one nobody listens to is asked nothing on a write.
+- The folder a namespace's file lives in is asked of the factory that opens
+  it. With the default factory nothing changes; a test that names its own
+  factory gets a file per namespace without the platform.
+- Runs the storage contract of `local_first`
+  (`watch_distribution_contract.dart`) over real files and real transactions.
+
 ## 0.6.0
 
 - Requires `local_first` `^0.10.0`, and implements what it added to the storage

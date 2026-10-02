@@ -1,3 +1,21 @@
+## Unreleased
+
+### A watcher is one for as long as somebody listens
+
+- `InMemoryLocalFirstStorage.watchQuery` and `watchChanges` registered their
+  watcher when the stream was created and dropped it when the last listener
+  left — for good. A stream listened to again after everybody left answered
+  once and was never told of a write again. A watcher is now registered when
+  its first listener arrives, every time, and one nobody listens to is asked
+  nothing on a write.
+- What a storage owes whoever watches it is written down once, as a contract
+  that every storage's tests run
+  (`test/src/data_sources/watch_distribution_contract.dart`): a write reaches
+  every watcher of what it changed — by id, by ids, by a field, all of them,
+  the bare signal — whether it was made here or applied from the server,
+  however many are watching, whenever they started, and whatever the sync
+  strategies are doing, a start that never returns included.
+
 ## 0.10.0
 
 ### A write of one record is one transaction, and notifies once
