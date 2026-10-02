@@ -554,6 +554,39 @@ void watchDistributionContract(
         await subscription.cancel();
       });
 
+      test('is kept when that batch fails: what failed was the server\'s rows, '
+          'not what the person did', () async {
+        final watching = Watchers(notes);
+        await delivered();
+        final applying = Completer<void>();
+        final entered = Completer<void>();
+
+        final round = storage.runInTransaction(() async {
+          await notes.mergeRemoteEvent(
+            remoteEvent: notes.createEventFromRemote(remoteNote('n2')),
+          );
+          entered.complete();
+          await applying.future;
+          throw const FormatException('a row of the batch is malformed');
+        });
+        final failed = expectLater(round, throwsFormatException);
+        await entered.future;
+
+        final written = notes.upsert(
+          const Note('n1', shelf: 'a', text: 'written meanwhile'),
+        );
+        await delivered();
+        applying.complete();
+        await failed;
+        await written;
+        await delivered();
+
+        expect((await notes.getById('n1'))?.text, 'written meanwhile');
+        expect(textsOf(watching.byId.last), {'n1': 'written meanwhile'});
+        expect(await notes.getPendingEvents(), hasLength(1));
+        await watching.leave();
+      });
+
       test('none is lost however the two interleave', () async {
         final watching = Watchers(notes);
         await delivered();

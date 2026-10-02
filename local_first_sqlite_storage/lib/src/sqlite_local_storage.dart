@@ -142,11 +142,25 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     return _db!;
   }
 
-  /// Active transaction executor while [runInTransaction] is running. Writes
-  /// and reads route through this so the whole batch commits once (a single
-  /// fsync) instead of auto-committing every row — the dominant cost of a large
-  /// cold sync under SQLCipher.
-  DatabaseExecutor? _txn;
+  /// Marks the zone a batch's action runs in with the batch it belongs to.
+  ///
+  /// While [runInTransaction] is running, the writes and reads **of its own
+  /// action** route through its transaction, so the whole batch commits once
+  /// (a single fsync) instead of auto-committing every row — the dominant cost
+  /// of a large cold sync under SQLCipher.
+  ///
+  /// Whose action a call belongs to is what the zone says, not the moment it
+  /// happens: a write made by somebody else while a batch is open — a person
+  /// acting while rows of the server are being applied — is not part of that
+  /// batch. It waits for the batch to end and is committed by itself, so a
+  /// batch that fails takes back the batch's own writes and nothing else.
+  final Object _batchZoneKey = Object();
+
+  /// The batch the running code belongs to, while that batch is still open.
+  _SqliteBatch? get _ownBatch {
+    final batch = Zone.current[_batchZoneKey];
+    return batch is _SqliteBatch && batch.isOpen ? batch : null;
+  }
 
   /// Repositories whose data + event tables (and schema columns) have been
   /// verified, kept per namespace — one entry per database file. Verification
@@ -182,16 +196,12 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   /// behind the lock).
   final Map<String, Future<void>> _ensuring = {};
 
-  /// While a batch is running, watcher notifications are collected here (one
-  /// entry per repository) and flushed once after the transaction commits,
-  /// instead of re-emitting every observer's query on every single write.
-  Set<String>? _batchedNotify;
-
-  /// Returns the current transaction executor if a batch is active, otherwise
-  /// the database. Every CRUD/query method uses this so it works both inside
-  /// and outside [runInTransaction] (and never deadlocks by touching the base
-  /// connection while a transaction holds the lock).
-  Future<DatabaseExecutor> _exec() async => _txn ?? await _database;
+  /// Returns the transaction of the batch the caller belongs to, otherwise the
+  /// database. Every CRUD/query method uses this so it works both inside and
+  /// outside [runInTransaction]: inside, it never touches the base connection
+  /// while its own transaction holds the lock (which would deadlock); outside,
+  /// it queues on the base connection behind whatever batch is open.
+  Future<DatabaseExecutor> _exec() async => _ownBatch?.txn ?? await _database;
 
   /// Executes [action] that accesses the database. If the database is closed
   /// mid-operation due to a concurrent [useNamespace] call, waits for the
@@ -204,14 +214,14 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
       return await action();
     } on DatabaseException catch (e) {
       final message = e.toString();
-      // A concurrent runInTransaction batch can commit and close the shared
-      // [_txn] while this read is mid-flight (the read grabbed that txn via
-      // _exec()). The transaction is gone but the database itself is fine —
-      // retry: once _txn is null, _exec() routes to the base connection (or a
-      // fresh batch's txn). _withDb only wraps reads, so retrying is
-      // idempotent. Without this, a caller's per-row read (e.g. an upsert's
-      // existence check) fails and its write is silently dropped. Yield
-      // between attempts so a still-committing batch can release the txn.
+      // Something a batch's action left running — started in it, not awaited
+      // by it — can take the batch's transaction from _exec() just before the
+      // batch ends, and read through it just after. The transaction is gone
+      // but the database itself is fine — retry: once the batch is closed,
+      // _exec() routes to the base connection. _withDb only wraps reads, so
+      // retrying is idempotent. Without this, a caller's per-row read (e.g. an
+      // upsert's existence check) fails and its write is silently dropped.
+      // Yield between attempts so a still-committing batch can finish.
       if (message.contains('transaction_closed')) {
         DatabaseException lastError = e;
         for (var attempt = 0; attempt < 3; attempt++) {
@@ -693,10 +703,11 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   @override
   Future<void> updateEvent(String tableName, String id, JsonMap item) async {
     // This is often called asynchronously AFTER a remote push (to mark the
-    // event synced), outside the transaction that created it. If a concurrent
-    // batch is running, the shared [_txn] it points to may commit and close
-    // mid-write, surfacing as a `transaction_closed` DatabaseException. The base
-    // database is always open, so retry there when that race is hit.
+    // event synced), by something the batch that created the event started
+    // and did not wait for. The transaction it took from that batch may
+    // commit and close mid-write, surfacing as a `transaction_closed`
+    // DatabaseException. The base database is always open, so retry there
+    // when that race is hit.
     try {
       await _writeEvent(await _exec(), tableName, id, item);
     } on DatabaseException catch (e) {
@@ -1244,7 +1255,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
     _metadataDeclarations++;
     // Inside a transaction the declaration can still be rolled back, so it is
     // only remembered once it stands on the connection itself.
-    if (_txn == null) _metadataEnsured.add(_namespace);
+    if (_ownBatch == null) _metadataEnsured.add(_namespace);
   }
 
   JsonMap<LocalFieldType> _schemaFor(String repositoryName) {
@@ -1257,7 +1268,7 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   ]) async {
     if (_ensuredHere.contains(repositoryName)) return;
 
-    if (executor != null || _txn != null) {
+    if (executor != null || _ownBatch != null) {
       // Inside a transaction (a caller-supplied executor or a running batch):
       // verify on that executor directly. Joining an in-flight verification on
       // the base connection would deadlock — its statements queue behind the
@@ -1545,9 +1556,9 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
   Future<void> _notifyWatchers(String repositoryName) async {
     // Inside a batch, collect the repo and flush once after commit instead of
     // re-emitting every observer's query on every single write.
-    final batched = _batchedNotify;
-    if (batched != null) {
-      batched.add(repositoryName);
+    final batch = _ownBatch;
+    if (batch != null) {
+      batch.changed.add(repositoryName);
       return;
     }
 
@@ -1578,28 +1589,29 @@ class SqliteLocalFirstStorage implements LocalFirstStorage {
 
   @override
   Future<void> runInTransaction(Future<void> Function() action) async {
-    // Reentrancy guard: a nested call just joins the running batch.
-    if (_txn != null) {
+    // Reentrancy guard: a call nested in a batch's own action joins it.
+    if (_ownBatch != null) {
       await action();
       return;
     }
 
+    // A call from anywhere else is a batch of its own: it waits its turn
+    // behind the one that is open, and neither shares the other's fate.
     final db = await _database;
-    final batched = <String>{};
-    _batchedNotify = batched;
+    _SqliteBatch? batch;
     try {
       await db.transaction((txn) async {
-        _txn = txn;
+        final opened = batch = _SqliteBatch(txn);
         try {
-          await action();
+          await runZoned(action, zoneValues: {_batchZoneKey: opened});
         } finally {
-          _txn = null;
+          // what the action left running is no longer part of it
+          opened.isOpen = false;
         }
       });
     } finally {
       // Flush deferred notifications once, against the committed data.
-      _batchedNotify = null;
-      for (final repositoryName in batched) {
+      for (final repositoryName in batch?.changed ?? const <String>{}) {
         await _notifyWatchers(repositoryName);
       }
     }
@@ -1853,6 +1865,19 @@ class _SqliteQueryObserver<T> {
   final LocalFirstQuery<T> query;
   final StreamController<List<LocalFirstEvent<T>>> controller;
   final Future<void> Function() emit;
+}
+
+/// One run of [SqliteLocalFirstStorage.runInTransaction]: its transaction, and
+/// the repositories it wrote to — told once, after it commits.
+class _SqliteBatch {
+  _SqliteBatch(this.txn);
+
+  final DatabaseExecutor txn;
+  final Set<String> changed = <String>{};
+
+  /// False once the action returned: the transaction is being committed or
+  /// rolled back, and nothing more may be written through it.
+  bool isOpen = true;
 }
 
 /// Test helper exposing internal methods of [SqliteLocalFirstStorage] for unit tests.
