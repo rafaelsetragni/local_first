@@ -1,4 +1,4 @@
-## Unreleased
+## 0.6.1
 
 - **A write made by somebody else is not part of the batch that is open.**
   `runInTransaction` used to share its transaction with every call made while
