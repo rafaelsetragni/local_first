@@ -1,4 +1,4 @@
-## Unreleased
+## 0.10.1
 
 ### A watcher is one for as long as somebody listens
 
