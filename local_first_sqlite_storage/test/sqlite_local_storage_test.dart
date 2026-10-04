@@ -427,15 +427,16 @@ void main() {
         stream.first,
         completion(isA<List<LocalFirstEvent<DummyModel>>>()),
       );
-      var observers = helper.observers['users'] ?? <dynamic>{};
-      if (observers.isEmpty) {
-        mockable.watchQuery(buildQuery(delegate: mockable));
-        observers = helper.observers['users']!;
-      }
-      final observer = observers.first;
+      // a watcher is one while somebody listens: the first left with `first`
+      expect(helper.observers['users'], anyOf(isNull, isEmpty));
+      final listening = mockable
+          .watchQuery(buildQuery(delegate: mockable))
+          .listen((_) {});
+      final observer = helper.observers['users']!.first;
       await observer.controller.close();
       await helper.notifyWatchers('users');
       expect(helper.observers['users'], anyOf(isNull, isEmpty));
+      await listening.cancel();
       await mockable.close();
     });
 
@@ -836,6 +837,8 @@ void main() {
     test('watchQuery adds and removes observers', () async {
       final helper = TestHelperSqliteLocalFirstStorage(storage);
       final stream = storage.watchQuery(buildQuery());
+      // nobody listens yet: a write would ask it nothing
+      expect(helper.observers['users'], isNull);
       final sub = stream.listen((_) {});
       expect(helper.observers['users'], isNotEmpty);
       await sub.cancel();

@@ -784,12 +784,16 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
       controller: controller,
     );
 
-    _observers
-        .putIfAbsent(query.repositoryName, () => <_InMemoryQueryObserver>{})
-        .add(observer);
-
+    // A watcher is one for as long as somebody listens: it is told of a
+    // write from its first listener on, and again from the next one after
+    // everybody left. One nobody listens to is asked nothing.
     controller
-      ..onListen = observer.emit
+      ..onListen = () {
+        _observers
+            .putIfAbsent(query.repositoryName, () => <_InMemoryQueryObserver>{})
+            .add(observer);
+        observer.emit();
+      }
       ..onCancel = () {
         final observers = _observers[query.repositoryName];
         observers?.remove(observer);
@@ -805,13 +809,16 @@ class InMemoryLocalFirstStorage implements LocalFirstStorage {
   Stream<void> watchChanges(String repositoryName) {
     _ensureInitialized();
     final controller = StreamController<void>.broadcast();
-    _changeObservers
-        .putIfAbsent(repositoryName, () => <StreamController<void>>{})
-        .add(controller);
 
     controller
       ..onListen = () {
-        if (!controller.isClosed) controller.add(null);
+        if (controller.isClosed) return;
+        // told from its first listener on, and again from the next one after
+        // everybody left
+        _changeObservers
+            .putIfAbsent(repositoryName, () => <StreamController<void>>{})
+            .add(controller);
+        controller.add(null);
       }
       ..onCancel = () {
         final controllers = _changeObservers[repositoryName];
