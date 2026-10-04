@@ -1,3 +1,25 @@
+## Unreleased
+
+- **A write made by somebody else is not part of the batch that is open.**
+  `runInTransaction` used to share its transaction with every call made while
+  it ran, whoever made it: a record written by the person while a page of
+  remote events was being applied joined that batch, and was rolled back with
+  it — silently, its own future having completed — when the batch failed. A
+  batch now owns only what its own action does (the zone it runs in says so).
+  A call from anywhere else waits for the batch to end and commits by itself;
+  a nested call from inside the action still joins it.
+- **A watcher is one for as long as somebody listens.** `watchQuery` and
+  `watchChanges` registered their watcher when the stream was created and
+  dropped it when the last listener left — for good: a stream listened to
+  again after everybody left answered once and was never told of a write
+  again. A watcher is now registered when its first listener arrives, every
+  time, and one nobody listens to is asked nothing on a write.
+- The folder a namespace's file lives in is asked of the factory that opens
+  it. With the default factory nothing changes; a test that names its own
+  factory gets a file per namespace without the platform.
+- Runs the storage contract of `local_first`
+  (`watch_distribution_contract.dart`) over real files and real transactions.
+
 ## 0.6.0
 
 - Requires `local_first` `^0.10.0`, and implements what it added to the storage
