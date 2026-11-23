@@ -1,3 +1,15 @@
+## Unreleased
+
+### Two writes in one millisecond keep their order
+
+- `IdUtil.uuidV7` filled everything after the timestamp with random bits, so
+  two events minted in the same millisecond were ordered by chance — and the
+  pending writes, sent in the order of their ids, could send an edit before
+  the create it follows. `rand_a` now carries a 12-bit counter (RFC 9562
+  §6.2, method 1): the ids one process mints are strictly increasing, inside
+  a millisecond too; when the counter is spent or the clock steps back, the
+  id borrows the next millisecond rather than going backwards.
+
 ## 0.10.1
 
 ### A watcher is one for as long as somebody listens

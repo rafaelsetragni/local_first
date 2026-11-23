@@ -40,6 +40,20 @@ void main() {
       }
     });
 
+    test('ids minted within one millisecond are still strictly increasing', () {
+      // far more than one millisecond holds, so the counter is spent and the
+      // ids borrow the next millisecond: the order never breaks
+      final ids = [for (var i = 0; i < 20000; i++) IdUtil.uuidV7()];
+
+      for (var i = 0; i < ids.length - 1; i++) {
+        expect(
+          ids[i].compareTo(ids[i + 1]) < 0,
+          isTrue,
+          reason: '${ids[i]} then ${ids[i + 1]}',
+        );
+      }
+    });
+
     test('should generate unique ids across multiple calls', () {
       final count = 1000;
       final ids = <String>{};

@@ -2,10 +2,38 @@ part of '../../local_first.dart';
 
 /// Generates unique IDs for local events.
 sealed class IdUtil {
-  /// Generates a UUID v7-like identifier (time-ordered, 36-char with hyphens).
+  static final Random _random = Random.secure();
+
+  /// The millisecond the last id was minted in, and its counter.
+  static int _lastMillis = -1;
+  static int _counter = 0;
+
+  /// The counter's 12 bits (`rand_a`, RFC 9562 §6.2, method 1).
+  static const int _counterMax = 0xfff;
+
+  /// Generates a UUID v7 (time-ordered, 36-char with hyphens).
+  ///
+  /// Ids minted by this process are strictly increasing, also within one
+  /// millisecond: `rand_a` carries a counter that starts at a random value in
+  /// its lower half each new millisecond and grows by one inside it. Pending
+  /// writes are sent in the order of their ids, so two writes made in the same
+  /// millisecond — a create and the edit after it — must never swap. When the
+  /// counter is spent, or the clock steps back, the id borrows the next
+  /// millisecond instead of going backwards.
   static String uuidV7() {
-    final timestamp = DateTime.now().toUtc().millisecondsSinceEpoch;
-    final rand = Random.secure();
+    var timestamp = DateTime.now().toUtc().millisecondsSinceEpoch;
+    if (timestamp > _lastMillis) {
+      _counter = _random.nextInt((_counterMax + 1) ~/ 2);
+    } else {
+      timestamp = _lastMillis;
+      _counter++;
+      if (_counter > _counterMax) {
+        timestamp++;
+        _counter = _random.nextInt((_counterMax + 1) ~/ 2);
+      }
+    }
+    _lastMillis = timestamp;
+
     final bytes = List<int>.filled(16, 0);
 
     // 48-bit timestamp, big endian
@@ -16,13 +44,14 @@ sealed class IdUtil {
     bytes[4] = (timestamp >> 8) & 0xff;
     bytes[5] = timestamp & 0xff;
 
-    for (var i = 6; i < 16; i++) {
-      bytes[i] = rand.nextInt(256);
-    }
+    // version (7) and the 12-bit counter
+    bytes[6] = 0x70 | ((_counter >> 8) & 0x0f);
+    bytes[7] = _counter & 0xff;
 
-    // Set version (7)
-    bytes[6] = (bytes[6] & 0x0f) | 0x70;
-    // Set variant (10xxxxxx)
+    for (var i = 8; i < 16; i++) {
+      bytes[i] = _random.nextInt(256);
+    }
+    // variant (10xxxxxx)
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
 
     final hex = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
