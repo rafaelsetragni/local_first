@@ -1,4 +1,4 @@
-## Unreleased
+## 0.10.2
 
 ### Two writes in one millisecond keep their order
 
